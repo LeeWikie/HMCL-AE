@@ -1,0 +1,2486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HMCL AI 助手 - 高保真原型</title>
+<style>
+  /* ===== Reset & Base ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { display: flex; background: #f4f5f7; color: #1e1e2e; overflow: hidden; }
+
+  /* ===== Theme Variables ===== */
+  :root {
+    --primary: #2196f3;
+    --primary-hover: #1e88e5;
+    --primary-light: rgba(33, 150, 243, 0.08);
+    --bg-dark: #1e1e2e;
+    --bg-sidebar: #181825;
+    --border-color: #e0e0e0;
+    --text-main: #1e1e2e;
+    --text-muted: #6c7086;
+    --bubble-user: #2196f3;
+    --bubble-user-text: #ffffff;
+    --bubble-ai: #ffffff;
+    --bubble-ai-text: #1e1e2e;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+  }
+
+  /* ===== Dark Sidebar (HMCL style) ===== */
+  .sidebar {
+    width: 260px; min-width: 260px; background: var(--bg-sidebar); color: #cdd6f4;
+    display: flex; flex-direction: column; height: 100vh; user-select: none;
+    border-right: 1px solid #313244; z-index: 10;
+  }
+  .sidebar-header {
+    padding: 20px 16px 12px; border-bottom: 1px solid #313244;
+  }
+  .new-chat-btn {
+    width: 100%; padding: 10px 16px; border: 1px dashed #45475a; border-radius: 8px;
+    background: transparent; color: #cdd6f4; font-size: 13px; cursor: pointer;
+    transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .new-chat-btn:hover { border-color: var(--primary); color: var(--primary); background: rgba(33, 150, 243, 0.05); }
+  .new-chat-btn svg { width: 16px; height: 16px; }
+
+  .manage-sessions-btn {
+    width: 42px; min-width: 42px; height: 42px; border: 1px dashed #45475a; border-radius: 8px;
+    background: transparent; color: #a6adc8; cursor: pointer; transition: all 0.2s ease;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .manage-sessions-btn:hover, .manage-sessions-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(33, 150, 243, 0.05); }
+  .manage-sessions-btn svg { width: 18px; height: 18px; }
+
+  .session-item.manage-item { cursor: pointer; }
+  .session-check { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0; }
+  .session-item.manage-item:hover { background: #313244; }
+
+  .manage-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px;
+    background: #252536; border-radius: 10px; border: 1px solid #313244;
+  }
+  .manage-bar-btn {
+    width: 32px; height: 32px; border: none; border-radius: 6px;
+    background: transparent; color: #a6adc8; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s ease;
+  }
+  .manage-bar-btn:hover { background: #313244; color: #cdd6f4; }
+
+  .session-list {
+    flex: 1; overflow-y: auto; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .session-list::-webkit-scrollbar { width: 4px; }
+  .session-list::-webkit-scrollbar-thumb { background: #313244; border-radius: 4px; }
+
+  .session-item {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    display: flex; align-items: center; gap: 10px; transition: all 0.15s ease;
+    color: #a6adc8;
+  }
+  .session-item:hover { background: #313244; color: #cdd6f4; }
+  .session-item.active { background: var(--primary); color: #ffffff; }
+  .session-item .s-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
+  .session-item .s-title {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-item .s-del {
+    width: 20px; height: 20px; border: none; background: transparent; color: #6c7086;
+    border-radius: 4px; cursor: pointer; font-size: 12px; display: none;
+    align-items: center; justify-content: center; flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+  .session-item:hover .s-del { display: flex; }
+  .session-item.active .s-del { color: rgba(255,255,255,0.7); }
+  .session-item .s-del:hover { color: #f38ba8; background: rgba(243, 139, 168, 0.1); }
+  .session-item.active .s-del:hover { color: #ffffff; background: rgba(255, 255, 255, 0.15); }
+
+  .sidebar-footer {
+    border-top: 1px solid #313244; padding: 12px 8px;
+  }
+  .settings-btn {
+    width: 100%; padding: 10px 12px; border: none; border-radius: 8px;
+    background: transparent; color: #a6adc8; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px; transition: all 0.15s ease;
+  }
+  .settings-btn:hover { background: #313244; color: #cdd6f4; }
+  .settings-btn svg { width: 16px; height: 16px; opacity: 0.8; }
+
+  /* ===== Main Area ===== */
+  .main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; background: #f4f5f7; position: relative; }
+  
+  /* ===== Header ===== */
+  .main-header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border-color); background: #ffffff;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    box-shadow: var(--shadow-sm); z-index: 5;
+  }
+  .main-header .left { display: flex; align-items: center; gap: 12px; }
+  .back-btn {
+    width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent;
+    cursor: pointer; color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .back-btn:hover { background: #e6e9ef; color: var(--text-main); }
+  .main-header .back-btn { display: none; }
+  .back-btn svg { width: 20px; height: 20px; }
+  .main-header h2 { font-size: 16px; font-weight: 600; color: var(--text-main); }
+
+  /* ===== Header Actions ===== */
+  .header-actions { display: flex; align-items: center; gap: 10px; }
+  
+  .model-selector-wrap { position: relative; }
+  .model-select-btn {
+    padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+    background: #f8f9fc; font-size: 12px; font-family: inherit; color: var(--text-main);
+    cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.15s ease;
+  }
+  .model-select-btn:hover { border-color: #c0c4d0; background-color: #eef0f4; }
+  .model-popover {
+    position: absolute; top: calc(100% + 4px); left: 0; background: #ffffff;
+    border: 1px solid var(--border-color); border-radius: 8px; box-shadow: var(--shadow-lg);
+    z-index: 150; display: none; flex-direction: column; padding: 4px 0; min-width: 160px;
+  }
+  .model-popover.open { display: flex; }
+  .model-option {
+    padding: 8px 12px; font-size: 12px; color: var(--text-main); cursor: pointer;
+    transition: background 0.12s ease; text-align: left;
+  }
+  .model-option:hover { background: #f0f2f5; }
+  .model-option.active { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+
+  .header-select {
+    padding: 6px 28px 6px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+    background: #f8f9fc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236c7086' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+    font-size: 12px; font-family: inherit; color: var(--text-muted); cursor: pointer;
+    appearance: none; outline: none; transition: all 0.15s ease;
+  }
+  .header-select:hover { border-color: #c0c4d0; background-color: #eef0f4; }
+  .header-select:focus { border-color: var(--primary); }
+
+  .header-action-btn {
+    width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent;
+    cursor: pointer; color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .header-action-btn:hover { background: #e6e9ef; color: var(--text-main); }
+  .header-action-btn svg { width: 18px; height: 18px; }
+
+  /* ===== Messages Area ===== */
+  .messages {
+    flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 18px;
+  }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+  .msg-empty {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; color: var(--text-muted); gap: 16px;
+    text-align: center; padding: 40px 20px;
+  }
+  .msg-empty svg { width: 56px; height: 56px; opacity: 0.3; color: var(--primary); }
+  .msg-empty p { font-size: 15px; font-weight: 500; }
+
+  /* ===== Suggestion Chips (cloud/float layout) ===== */
+  .suggestion-area {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+    max-width: 520px; margin-top: 8px;
+  }
+  .suggestion-chip {
+    padding: 8px 16px; background: #ffffff; border: 1px solid var(--border-color);
+    border-radius: 20px; font-size: 13px; color: var(--text-muted); cursor: pointer;
+    transition: all 0.2s ease; white-space: nowrap;
+    box-shadow: var(--shadow-sm);
+  }
+  .suggestion-chip:hover {
+    background: var(--primary-light); border-color: var(--primary); color: var(--primary);
+    transform: translateY(-2px); box-shadow: var(--shadow-md);
+  }
+
+  /* ===== Message Bubbles ===== */
+  .msg { display: flex; gap: 12px; max-width: 800px; animation: fadeIn 0.25s ease-out; }
+  .msg.user { flex-direction: row-reverse; align-self: flex-end; }
+  .msg.assistant { align-self: flex-start; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .msg-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 600; box-shadow: var(--shadow-sm);
+  }
+  .msg.user .msg-avatar { background: var(--primary); color: #ffffff; }
+  .msg.assistant .msg-avatar { background: #ffffff; color: var(--primary); border: 1px solid var(--border-color); }
+
+  .msg-body { min-width: 0; }
+  .msg.user .msg-body { text-align: right; }
+
+  .msg-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px; padding: 0 4px;
+  }
+  .msg.user .msg-header { flex-direction: row-reverse; }
+  .msg-name { font-size: 12px; font-weight: 600; color: var(--text-main); }
+  .msg-time { font-size: 11px; color: var(--text-muted); }
+
+  .msg-bubble {
+    padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.6;
+    max-width: 600px; word-break: break-word; box-shadow: var(--shadow-sm);
+  }
+  .msg.user .msg-bubble {
+    background: var(--bubble-user); color: var(--bubble-user-text);
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant .msg-bubble {
+    background: var(--bubble-ai); color: var(--bubble-ai-text);
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(0,0,0,0.03);
+  }
+
+  .file-in-msg {
+    display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.04); border-radius: 8px; font-size: 12px;
+    margin-top: 8px; color: var(--text-main); border: 1px solid rgba(0,0,0,0.05);
+  }
+  .msg.user .file-in-msg {
+    background: rgba(255, 255, 255, 0.15); color: #ffffff; border: none;
+  }
+  .file-in-msg svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  /* ===== Typing indicator ===== */
+  .typing .msg-bubble { display: flex; gap: 4px; padding: 14px 20px; align-items: center; }
+  .typing .msg-bubble span {
+    width: 8px; height: 8px; background: var(--primary); border-radius: 50%;
+    animation: typing 1.2s infinite ease-in-out;
+    opacity: 0.6;
+  }
+  .typing .msg-bubble span:nth-child(2) { animation-delay: 0.15s; }
+  .typing .msg-bubble span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes typing { 0%,60%,100% { opacity: 0.3; transform: scale(0.8); } 30% { opacity: 1; transform: scale(1.1); } }
+
+  /* ===== Input Area ===== */
+  .input-area {
+    border-top: 1px solid var(--border-color); padding: 16px 24px 20px; background: #ffffff;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.02); position: relative;
+  }
+
+  .input-wrap {
+    display: flex; gap: 10px; align-items: flex-end; max-width: 800px; margin: 0 auto;
+    background: #f8f9fc; border: 1px solid var(--border-color); border-radius: 12px;
+    padding: 6px 10px; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-wrap:focus-within {
+    border-color: var(--primary); box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.15);
+    background: #ffffff;
+  }
+  .input-wrap textarea {
+    flex: 1; resize: none; border: none;
+    padding: 8px 4px; font-size: 14px; font-family: inherit; line-height: 1.5;
+    outline: none; max-height: 140px; min-height: 36px;
+    background: transparent; color: var(--text-main);
+  }
+  .input-wrap textarea::placeholder { color: #a6adc8; }
+
+  .input-btn {
+    width: 36px; height: 36px; border: none; border-radius: 8px;
+    background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .input-btn:hover { background: #e6e9ef; color: var(--text-main); }
+  .input-btn:active { transform: scale(0.95); }
+  .input-btn svg { width: 20px; height: 20px; }
+
+  .send-btn {
+    width: 36px; height: 36px; border: none; border-radius: 8px;
+    background: var(--primary); color: #ffffff; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .send-btn:hover { background: var(--primary-hover); transform: scale(1.05); }
+  .send-btn:active { transform: scale(0.95); }
+  .send-btn svg { width: 18px; height: 18px; }
+  .send-btn:disabled { background: #ccd0da; color: #ffffff; cursor: not-allowed; transform: none; }
+
+  /* ===== File preview chips ===== */
+  .file-preview {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 8px;
+    max-width: 800px; margin: 0 auto; width: 100%;
+  }
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px; background: #e6e9ef; border-radius: 8px;
+    font-size: 12px; color: var(--text-muted); max-width: 200px;
+    box-shadow: var(--shadow-sm);
+  }
+  .file-chip svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .file-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-chip .remove-file {
+    width: 16px; height: 16px; border: none; background: transparent;
+    cursor: pointer; color: #9399b2; border-radius: 4px; display: flex;
+    align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0;
+  }
+  .file-chip .remove-file:hover { color: #f38ba8; background: #ccd0da; }
+
+  /* ===== Autocomplete Popover ===== */
+  .autocomplete-popover {
+    position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    background: #ffffff; border: 1px solid var(--border-color); border-radius: 8px;
+    box-shadow: var(--shadow-lg); z-index: 150; display: none; flex-direction: column;
+    padding: 4px 0; width: 280px; max-height: 200px; overflow-y: auto;
+  }
+  .autocomplete-popover.open { display: flex; }
+  .autocomplete-item {
+    padding: 8px 12px; font-size: 13px; color: var(--text-main); cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    transition: background 0.12s ease;
+  }
+  .autocomplete-item:hover, .autocomplete-item.selected { background: #f0f2f5; }
+  .autocomplete-item .ac-desc { font-size: 11px; color: var(--text-muted); }
+
+  /* ===== Toast ===== */
+  .toast-container {
+    position: fixed; top: 20px; right: 20px; z-index: 999;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .toast {
+    padding: 12px 20px; background: #1e1e2e; color: #cdd6f4; border-radius: 10px;
+    font-size: 13px; box-shadow: var(--shadow-lg);
+    animation: toastIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275); max-width: 360px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .toast.info { border-left: 4px solid var(--primary); }
+  .toast.success { border-left: 4px solid #a6e3a1; }
+  .toast.error { border-left: 4px solid #f38ba8; }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(30px); } }
+
+  /* ===== Settings Panel (overlay page) ===== */
+  .settings-overlay {
+    position: fixed; inset: 0; z-index: 200; background: #f4f5f7;
+    display: none; flex-direction: column; animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .settings-overlay.open { display: flex; }
+
+  @keyframes slideIn { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .settings-header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border-color); background: #ffffff;
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .settings-header h2 { font-size: 16px; font-weight: 600; color: var(--text-main); }
+
+  .settings-container {
+    flex: 1; overflow: hidden; display: flex;
+  }
+  .settings-sidebar {
+    width: 180px; min-width: 180px; background: #ffffff; border-right: 1px solid var(--border-color);
+    padding: 12px 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
+  }
+  .ss-item {
+    padding: 10px 16px; font-size: 13px; color: var(--text-muted); cursor: pointer;
+    transition: all 0.12s ease; border-left: 3px solid transparent;
+  }
+  .ss-item:hover { background: #f4f5f7; color: var(--text-main); }
+  .ss-item.active { background: var(--primary-light); color: var(--primary); border-left-color: var(--primary); font-weight: 600; }
+  .settings-body {
+    flex: 1; overflow-y: auto; padding: 24px 24px 48px;
+  }
+  .settings-tab { display: none; }
+  .settings-tab.active { display: block; }
+  .settings-body::-webkit-scrollbar { width: 6px; }
+  .settings-body::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+  .settings-section {
+    background: #ffffff; border: 1px solid var(--border-color); border-radius: 12px;
+    padding: 20px; margin-bottom: 20px; box-shadow: var(--shadow-sm);
+  }
+  .settings-section-title {
+    font-size: 14px; font-weight: 600; color: var(--text-main); margin-bottom: 16px;
+    padding-bottom: 8px; border-bottom: 1px solid #f0f2f5;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  .field-group { margin-bottom: 16px; }
+  .field-group label {
+    display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .field-group input, .field-group select, .field-group textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+    font-size: 13px; font-family: inherit; outline: none; background: #f8f9fc;
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+  .field-group input:focus, .field-group select:focus, .field-group textarea:focus {
+    border-color: var(--primary); background-color: #ffffff; box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.15);
+  }
+  .field-group .desc { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .field-row {
+    display: flex; gap: 12px;
+  }
+  .field-row .field-group { flex: 1; }
+
+  /* ===== Profile list (expandable) ===== */
+  .profile-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .profile-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; background: #f8f9fc; border: 1px solid var(--border-color);
+    border-radius: 10px; cursor: pointer; transition: all 0.15s ease;
+  }
+  .profile-header:hover { border-color: var(--primary); background: #ffffff; box-shadow: var(--shadow-sm); }
+  .profile-header.open { border-radius: 10px 10px 0 0; border-color: var(--primary); background: #ffffff; }
+  .profile-header .ph-icon {
+    width: 32px; height: 32px; border-radius: 8px; background: var(--primary-light);
+    color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    font-size: 15px;
+  }
+  .profile-header .ph-info { flex: 1; min-width: 0; }
+  .profile-header .ph-name { font-size: 13px; font-weight: 600; color: var(--text-main); }
+  .profile-header .ph-detail { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .profile-header .ph-arrow { width: 14px; height: 14px; color: var(--text-muted); transition: transform 0.2s ease; flex-shrink: 0; }
+  .profile-header .ph-arrow.open { transform: rotate(180deg); }
+  .profile-header .ph-del {
+    width: 22px; height: 22px; border: none; background: transparent; color: var(--text-muted);
+    border-radius: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; transition: all 0.12s ease;
+  }
+  .profile-header .ph-del:hover { color: #f38ba8; background: rgba(243, 139, 168, 0.1); }
+
+  .profile-models {
+    background: #ffffff; border: 1px solid var(--border-color); border-top: none;
+    border-radius: 0 0 10px 10px; padding: 6px 8px; display: none; flex-direction: column; gap: 2px;
+  }
+  .profile-models.open { display: flex; }
+  .model-item {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+    border-radius: 6px; cursor: pointer; transition: background 0.12s ease;
+  }
+  .model-item:hover { background: #f4f5f7; }
+  .model-item .mi-name { font-size: 13px; color: var(--text-main); flex: 1; }
+  .model-item .mi-edit {
+    font-size: 11px; color: var(--primary); opacity: 0; transition: opacity 0.12s ease;
+  }
+  .model-item:hover .mi-edit { opacity: 1; }
+  .add-model-btn {
+    padding: 6px 10px; border: none; background: transparent; color: var(--primary);
+    font-size: 12px; cursor: pointer; text-align: left; border-radius: 6px;
+    transition: background 0.12s ease; font-family: inherit;
+  }
+  .add-model-btn:hover { background: var(--primary-light); }
+
+  .model-test-btn {
+    width: 26px; height: 26px; border: none; background: transparent; color: var(--text-muted);
+    border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; transition: all 0.12s ease; flex-shrink: 0;
+  }
+  .model-test-btn:hover { background: #e6e9ef; color: var(--primary); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .settings-btn-row {
+    display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap;
+  }
+  .st-btn {
+    padding: 10px 20px; border: 1px solid transparent; border-radius: 8px; font-size: 13px;
+    cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+    font-weight: 500;
+  }
+  .st-btn.primary { background: var(--primary); color: #ffffff; }
+  .st-btn.primary:hover { background: var(--primary-hover); }
+  .st-btn.secondary { background: #e6e9ef; color: var(--text-main); border-color: var(--border-color); }
+  .st-btn.secondary:hover { background: #dde0e8; }
+  .st-btn.danger { background: #f38ba8; color: #ffffff; }
+  .st-btn.danger:hover { background: #eba0ac; }
+  .st-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ===== Advanced section toggle ===== */
+  .advanced-toggle {
+    background: none; border: none; font-size: 13px; color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; gap: 6px; padding: 6px 0;
+    font-family: inherit; transition: color 0.15s ease; font-weight: 600;
+  }
+  .advanced-toggle:hover { color: var(--text-main); }
+  .advanced-toggle .arrow { transition: transform 0.2s ease; display: inline-block; }
+  .advanced-toggle .arrow.open { transform: rotate(90deg); }
+  .advanced-body { display: none; margin-top: 12px; }
+  .advanced-body.open { display: block; }
+
+  /* ===== Checkbox switch ===== */
+  .switch-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid #f0f2f5;
+  }
+  .switch-row:last-child { border-bottom: none; }
+  .switch-row label { font-size: 13px; color: var(--text-main); cursor: pointer; font-weight: 500; }
+  .switch-row .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .switch {
+    position: relative; width: 40px; height: 22px; flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #ccd0da; border-radius: 22px;
+    transition: 0.2s; cursor: pointer;
+  }
+  .switch .slider::before {
+    content: ''; position: absolute; width: 18px; height: 18px; left: 2px; bottom: 2px;
+    background: #ffffff; border-radius: 50%; transition: 0.2s;
+  }
+  .switch input:checked + .slider { background: var(--primary); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+
+  /* ===== Chat Settings Drawer ===== */
+  .chat-settings-drawer {
+    position: fixed; top: 0; right: -320px; width: 320px; height: 100vh;
+    background: #ffffff; border-left: 1px solid var(--border-color);
+    box-shadow: var(--shadow-lg); z-index: 180; display: flex; flex-direction: column;
+    transition: right 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .chat-settings-drawer.open { right: 0; }
+  .drawer-header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border-color);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .drawer-header h3 { font-size: 14px; font-weight: 600; color: var(--text-main); }
+  .drawer-close-btn {
+    width: 24px; height: 24px; border: none; background: transparent; color: var(--text-muted);
+    cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; transition: all 0.15s ease;
+  }
+  .drawer-close-btn:hover { background: #f0f2f5; color: var(--text-main); }
+  .drawer-body {
+    flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .drawer-section {
+    border-bottom: 1px solid #f0f2f5; padding-bottom: 16px;
+  }
+  .drawer-section:last-child { border-bottom: none; }
+  .drawer-section-title {
+    font-size: 13px; font-weight: 600; color: var(--text-main); display: flex;
+    align-items: center; justify-content: space-between; cursor: pointer; padding: 4px 0;
+  }
+  .drawer-section-title .arrow { width: 14px; height: 14px; transition: transform 0.2s ease; color: var(--text-muted); }
+  .drawer-section-title .arrow.open { transform: rotate(180deg); }
+  .drawer-section-content { display: none; margin-top: 12px; }
+  .drawer-section-content.open { display: block; }
+
+  .drawer-switch-row {
+    display: flex; align-items: center; justify-content: space-between; padding: 8px 0;
+  }
+  .drawer-switch-row label { font-size: 12px; color: var(--text-main); cursor: pointer; }
+  .drawer-field-row {
+    display: flex; flex-direction: column; gap: 6px; padding: 8px 0;
+  }
+  .drawer-field-row label { font-size: 12px; color: var(--text-main); }
+  .drawer-field-row select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px;
+    font-size: 12px; outline: none; background: #f8f9fc;
+  }
+  .field-label-wrap { display: flex; align-items: center; gap: 4px; }
+  .help-icon {
+    width: 14px; height: 14px; border-radius: 50%; background: #e6e9ef; color: var(--text-muted);
+    font-size: 10px; display: inline-flex; align-items: center; justify-content: center;
+    cursor: help; font-weight: bold;
+  }
+  .font-slider-wrap { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .font-slider-wrap input[type="range"] { flex: 1; accent-color: var(--primary); }
+  .font-size-desc { font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 4px; }
+
+  /* ===== Search Modal ===== */
+  .search-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.25); backdrop-filter: blur(2px);
+    z-index: 300; display: none; align-items: flex-start; justify-content: center; padding-top: 80px;
+  }
+  .search-modal-overlay.open { display: flex; }
+  .search-modal {
+    background: #ffffff; border-radius: 12px; width: 540px; max-width: 90vw;
+    box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden;
+    animation: modalIn 0.2s ease-out;
+  }
+  .search-input-wrap {
+    display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color);
+    gap: 10px;
+  }
+  .search-input-wrap .search-icon { width: 18px; height: 18px; color: var(--text-muted); }
+  .search-input-wrap input {
+    flex: 1; border: none; outline: none; font-size: 14px; font-family: inherit;
+  }
+  .search-clear-btn {
+    border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+    font-size: 14px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+  }
+  .search-clear-btn:hover { background: #f0f2f5; color: var(--text-main); }
+  .search-results { max-height: 360px; overflow-y: auto; padding: 8px 0; }
+  .search-empty-state { padding: 32px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  .search-result-item {
+    padding: 10px 16px; cursor: pointer; transition: background 0.12s ease;
+    border-bottom: 1px solid #f8f9fc; display: flex; flex-direction: column; gap: 4px;
+  }
+  .search-result-item:hover { background: #f4f5f7; }
+  .search-result-title { font-size: 12px; font-weight: 600; color: var(--primary); }
+  .search-result-text { font-size: 13px; color: var(--text-main); }
+  .search-result-text mark { background: #ffe066; color: #000000; padding: 0 2px; border-radius: 2px; }
+
+  /* ===== Profile Modal ===== */
+  .profile-modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.3); backdrop-filter: blur(2px);
+    z-index: 250; display: none; align-items: center; justify-content: center;
+  }
+  .profile-modal-overlay.open { display: flex; }
+  .profile-modal {
+    background: #ffffff; border-radius: 14px; width: 520px; max-width: 92vw;
+    box-shadow: var(--shadow-lg); display: flex; flex-direction: column;
+    max-height: 85vh; animation: modalIn 0.2s ease-out;
+  }
+  .profile-modal-header {
+    padding: 18px 22px 14px; border-bottom: 1px solid var(--border-color);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .profile-modal-header h3 { font-size: 15px; font-weight: 600; color: var(--text-main); }
+  .profile-modal-close {
+    width: 28px; height: 28px; border: none; background: transparent; color: var(--text-muted);
+    cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    font-size: 16px; transition: all 0.12s ease;
+  }
+  .profile-modal-close:hover { background: #f0f2f5; color: var(--text-main); }
+  .profile-modal-body {
+    flex: 1; overflow-y: auto; padding: 16px 22px 8px;
+  }
+  .profile-modal-footer {
+    padding: 12px 22px 18px; border-top: 1px solid #f0f2f5;
+    display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;
+  }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 720px) {
+    .sidebar { position: fixed; left: -260px; z-index: 50; transition: left 0.2s ease; }
+    .sidebar.open { left: 0; }
+    .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 49; }
+    .sidebar-backdrop.open { display: block; }
+    .mobile-menu-btn {
+      display: flex !important; width: 32px; height: 32px; border: none; border-radius: 8px;
+      background: transparent; cursor: pointer; align-items: center; justify-content: center;
+      color: var(--text-muted); margin-right: 6px; flex-shrink: 0;
+    }
+    .mobile-menu-btn:hover { background: #e6e9ef; }
+    .settings-body { padding: 16px 16px 32px; }
+  }
+  .mobile-menu-btn { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ==================== Sidebar ==================== -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <div style="display:flex;gap:8px;">
+      <button type="button" class="new-chat-btn" onclick="newSession()" style="flex:1;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>新对话</title><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        新对话
+      </button>
+      <button type="button" class="manage-sessions-btn" id="manageSessionsBtn" onclick="toggleManageMode()" title="管理会话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><title>管理会话</title><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="session-list" id="sessionList"></div>
+  <div class="sidebar-footer">
+    <div class="manage-bar" id="manageBar" style="display:none;">
+      <button type="button" class="manage-bar-btn" onclick="selectAllSessions()" title="全选">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="width:16px;height:16px;"><title>全选</title><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      </button>
+      <div style="flex:1;"></div>
+      <button type="button" class="manage-bar-btn" onclick="deleteSelectedSessions()" title="删除选中" style="color:#f38ba8;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="width:16px;height:16px;"><title>删除</title><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+      <button type="button" class="manage-bar-btn" onclick="toggleManageMode()" title="退出管理">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="width:16px;height:16px;"><title>退出</title><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <button type="button" class="settings-btn" onclick="openSettings()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><title>AI 设置</title><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      AI 设置
+    </button>
+  </div>
+</aside>
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar()"></div>
+
+<!-- ==================== Main ==================== -->
+<div class="main">
+  <div class="main-header">
+    <div class="left">
+      <button type="button" class="mobile-menu-btn" onclick="toggleSidebar()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>菜单</title><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <h2 id="currentTitle">新对话</h2>
+    </div>
+    <div class="header-actions">
+      <!-- Model Selector (Custom Popover) -->
+      <div class="model-selector-wrap">
+        <button type="button" class="model-select-btn" onclick="toggleModelPopover(event)">
+          <span id="currentModelName">选择模型</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="width:12px;height:12px;"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="model-popover" id="modelPopover"></div>
+      </div>
+      <!-- Thinking Level Selector (Select Dropdown) -->
+      <select id="thinkSelect" onchange="saveToolbarState()" class="header-select">
+        <option value="none">None</option>
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+        <option value="xhigh">xHigh</option>
+        <option value="max">Max</option>
+      </select>
+      <!-- Search Icon -->
+      <button type="button" class="header-action-btn" onclick="openSearchModal()" title="搜索">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+      <!-- Chat Settings Icon -->
+      <button type="button" class="header-action-btn" onclick="toggleChatSettingsDrawer()" title="聊天设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="msg-empty" id="emptyState">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><title>对话图标</title><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <p>开始一段新的对话</p>
+      <!-- Suggestion chips: cloud/float layout -->
+      <div class="suggestion-area" id="suggestionArea">
+        <div class="suggestion-chip" onclick="sendSuggestion('帮我分析这个日志文件')">帮我分析日志</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('解释一下崩溃报告')">解释崩溃报告</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('如何安装 Forge？')">如何安装 Forge？</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('优化我的 Minecraft 启动参数')">优化启动参数</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('Java 版本有什么要求？')">Java 版本要求</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="file-preview" id="filePreview"></div>
+
+    <!-- Autocomplete Popover -->
+    <div class="autocomplete-popover" id="autocompletePopover"></div>
+
+    <div class="input-wrap">
+      <button type="button" class="input-btn" onclick="document.getElementById('fileInput').click()" title="上传文件">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>上传文件</title><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </button>
+      <textarea id="inputBox" rows="1" placeholder="输入消息…（输入 / 触发命令，@ 引用资产）" oninput="autoResize(this);checkSendBtn();handleInputAutocomplete(event)" onkeydown="handleKey(event)"></textarea>
+      <button type="button" class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><title>发送</title><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+  </div>
+  <input type="file" id="fileInput" multiple style="display:none" onchange="handleFiles(this.files)">
+</div>
+
+<!-- ==================== Settings Overlay ==================== -->
+<div class="settings-overlay" id="settingsOverlay">
+  <div class="settings-header">
+    <button type="button" class="back-btn" onclick="closeSettings()" style="display:flex;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>返回</title><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <h2>AI 设置</h2>
+  </div>
+  <div class="settings-container">
+    <!-- Settings Sidebar -->
+    <div class="settings-sidebar" id="settingsSidebar">
+      <div class="ss-item active" onclick="switchSettingsTab('provider')">模型服务</div>
+      <div class="ss-item" onclick="switchSettingsTab('general')">常规设置</div>
+      <div class="ss-item" onclick="switchSettingsTab('mcp')">MCP服务器</div>
+      <div class="ss-item" onclick="switchSettingsTab('skills')">技能</div>
+      <div class="ss-item" onclick="switchSettingsTab('search')">网络搜索</div>
+      <div class="ss-item" onclick="switchSettingsTab('memory')">全局记忆</div>
+    </div>
+    <!-- Settings Content Area -->
+    <div class="settings-body" id="settingsBody">
+      <!-- Tab: 模型服务 -->
+      <div class="settings-tab active" id="tab-provider">
+        <div class="settings-section">
+          <div class="settings-section-title">
+            <span>模型提供商</span>
+            <button type="button" class="st-btn secondary" onclick="openBatchTestModal()" style="font-size:11px;padding:5px 12px;">一键全测</button>
+          </div>
+          <div class="profile-list" id="profileList"></div>
+          <button type="button" class="st-btn primary" onclick="showAddProfile()">+ 添加模型提供商</button>
+          <div id="providerFeedback" class="desc" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">默认模型</div>
+          <div class="field-group">
+            <label for="defaultChatModel">默认聊天模型</label>
+            <select id="defaultChatModel">
+              <option value="">（自动选择第一个可用模型）</option>
+            </select>
+            <div class="desc">对话时默认使用的模型</div>
+          </div>
+          <div class="switch-row">
+            <div>
+              <label for="customTitleModel">自定义标题命名模型</label>
+              <div class="desc">开启后可指定用于生成对话标题的模型</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="customTitleModel" onchange="toggleTitleModelSection(this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="field-group" id="titleModelSection" style="display:none;margin-top:10px;padding-left:10px;border-left:2px solid var(--primary);">
+            <label for="titleModelSelect">选择标题命名模型</label>
+            <select id="titleModelSelect">
+              <option value="auto">自动选择 (与对话模型一致)</option>
+            </select>
+            <div class="desc">开启后对话将使用指定模型自动生成标题</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: 常规设置 -->
+      <div class="settings-tab" id="tab-general">
+        <div class="settings-section">
+          <div class="settings-section-title">全局 AI 设置</div>
+          <div class="switch-row">
+            <div>
+              <label for="autoLog">自动分析日志</label>
+              <div class="desc">游戏崩溃时自动启动分析</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autoLog">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="field-group">
+            <label for="approvalMode">工具执行审批模式</label>
+            <select id="approvalMode">
+              <option value="safe">Safe — 自动批准安全操作</option>
+              <option value="ask">Ask — 每次操作询问</option>
+              <option value="yolo">YOLO — 自动批准所有操作</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other tabs: 正在开发中 -->
+      <div class="settings-tab" id="tab-mcp">
+        <div class="settings-section" style="text-align:center;padding:60px 20px;">
+          <div style="font-size:14px;color:var(--text-muted);">MCP服务器</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">正在开发中…</div>
+        </div>
+      </div>
+      <div class="settings-tab" id="tab-skills">
+        <div class="settings-section" style="text-align:center;padding:60px 20px;">
+          <div style="font-size:14px;color:var(--text-muted);">技能</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">正在开发中…</div>
+        </div>
+      </div>
+      <div class="settings-tab" id="tab-search">
+        <div class="settings-section" style="text-align:center;padding:60px 20px;">
+          <div style="font-size:14px;color:var(--text-muted);">网络搜索</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">正在开发中…</div>
+        </div>
+      </div>
+      <div class="settings-tab" id="tab-memory">
+        <div class="settings-section" style="text-align:center;padding:60px 20px;">
+          <div style="font-size:14px;color:var(--text-muted);">全局记忆</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px;">正在开发中…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Profile Modal ==================== -->
+<div class="profile-modal-overlay" id="profileModalOverlay" onclick="if(event.target===this)hideProfileForm()">
+  <div class="profile-modal">
+    <div class="profile-modal-header">
+      <h3 id="profileFormTitle">新建提供商</h3>
+      <button type="button" class="profile-modal-close" onclick="hideProfileForm()">✕</button>
+    </div>
+    <div class="profile-modal-body">
+      <div class="field-group">
+        <label for="pfName">名称</label>
+        <input type="text" id="pfName" placeholder="我的提供商">
+      </div>
+      <div class="field-group">
+        <label for="pfProtocol">协议族</label>
+        <select id="pfProtocol">
+          <option value="openai-completions">OpenAI Completions</option>
+          <option value="openai-reasoning">OpenAI Reasoning</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="restapi">REST API</option>
+        </select>
+        <div class="desc">不同协议族使用不同的 API 格式和参数</div>
+      </div>
+      <div class="field-group">
+        <label for="pfEndpoint">API 端点</label>
+        <input type="text" id="pfEndpoint" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="field-group">
+        <label for="pfApiKey">API 密钥</label>
+        <input type="password" id="pfApiKey" placeholder="sk-...">
+      </div>
+      <div id="discoverFeedback" class="desc"></div>
+    </div>
+    <div class="profile-modal-footer">
+      <button type="button" class="st-btn danger" id="pfDeleteBtn" style="display:none;" onclick="deleteCurrentProfile()">删除</button>
+      <div style="flex:1;"></div>
+      <button type="button" class="st-btn secondary" onclick="hideProfileForm()">取消</button>
+      <button type="button" class="st-btn primary" onclick="saveProfile()">保存提供商</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Edit Model Modal ==================== -->
+<div class="profile-modal-overlay" id="modelModalOverlay" onclick="if(event.target===this)hideModelModal()">
+  <div class="profile-modal">
+    <div class="profile-modal-header">
+      <h3 id="modelFormTitle">编辑模型</h3>
+      <button type="button" class="profile-modal-close" onclick="hideModelModal()">✕</button>
+    </div>
+    <div class="profile-modal-body">
+      <div class="field-group">
+        <label for="mmModel">模型 ID</label>
+        <div class="field-row">
+          <input type="text" id="mmModel" placeholder="gpt-4o" style="flex:1;">
+          <button type="button" class="st-btn secondary" onclick="fetchModelsForModal()" style="font-size:11px;padding:6px 10px;white-space:nowrap;">获取模型列表</button>
+        </div>
+        <div id="mmModelListWrap" style="display:none;margin-top:6px;">
+          <select id="mmModelSelect" onchange="onModalModelSelect(this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;font-size:13px;">
+            <option value="">-- 从列表中选择或手动输入 --</option>
+          </select>
+          <div class="desc">从 /v1/models 获取的模型列表</div>
+        </div>
+      </div>
+      <div class="field-group">
+        <label for="mmAlias">模型别名</label>
+        <input type="text" id="mmAlias" placeholder="例如: GPT-4o 快速">
+      </div>
+      <div class="field-group">
+        <label for="mmReasoning">默认思考等级</label>
+        <select id="mmReasoning">
+          <option value="none">None</option>
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">xHigh</option>
+          <option value="max">Max</option>
+        </select>
+      </div>
+      <button type="button" class="advanced-toggle" onclick="toggleModelAdvanced()" style="margin-top:12px;">
+        <span class="arrow" id="modelAdvancedArrow">▶</span> 高级设置
+      </button>
+      <div class="advanced-body" id="modelAdvancedBody">
+        <div class="field-row">
+          <div class="field-group">
+            <label for="mmCtxWindow">上下文窗口</label>
+            <input type="number" id="mmCtxWindow" placeholder="8192">
+          </div>
+          <div class="field-group">
+            <label for="mmMaxOutput">最大输出 Token</label>
+            <input type="number" id="mmMaxOutput" placeholder="2048">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field-group">
+            <label for="mmTemperature">温度 (Temperature)</label>
+            <input type="number" step="0.1" id="mmTemperature" placeholder="0.7">
+          </div>
+          <div class="field-group">
+            <label for="mmTopP">Top P</label>
+            <input type="number" step="0.05" id="mmTopP" placeholder="1.0">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="profile-modal-footer">
+      <button type="button" class="st-btn danger" id="mmDeleteBtn" style="display:none;" onclick="deleteCurrentModel()">删除模型</button>
+      <div style="flex:1;"></div>
+      <button type="button" class="st-btn secondary" onclick="hideModelModal()">取消</button>
+      <button type="button" class="st-btn primary" onclick="saveModel()">保存模型</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Batch Test Modal ==================== -->
+<div class="profile-modal-overlay" id="batchTestModalOverlay" onclick="if(event.target===this)closeBatchTestModal()">
+  <div class="profile-modal" style="width:460px;">
+    <div class="profile-modal-header">
+      <h3>一键全测</h3>
+      <button type="button" class="profile-modal-close" onclick="closeBatchTestModal()">✕</button>
+    </div>
+    <div class="profile-modal-body">
+      <div style="padding:12px;background:#fff3cd;border:1px solid #ffc10740;border-radius:8px;font-size:12px;color:#856404;margin-bottom:16px;line-height:1.6;">
+        健康检查需要发送请求，请谨慎使用。按次收费的模型可能产生更多费用，请自行承担。
+      </div>
+      <div class="field-row">
+        <div class="field-group">
+          <label for="batchTimeout">超时时间</label>
+          <select id="batchTimeout">
+            <option value="5000">5 秒</option>
+            <option value="10000" selected>10 秒</option>
+            <option value="30000">30 秒</option>
+            <option value="60000">60 秒</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="batchConcurrent">并发测试</label>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:6px;">
+            <label class="switch">
+              <input type="checkbox" id="batchConcurrent" checked>
+              <span class="slider"></span>
+            </label>
+            <span style="font-size:12px;color:var(--text-muted);">同时测试所有模型</span>
+          </div>
+        </div>
+      </div>
+      <div id="batchTestResults" style="font-size:12px;margin-top:8px;"></div>
+    </div>
+    <div class="profile-modal-footer">
+      <div style="flex:1;"></div>
+      <button type="button" class="st-btn secondary" onclick="closeBatchTestModal()">取消</button>
+      <button type="button" class="st-btn primary" onclick="runBatchTest()">开始测试</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Chat Settings Drawer ==================== -->
+<div class="chat-settings-drawer" id="chatSettingsDrawer">
+  <div class="drawer-header">
+    <h3>聊天设置</h3>
+    <button type="button" class="drawer-close-btn" onclick="toggleChatSettingsDrawer()">✕</button>
+  </div>
+  <div class="drawer-body">
+    <!-- Message Settings -->
+    <div class="drawer-section">
+      <div class="drawer-section-title" onclick="toggleDrawerSection(this)">
+        <span>消息设置</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="arrow open" aria-hidden="true" style="width:14px;height:14px;"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="drawer-section-content open">
+        <div class="drawer-field-row">
+          <label for="csUserName">用户名</label>
+          <input type="text" id="csUserName" placeholder="我" style="padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;font-size:12px;">
+        </div>
+        <div class="drawer-switch-row">
+          <div class="field-label-wrap">
+            <label for="csUsage">包含用量</label>
+            <span class="help-icon" title="在消息下方显示 API 使用额度或 Token 消耗">?</span>
+          </div>
+          <select id="csUsage" style="width:100px;padding:4px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:12px;">
+            <option value="enable">启用</option>
+            <option value="disable">禁用</option>
+          </select>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csShowTools">显示工具调用</label>
+          <label class="switch">
+            <input type="checkbox" id="csShowTools" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <div class="field-label-wrap">
+            <label for="csAutoCollapseThink">思考内容自动折叠</label>
+            <span class="help-icon" title="自动折叠深度思考模型（如 DeepSeek R1）的思考过程">?</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="csAutoCollapseThink" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-field-row">
+          <label for="csMessageStyle">消息样式</label>
+          <select id="csMessageStyle">
+            <option value="bubble">气泡</option>
+            <option value="flat">简洁</option>
+          </select>
+        </div>
+        <div class="drawer-field-row">
+          <label for="csNavButtons">对话导航按钮</label>
+          <select id="csNavButtons">
+            <option value="hide">不显示</option>
+            <option value="show">显示</option>
+          </select>
+        </div>
+        <div class="drawer-field-row font-size-row">
+          <label for="csFontSize">消息字体大小</label>
+          <div class="font-slider-wrap">
+            <span>A</span>
+            <input type="range" id="csFontSize" min="12" max="20" value="14" oninput="updateFontSizeLabel(this.value)">
+            <span style="font-size:16px;">A</span>
+          </div>
+          <div class="font-size-desc" id="fontSizeDesc">默认 (14px)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input Settings -->
+    <div class="drawer-section">
+      <div class="drawer-section-title" onclick="toggleDrawerSection(this)">
+        <span>输入设置</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="arrow open" aria-hidden="true" style="width:14px;height:14px;"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="drawer-section-content open">
+        <div class="drawer-switch-row">
+          <label for="csEstimateTokens">显示预估 Token 数</label>
+          <label class="switch">
+            <input type="checkbox" id="csEstimateTokens">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csPasteAsFile">长文本粘贴为文件</label>
+          <label class="switch">
+            <input type="checkbox" id="csPasteAsFile">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csRenderInput">Markdown 渲染输入消息</label>
+          <label class="switch">
+            <input type="checkbox" id="csRenderInput">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csSpaceTranslate">3 个空格快速翻译</label>
+          <label class="switch">
+            <input type="checkbox" id="csSpaceTranslate">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csConfirmTranslate">显示翻译确认对话框</label>
+          <label class="switch">
+            <input type="checkbox" id="csConfirmTranslate" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csTriggerMenu">启用 / 和 @ 触发快捷菜单</label>
+          <label class="switch">
+            <input type="checkbox" id="csTriggerMenu" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csConfirmDelete">删除消息前确认</label>
+          <label class="switch">
+            <input type="checkbox" id="csConfirmDelete" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-switch-row">
+          <label for="csConfirmRegenerate">重新生成消息前确认</label>
+          <label class="switch">
+            <input type="checkbox" id="csConfirmRegenerate" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="drawer-field-row">
+          <label for="csSendKey">发送快捷键</label>
+          <select id="csSendKey">
+            <option value="enter">Enter</option>
+            <option value="ctrl-enter">Ctrl + Enter</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Search Modal ==================== -->
+<div class="search-modal-overlay" id="searchModal" onclick="if(event.target===this)closeSearchModal()">
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon" aria-hidden="true"><title>搜索</title><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="searchInput" placeholder="搜索全部对话和消息…" oninput="performSearch(this.value)">
+      <button type="button" class="search-clear-btn" onclick="clearSearch()">✕</button>
+    </div>
+    <div class="search-results" id="searchResults">
+      <div class="search-empty-state">输入关键词开始搜索</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Toast Container ==================== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ===== State =====
+const STORAGE_KEY = 'aiSessions';
+const SETTINGS_KEY = 'aiSettings';
+const CHAT_SETTINGS_KEY = 'chatSettings';
+let sessions = [];
+let currentId = null;
+let isSending = false;
+let pendingFiles = [];
+let editingProfileIdx = -1;
+
+// Autocomplete lists
+const commandsList = [
+  { name: '/analyze_log', desc: '分析 Minecraft 运行日志' },
+  { name: '/analyze_crash', desc: '诊断游戏崩溃报告' },
+  { name: '/optimize', desc: '优化 JVM 启动参数' },
+  { name: '/help', desc: '查看 AI 助手使用指南' }
+];
+
+const assetsList = [
+  { name: '@latest_log', desc: '引用最近一次的日志文件' },
+  { name: '@crash_report', desc: '引用崩溃报告文本' },
+  { name: '@game_instance', desc: '引用当前游戏实例信息' },
+  { name: '@java_version', desc: '引用当前 Java 运行环境' }
+];
+
+// ===== Persistence =====
+function loadSessions() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+}
+function saveSessions() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+}
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+function saveSettingsToStore(s) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+}
+function loadChatSettings() {
+  try { return JSON.parse(localStorage.getItem(CHAT_SETTINGS_KEY)) || {}; } catch { return {}; }
+}
+function saveChatSettings(s) {
+  localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify(s));
+}
+
+// ===== Session =====
+function createSession(title) {
+  return {
+    id: Date.now() + '_' + Math.random().toString(36).slice(2,6),
+    title: title || '新对话',
+    messages: [],
+    createdAt: new Date().toISOString()
+  };
+}
+
+function switchSession(id) {
+  currentId = id;
+  renderSidebar();
+  renderMessages();
+  updateHeader();
+}
+
+function getCurrentSession() {
+  return sessions.find(s => s.id === currentId);
+}
+
+function newSession() {
+  const s = createSession();
+  sessions.push(s);
+  currentId = s.id;
+  saveSessions();
+  renderSidebar();
+  renderMessages();
+  updateHeader();
+  closeSidebarMobile();
+  document.getElementById('inputBox').focus();
+}
+
+function deleteSession(id, e) {
+  if (e) e.stopPropagation();
+  
+  // Check if delete confirmation is enabled
+  const cs = loadChatSettings();
+  if (cs.confirmDelete !== false) {
+    if (!confirm('确定删除这个对话？')) return;
+  }
+
+  if (sessions.length <= 1) { toast('至少保留一个对话', 'error'); return; }
+  const idx = sessions.findIndex(s => s.id === id);
+  sessions = sessions.filter(s => s.id !== id);
+  if (currentId === id) {
+    const next = sessions[Math.min(idx, sessions.length - 1)];
+    currentId = next.id;
+  }
+  saveSessions();
+  renderSidebar();
+  renderMessages();
+  updateHeader();
+}
+
+// ===== Session Management =====
+let manageMode = false;
+let selectedSessions = new Set();
+
+function toggleManageMode() {
+  manageMode = !manageMode;
+  selectedSessions.clear();
+  document.getElementById('manageBar').style.display = manageMode ? 'flex' : 'none';
+  document.getElementById('manageSessionsBtn').classList.toggle('active', manageMode);
+  renderSidebar();
+}
+
+function toggleSessionCheck(id) {
+  if (selectedSessions.has(id)) selectedSessions.delete(id);
+  else selectedSessions.add(id);
+  renderSidebar();
+}
+
+function selectAllSessions() {
+  if (selectedSessions.size === sessions.length) {
+    selectedSessions.clear();
+  } else {
+    sessions.forEach(s => selectedSessions.add(s.id));
+  }
+  renderSidebar();
+}
+
+function deleteSelectedSessions() {
+  if (selectedSessions.size === 0) return;
+  if (!confirm(`确定删除选中的 ${selectedSessions.size} 个对话？`)) return;
+  if (sessions.length - selectedSessions.size === 0) {
+    toast('至少保留一个对话', 'error');
+    return;
+  }
+  sessions = sessions.filter(s => !selectedSessions.has(s.id));
+  if (selectedSessions.has(currentId)) {
+    currentId = sessions.length > 0 ? sessions[0].id : null;
+  }
+  selectedSessions.clear();
+  saveSessions();
+  renderSidebar();
+  renderMessages();
+  updateHeader();
+  toast('已删除选中会话', 'success');
+}
+
+// ===== Render =====
+function renderSidebar() {
+  const list = document.getElementById('sessionList');
+  if (sessions.length === 0) {
+    const s = createSession();
+    sessions.push(s);
+    currentId = s.id;
+    saveSessions();
+  }
+  const isManage = manageMode;
+  list.innerHTML = sessions.map(s => {
+    const checked = selectedSessions.has(s.id);
+    const cbStyle = isManage ? '' : 'display:none;';
+    return `
+    <div class="session-item${s.id === currentId ? ' active' : ''}${isManage ? ' manage-item' : ''}" onclick="if(manageMode) toggleSessionCheck('${s.id}'); else switchSession('${s.id}');">
+      <input type="checkbox" class="session-check" style="${cbStyle}" ${checked ? 'checked' : ''} onclick="event.stopPropagation();toggleSessionCheck('${s.id}')">
+      <svg class="s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>会话</title><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="s-title">${escHtml(s.title)}</span>
+      <button type="button" class="s-del" onclick="deleteSession('${s.id}', event)" title="删除" style="${isManage ? 'display:none;' : ''}">✕</button>
+    </div>
+    `;
+  }).join('');
+}
+
+function renderMessages() {
+  const container = document.getElementById('messages');
+  const session = getCurrentSession();
+  if (!session || session.messages.length === 0) {
+    container.innerHTML = `<div class="msg-empty" id="emptyState">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><title>对话图标</title><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <p>开始一段新的对话</p>
+      <div class="suggestion-area">
+        <div class="suggestion-chip" onclick="sendSuggestion('帮我分析这个日志文件')">帮我分析日志</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('解释一下崩溃报告')">解释崩溃报告</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('如何安装 Forge？')">如何安装 Forge？</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('优化我的 Minecraft 启动参数')">优化启动参数</div>
+        <div class="suggestion-chip" onclick="sendSuggestion('Java 版本有什么要求？')">Java 版本要求</div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const cs = loadChatSettings();
+  const isFlat = cs.messageStyle === 'flat';
+  const userName = cs.userName || '我';
+
+  container.innerHTML = session.messages.map(m => {
+    const isUser = m.role === 'user';
+    const time = formatTime(m.timestamp);
+    const files = m.files && m.files.length
+      ? '<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;">' +
+        m.files.map(f => `<div class="file-in-msg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>文件</title><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+          <span>${escHtml(f.name)}</span>
+        </div>`).join('') + '</div>'
+      : '';
+    
+    const usageInfo = (cs.usage !== 'disable' && !isUser) 
+      ? `<div style="font-size:11px;color:var(--text-muted);opacity:0.8;">Token 消耗: 142 (输入) / 380 (输出)</div>` 
+      : '';
+
+    const displayName = isUser ? userName : (m.model || 'AI');
+    
+    const bubbleStyle = isFlat ? 'background:transparent;box-shadow:none;padding:4px 0;' : '';
+    const fontSizeStyle = cs.fontSize ? `font-size: ${cs.fontSize}px;` : '';
+
+    return `
+      <div class="msg ${isUser ? 'user' : 'assistant'}" style="${fontSizeStyle}">
+        <div class="msg-avatar">${isUser ? escHtml(userName).charAt(0).toUpperCase() : 'A'}</div>
+        <div class="msg-body">
+          <div class="msg-header">
+            <span class="msg-name">${escHtml(displayName)}</span>
+            <span class="msg-time">${time}</span>
+          </div>
+          <div class="msg-bubble" style="${bubbleStyle}">${escHtml(m.content)}${files}</div>
+          ${usageInfo}
+        </div>
+      </div>
+    `;
+  }).join('');
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateHeader() {
+  const s = getCurrentSession();
+  if (s) {
+    document.getElementById('currentTitle').textContent = s.title;
+  }
+}
+
+// ===== Send =====
+function sendMessage() {
+  const input = document.getElementById('inputBox');
+  const text = input.value.trim();
+  if (!text && pendingFiles.length === 0) return;
+  if (isSending) return;
+
+  const session = getCurrentSession();
+  if (!session) return;
+
+  const model = document.getElementById('modelSelect').value;
+  const think = document.getElementById('thinkSelect').value;
+
+  const msg = { role: 'user', content: text, timestamp: new Date().toISOString(), model, think };
+  if (pendingFiles.length > 0) {
+    msg.files = pendingFiles.map(f => ({ name: f.name, size: f.size, type: f.type }));
+  }
+  session.messages.push(msg);
+
+  // Auto-title with custom model support
+  if (session.messages.length === 1) {
+    const csEnabled = document.getElementById('customTitleModel').checked;
+    const titleModel = document.getElementById('titleModelSelect').value;
+    let titleModelName = '自动选择';
+    if (csEnabled) {
+      titleModelName = titleModel === 'auto' ? (document.getElementById('modelSelect').value || 'deepseek-chat') : titleModel;
+    }
+    session.title = text.length > 18 ? text.slice(0,18) + '…' : text;
+    if (csEnabled) {
+      toast(`使用模型 ${titleModelName} 生成标题`, 'info');
+    }
+  }
+
+  input.value = '';
+  pendingFiles = [];
+  renderFilePreview();
+  autoResize(input);
+  saveSessions();
+  renderMessages();
+  updateHeader();
+  renderSidebar();
+  document.getElementById('sendBtn').disabled = true;
+
+  // Simulate AI response
+  isSending = true;
+  showTyping();
+
+  const thinkMap = { none: 200, low: 500, medium: 900, high: 1800, xhigh: 3000, max: 5000 };
+  const delay = thinkMap[think] || 900;
+
+  setTimeout(() => {
+    hideTyping();
+    const s = getCurrentSession();
+    if (!s) { isSending = false; return; }
+    const reply = simulateReply(text);
+    s.messages.push({ role: 'assistant', content: reply, timestamp: new Date().toISOString(), model, think });
+    saveSessions();
+    renderMessages();
+    updateHeader();
+    isSending = false;
+    document.getElementById('inputBox').focus();
+  }, delay + Math.random() * 400);
+}
+
+function sendSuggestion(text) {
+  document.getElementById('inputBox').value = text;
+  sendMessage();
+}
+
+function simulateReply(text) {
+  const model = document.getElementById('modelSelect').value;
+  const think = document.getElementById('thinkSelect').value;
+
+  const filesNote = pendingFiles.length > 0
+    ? `\n\n（已收到 ${pendingFiles.length} 个文件，演示界面暂不支持文件分析）` : '';
+
+  const greetings = ['你好！有什么可以帮助你的？', '嗨！请说你有什么问题。', '你好，请讲。'];
+  const questions = [
+    '这个问题问得好。目前这是一个纯前端演示界面，没有接入真实 AI 模型。\n\n在实际 HMCL AI 中，你可以：\n- 粘贴 Minecraft 日志让 AI 分析\n- 粘贴崩溃报告获取原因\n- 询问启动参数优化建议\n- 查询 Mod/Forge/Fabric 安装指南',
+  ];
+  const farewell = ['再见！有需要再找我。', '好的，下次见！'];
+
+  let reply;
+  if (/你好|嗨|hi|hello|哈/i.test(text)) reply = greetings[Math.floor(Math.random() * greetings.length)];
+  else if (/再见|拜拜|bye/i.test(text)) reply = farewell[Math.floor(Math.random() * farewell.length)];
+  else if (/\?|？|什么|怎么|如何|为什么|哪个|吗$/.test(text) || /日志|log|崩溃|crash|报错|error|启动|forge|fabric|mod|优化|java/.test(text)) reply = questions[0];
+  else reply = '我收到了你的消息。这是一个纯前端演示原型，目前使用模拟回复。要接入真实 AI，需要将消息发送到后端 API 并处理流式响应。\n\n在 HMCL 的实际实现中，这个对话会通过 LangChain4j 连接到你配置的 API 端点，支持流式逐 token 输出。';
+  return reply + filesNote;
+}
+
+// ===== File Upload =====
+function handleFiles(files) {
+  for (const f of files) {
+    if (pendingFiles.length >= 10) { toast('一次最多上传 10 个文件', 'error'); break; }
+    pendingFiles.push(f);
+  }
+  document.getElementById('fileInput').value = '';
+  renderFilePreview();
+  checkSendBtn();
+}
+
+function renderFilePreview() {
+  const container = document.getElementById('filePreview');
+  if (pendingFiles.length === 0) { container.innerHTML = ''; return; }
+  container.innerHTML = pendingFiles.map((f,i) => {
+    const size = f.size > 1024*1024 ? (f.size/1024/1024).toFixed(1)+' MB' : (f.size/1024).toFixed(0)+' KB';
+    return `<div class="file-chip">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><title>文件</title><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span>${escHtml(f.name)}</span>
+      <span style="color:#9399b2;flex-shrink:0;">${size}</span>
+      <button type="button" class="remove-file" onclick="removeFile(${i})" title="移除">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function removeFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderFilePreview();
+  checkSendBtn();
+}
+
+// ===== Autocomplete Logic =====
+let selectedAcIndex = 0;
+let currentAcList = [];
+
+function handleInputAutocomplete(e) {
+  const input = document.getElementById('inputBox');
+  const val = input.value;
+  const pos = input.selectionStart;
+  const popover = document.getElementById('autocompletePopover');
+
+  // Check if autocomplete is enabled
+  const cs = loadChatSettings();
+  if (cs.triggerMenu === false) {
+    popover.classList.remove('open');
+    return;
+  }
+
+  // Find last trigger character before cursor
+  const lastSlash = val.lastIndexOf('/', pos - 1);
+  const lastAt = val.lastIndexOf('@', pos - 1);
+  
+  let trigger = '';
+  let triggerIdx = -1;
+  
+  if (lastSlash > lastAt && (lastSlash === 0 || /[\s\n]/.test(val[lastSlash - 1]))) {
+    trigger = '/';
+    triggerIdx = lastSlash;
+  } else if (lastAt > lastSlash && (lastAt === 0 || /[\s\n]/.test(val[lastAt - 1]))) {
+    trigger = '@';
+    triggerIdx = lastAt;
+  }
+
+  if (triggerIdx !== -1) {
+    const query = val.slice(triggerIdx + 1, pos);
+    if (!/\s/.test(query)) {
+      showAutocomplete(trigger, query, triggerIdx);
+      return;
+    }
+  }
+
+  popover.classList.remove('open');
+}
+
+function showAutocomplete(trigger, query, index) {
+  const popover = document.getElementById('autocompletePopover');
+  const list = trigger === '/' ? commandsList : assetsList;
+  
+  currentAcList = list.filter(item => item.name.toLowerCase().includes((trigger + query).toLowerCase()));
+  
+  if (currentAcList.length === 0) {
+    popover.classList.remove('open');
+    return;
+  }
+
+  selectedAcIndex = 0;
+  renderAutocomplete(index);
+  popover.classList.add('open');
+}
+
+function renderAutocomplete(triggerIndex) {
+  const popover = document.getElementById('autocompletePopover');
+  popover.innerHTML = currentAcList.map((item, idx) => `
+    <div class="autocomplete-item${idx === selectedAcIndex ? ' selected' : ''}" onclick="selectAutocomplete('${item.name}', ${triggerIndex})">
+      <span>${escHtml(item.name)}</span>
+      <span class="ac-desc">${escHtml(item.desc)}</span>
+    </div>
+  `).join('');
+}
+
+function selectAutocomplete(name, triggerIndex) {
+  const input = document.getElementById('inputBox');
+  const val = input.value;
+  const pos = input.selectionStart;
+  
+  const before = val.slice(0, triggerIndex);
+  const after = val.slice(pos);
+  
+  input.value = before + name + ' ' + after;
+  input.focus();
+  const newCursorPos = triggerIndex + name.length + 1;
+  input.setSelectionRange(newCursorPos, newCursorPos);
+  
+  document.getElementById('autocompletePopover').classList.remove('open');
+  checkSendBtn();
+}
+
+// Intercept arrow keys and enter when autocomplete is open
+document.getElementById('inputBox').addEventListener('keydown', function(e) {
+  const popover = document.getElementById('autocompletePopover');
+  if (!popover.classList.contains('open')) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    selectedAcIndex = (selectedAcIndex + 1) % currentAcList.length;
+    updateAcSelection();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    selectedAcIndex = (selectedAcIndex - 1 + currentAcList.length) % currentAcList.length;
+    updateAcSelection();
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    const activeItem = currentAcList[selectedAcIndex];
+    if (activeItem) {
+      // Find trigger index
+      const val = this.value;
+      const pos = this.selectionStart;
+      const lastSlash = val.lastIndexOf('/', pos - 1);
+      const lastAt = val.lastIndexOf('@', pos - 1);
+      const triggerIdx = Math.max(lastSlash, lastAt);
+      selectAutocomplete(activeItem.name, triggerIdx);
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    popover.classList.remove('open');
+  }
+});
+
+function updateAcSelection() {
+  const items = document.querySelectorAll('.autocomplete-item');
+  items.forEach((item, idx) => {
+    if (idx === selectedAcIndex) {
+      item.classList.add('selected');
+      item.scrollIntoView({ block: 'nearest' });
+    } else {
+      item.classList.remove('selected');
+    }
+  });
+}
+
+// ===== Model Selector Popover =====
+function getAvailableModels() {
+  const allModels = [];
+  profiles.forEach((p, pi) => {
+    if (p.models && p.models.length > 0) {
+      p.models.forEach((m, mi) => {
+        const label = m.alias || m.model || '未命名';
+        const val = pi + '_' + mi;
+        allModels.push({ val, label, provider: p.name });
+      });
+    }
+  });
+  return allModels;
+}
+
+function refreshModelSelectors() {
+  const allModels = getAvailableModels();
+  // Populate default chat model
+  const dcSel = document.getElementById('defaultChatModel');
+  const currentDc = dcSel.value;
+  dcSel.innerHTML = '<option value="">（自动选择第一个可用模型）</option>' + allModels.map(m => `<option value="${m.val}">${escHtml(m.label)} (${escHtml(m.provider)})</option>`).join('');
+  if (currentDc && allModels.find(m => m.val === currentDc)) dcSel.value = currentDc;
+  // Populate title model select
+  const tmSel = document.getElementById('titleModelSelect');
+  const currentTm = tmSel.value;
+  tmSel.innerHTML = '<option value="auto">自动选择 (与对话模型一致)</option>' + allModels.map(m => `<option value="${m.val}">${escHtml(m.label)} (${escHtml(m.provider)})</option>`).join('');
+  if (currentTm && (currentTm === 'auto' || allModels.find(m => m.val === currentTm))) tmSel.value = currentTm;
+}
+
+function refreshModelPopover() {
+  const popover = document.getElementById('modelPopover');
+  const allModels = getAvailableModels();
+
+  if (allModels.length === 0) {
+    popover.innerHTML = '<div class="model-option" onclick="openSettings(); document.getElementById(\'modelPopover\').classList.remove(\'open\');" style="color:var(--primary);font-style:italic;">添加模型…</div>';
+    return;
+  }
+
+  const currentVal = document.getElementById('modelSelect').value;
+  popover.innerHTML = allModels.map(m => `
+    <div class="model-option${m.val === currentVal ? ' active' : ''}" onclick="selectModel('${m.val}', '${escHtml(m.label)}')">
+      ${escHtml(m.label)}
+      <span style="font-size:10px;color:var(--text-muted);margin-left:8px;">${escHtml(m.provider)}</span>
+    </div>
+  `).join('');
+}
+
+function toggleModelPopover(e) {
+  e.stopPropagation();
+  refreshModelPopover();
+  document.getElementById('modelPopover').classList.toggle('open');
+}
+
+function selectModel(val, name) {
+  document.getElementById('modelSelect').value = val;
+  document.getElementById('currentModelName').textContent = name;
+  document.getElementById('modelPopover').classList.remove('open');
+  saveToolbarState();
+}
+
+// Close popovers on click outside
+document.addEventListener('click', function() {
+  document.getElementById('modelPopover').classList.remove('open');
+  document.getElementById('autocompletePopover').classList.remove('open');
+});
+
+// ===== Search Modal Logic =====
+function openSearchModal() {
+  document.getElementById('searchModal').classList.add('open');
+  document.getElementById('searchInput').focus();
+}
+
+function closeSearchModal() {
+  document.getElementById('searchModal').classList.remove('open');
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchResults').innerHTML = '<div class="search-empty-state">输入关键词开始搜索</div>';
+}
+
+function performSearch(query) {
+  const resultsContainer = document.getElementById('searchResults');
+  if (!query.trim()) {
+    resultsContainer.innerHTML = '<div class="search-empty-state">输入关键词开始搜索</div>';
+    return;
+  }
+
+  const results = [];
+  sessions.forEach(session => {
+    // Search session title
+    if (session.title.toLowerCase().includes(query.toLowerCase())) {
+      results.push({
+        sessionId: session.id,
+        title: session.title,
+        type: 'session',
+        text: `匹配会话标题: ${session.title}`
+      });
+    }
+    // Search messages
+    session.messages.forEach(msg => {
+      if (msg.content.toLowerCase().includes(query.toLowerCase())) {
+        results.push({
+          sessionId: session.id,
+          title: session.title,
+          type: 'message',
+          text: msg.content
+        });
+      }
+    });
+  });
+
+  if (results.length === 0) {
+    resultsContainer.innerHTML = '<div class="search-empty-state">未找到匹配的结果</div>';
+    return;
+  }
+
+  resultsContainer.innerHTML = results.map(res => {
+    const highlightedText = highlightText(res.text, query);
+    return `
+      <div class="search-result-item" onclick="navigateToSearchResult('${res.sessionId}')">
+        <div class="search-result-title">${escHtml(res.title)}</div>
+        <div class="search-result-text">${highlightedText}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function highlightText(text, query) {
+  const regex = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+  return escHtml(text).replace(regex, '<mark>$1</mark>');
+}
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function navigateToSearchResult(sessionId) {
+  switchSession(sessionId);
+  closeSearchModal();
+}
+
+// ===== Chat Settings Drawer =====
+function toggleChatSettingsDrawer() {
+  document.getElementById('chatSettingsDrawer').classList.toggle('open');
+}
+
+function toggleDrawerSection(header) {
+  const content = header.nextElementSibling;
+  const arrow = header.querySelector('.arrow');
+  content.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function updateFontSizeLabel(val) {
+  document.getElementById('fontSizeDesc').textContent = val === '14' ? '默认 (14px)' : `${val}px`;
+  
+  // Save font size
+  const cs = loadChatSettings();
+  cs.fontSize = parseInt(val);
+  saveChatSettings(cs);
+  
+  // Re-render messages to apply new font size
+  renderMessages();
+}
+
+// Load Chat Settings into UI
+function initChatSettings() {
+  const cs = loadChatSettings();
+  
+  // Message Settings
+  document.getElementById('csUserName').value = cs.userName || '我';
+  document.getElementById('csUsage').value = cs.usage || 'enable';
+  document.getElementById('csShowTools').checked = cs.showTools !== false;
+  document.getElementById('csAutoCollapseThink').checked = cs.autoCollapseThink !== false;
+  document.getElementById('csMessageStyle').value = cs.messageStyle || 'bubble';
+  document.getElementById('csNavButtons').value = cs.navButtons || 'hide';
+  document.getElementById('csFontSize').value = cs.fontSize || 14;
+  updateFontSizeLabel(cs.fontSize || 14);
+
+  // Input Settings
+  document.getElementById('csEstimateTokens').checked = !!cs.estimateTokens;
+  document.getElementById('csPasteAsFile').checked = !!cs.pasteAsFile;
+  document.getElementById('csRenderInput').checked = !!cs.renderInput;
+  document.getElementById('csSpaceTranslate').checked = !!cs.spaceTranslate;
+  document.getElementById('csConfirmTranslate').checked = cs.confirmTranslate !== false;
+  document.getElementById('csTriggerMenu').checked = cs.triggerMenu !== false;
+  document.getElementById('csConfirmDelete').checked = cs.confirmDelete !== false;
+  document.getElementById('csConfirmRegenerate').checked = cs.confirmRegenerate !== false;
+  document.getElementById('csSendKey').value = cs.sendKey || 'enter';
+}
+
+// Save Chat Settings on Change
+document.querySelectorAll('#chatSettingsDrawer input, #chatSettingsDrawer select').forEach(el => {
+  el.addEventListener('change', function() {
+    const cs = loadChatSettings();
+    if (this.type === 'checkbox') {
+      cs[this.id.replace('cs', '').charAt(0).toLowerCase() + this.id.replace('cs', '').slice(1)] = this.checked;
+    } else {
+      cs[this.id.replace('cs', '').charAt(0).toLowerCase() + this.id.replace('cs', '').slice(1)] = this.value;
+    }
+    saveChatSettings(cs);
+    renderMessages();
+  });
+});
+
+// Auto-save AI settings on any change
+document.querySelectorAll('#settingsBody select, #settingsBody input[type=checkbox]').forEach(el => {
+  el.addEventListener('change', function() {
+    autoSaveSettings();
+  });
+});
+document.getElementById('titleModelSelect')?.addEventListener('change', function() {
+  autoSaveSettings();
+});
+
+// ===== Toolbar State =====
+function saveToolbarState() {
+  try {
+    localStorage.setItem('aiToolbar', JSON.stringify({
+      model: document.getElementById('modelSelect').value,
+      think: document.getElementById('thinkSelect').value
+    }));
+  } catch {}
+}
+
+// ===== Typing =====
+function showTyping() {
+  const container = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = 'msg assistant typing';
+  el.id = 'typingIndicator';
+  el.innerHTML = '<div class="msg-avatar">A</div><div><div class="msg-bubble"><span></span><span></span><span></span></div></div>';
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+function hideTyping() {
+  const el = document.getElementById('typingIndicator');
+  if (el) el.remove();
+}
+
+// ===== Settings =====
+
+// Profiles
+let profiles = [];
+
+function loadProfiles() {
+  const s = loadSettings();
+  profiles = s.profiles || [];
+  profiles.forEach(p => {
+    if (!p.models) {
+      if (p.model) {
+        p.models = [{
+          model: p.model,
+          contextWindow: p.ctxWindow || '',
+          maxOutput: p.maxOutput || '',
+          temperature: p.temperature || '',
+          topP: p.topP || '',
+          reasoningEffort: p.reasoningEffort || 'medium'
+        }];
+      } else {
+        p.models = [];
+      }
+      delete p.model; delete p.ctxWindow; delete p.maxOutput;
+      delete p.temperature; delete p.topP; delete p.presencePenalty;
+      delete p.frequencyPenalty; delete p.seed; delete p.reasoningEffort;
+    }
+  });
+  saveProfilesToStore();
+}
+
+function saveProfilesToStore() {
+  const s = loadSettings();
+  s.profiles = profiles;
+  saveSettingsToStore(s);
+}
+
+function renderProfiles() {
+  const list = document.getElementById('profileList');
+  if (profiles.length === 0) {
+    list.innerHTML = '<div style="color:#9399b2;font-size:13px;padding:12px 0;text-align:center;">还没有添加提供商。点击下方按钮添加。</div>';
+    return;
+  }
+  const iconMap = { 'openai-completions': '🤖', 'openai-reasoning': '🧠', 'anthropic': '🌿', 'restapi': '🔌' };
+  list.innerHTML = profiles.map((p, i) => {
+    const isOpen = p._open;
+    const modelCount = p.models ? p.models.length : 0;
+    return `
+      <div>
+        <div class="profile-header${isOpen ? ' open' : ''}" onclick="toggleProfile(${i})">
+          <div class="ph-icon">${iconMap[p.protocol] || '🔗'}</div>
+          <div class="ph-info">
+            <div class="ph-name">${escHtml(p.name)}</div>
+            <div class="ph-detail">${escHtml(p.protocol)} · ${escHtml(p.endpoint || '')} · ${modelCount} 个模型</div>
+          </div>
+          <svg class="ph-arrow${isOpen ? ' open' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <button type="button" class="ph-del" onclick="event.stopPropagation();deleteProfile(${i})" title="删除提供商">✕</button>
+        </div>
+        <div class="profile-models${isOpen ? ' open' : ''}">
+          ${(p.models && p.models.length > 0) ? p.models.map((m, mi) => `
+            <div class="model-item">
+              <div style="flex:1;min-width:0;" onclick="editModel(${i}, ${mi})">
+                <span class="mi-name">${escHtml(m.model || '未命名')}</span>
+                ${m.alias ? `<span style="font-size:11px;color:var(--text-muted);">${escHtml(m.alias)}</span>` : ''}
+              </div>
+              <button type="button" class="model-test-btn" id="mtb-${i}-${mi}" onclick="event.stopPropagation();testModelConnection(${i},${mi})" title="测试连接">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:14px;height:14px;"><polyline points="22 2 11 13 7 7"/></svg>
+              </button>
+              <span class="mi-edit" onclick="editModel(${i}, ${mi})">编辑</span>
+            </div>
+          `).join('') : ''}
+          <button type="button" class="add-model-btn" onclick="event.stopPropagation();addModelToProfile(${i})">+ 添加模型</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleProfile(idx) {
+  const p = profiles[idx];
+  if (!p) return;
+  p._open = !p._open;
+  renderProfiles();
+}
+
+function showAddProfile() {
+  editingProfileIdx = -1;
+  document.getElementById('profileFormTitle').textContent = '新建提供商';
+  document.getElementById('pfDeleteBtn').style.display = 'none';
+  document.getElementById('pfName').value = '';
+  document.getElementById('pfProtocol').value = 'openai-completions';
+  document.getElementById('pfEndpoint').value = '';
+  document.getElementById('pfApiKey').value = '';
+  document.getElementById('discoverFeedback').textContent = '';
+  document.getElementById('profileModalOverlay').classList.add('open');
+}
+
+function editProfile(idx) {
+  const p = profiles[idx];
+  if (!p) return;
+  editingProfileIdx = idx;
+  document.getElementById('profileFormTitle').textContent = '编辑提供商';
+  document.getElementById('pfDeleteBtn').style.display = 'inline-block';
+  document.getElementById('pfName').value = p.name || '';
+  document.getElementById('pfProtocol').value = p.protocol || 'openai-completions';
+  document.getElementById('pfEndpoint').value = p.endpoint || '';
+  document.getElementById('pfApiKey').value = p.apiKey || '';
+  document.getElementById('discoverFeedback').textContent = '';
+  document.getElementById('profileModalOverlay').classList.add('open');
+}
+
+function hideProfileForm() {
+  document.getElementById('profileModalOverlay').classList.remove('open');
+}
+
+function saveProfile() {
+  const name = document.getElementById('pfName').value.trim();
+  const protocol = document.getElementById('pfProtocol').value;
+  let endpoint = document.getElementById('pfEndpoint').value.trim();
+  const apiKey = document.getElementById('pfApiKey').value.trim();
+
+  if (!name) { toast('请输入提供商名称', 'error'); return; }
+  if (!endpoint) { toast('请输入 API 端点', 'error'); return; }
+
+  if (!/^https?:\/\//i.test(endpoint)) endpoint = 'https://' + endpoint;
+  endpoint = endpoint.replace(/\/+$/, '');
+
+  if (editingProfileIdx >= 0 && editingProfileIdx < profiles.length) {
+    const existing = profiles[editingProfileIdx];
+    profiles[editingProfileIdx] = { name, protocol, endpoint, apiKey, models: existing.models || [] };
+    toast('提供商已更新', 'success');
+  } else {
+    profiles.push({ name, protocol, endpoint, apiKey, models: [], _open: true });
+    toast('提供商已添加', 'success');
+  }
+  saveProfilesToStore();
+  renderProfiles();
+  refreshModelSelectors();
+  hideProfileForm();
+}
+
+function deleteProfile(idx) {
+  if (!confirm('确定删除这个提供商及其所有模型？')) return;
+  profiles.splice(idx, 1);
+  saveProfilesToStore();
+  renderProfiles();
+  refreshModelSelectors();
+  if (editingProfileIdx === idx) hideProfileForm();
+  toast('提供商已删除', 'success');
+}
+
+function deleteCurrentProfile() {
+  if (editingProfileIdx >= 0) deleteProfile(editingProfileIdx);
+}
+
+// ===== Model Management =====
+let editingProfileModelIdx = -1;
+let editingModelIdx = -1;
+
+function addModelToProfile(profileIdx) {
+  editingProfileModelIdx = profileIdx;
+  editingModelIdx = -1;
+  document.getElementById('modelFormTitle').textContent = '添加模型';
+  document.getElementById('mmDeleteBtn').style.display = 'none';
+  document.getElementById('mmModel').value = '';
+  document.getElementById('mmAlias').value = '';
+  document.getElementById('mmCtxWindow').value = '';
+  document.getElementById('mmMaxOutput').value = '';
+  document.getElementById('mmTemperature').value = '';
+  document.getElementById('mmTopP').value = '';
+  document.getElementById('mmReasoning').value = 'medium';
+  document.getElementById('mmModelListWrap').style.display = 'none';
+  document.getElementById('modelAdvancedBody').classList.remove('open');
+  document.getElementById('modelAdvancedArrow').classList.remove('open');
+  document.getElementById('modelModalOverlay').classList.add('open');
+}
+
+function editModel(profileIdx, modelIdx) {
+  const p = profiles[profileIdx];
+  if (!p || !p.models || !p.models[modelIdx]) return;
+  editingProfileModelIdx = profileIdx;
+  editingModelIdx = modelIdx;
+  const m = p.models[modelIdx];
+  document.getElementById('modelFormTitle').textContent = '编辑模型';
+  document.getElementById('mmDeleteBtn').style.display = 'inline-block';
+  document.getElementById('mmModel').value = m.model || '';
+  document.getElementById('mmAlias').value = m.alias || '';
+  document.getElementById('mmCtxWindow').value = m.contextWindow || '';
+  document.getElementById('mmMaxOutput').value = m.maxOutput || '';
+  document.getElementById('mmTemperature').value = m.temperature || '';
+  document.getElementById('mmTopP').value = m.topP || '';
+  document.getElementById('mmReasoning').value = m.reasoningEffort || 'medium';
+  document.getElementById('mmModelListWrap').style.display = 'none';
+  document.getElementById('modelAdvancedBody').classList.remove('open');
+  document.getElementById('modelAdvancedArrow').classList.remove('open');
+  document.getElementById('modelModalOverlay').classList.add('open');
+}
+
+function hideModelModal() {
+  document.getElementById('modelModalOverlay').classList.remove('open');
+}
+
+function fetchModelsForModal() {
+  const p = profiles[editingProfileModelIdx];
+  if (!p) {
+    toast('请先选择提供商', 'error');
+    return;
+  }
+  const feedback = document.getElementById('mmModelSelect');
+  feedback.innerHTML = '<option value="">正在加载...</option>';
+  document.getElementById('mmModelListWrap').style.display = 'block';
+  
+  setTimeout(() => {
+    const commonModels = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'deepseek-chat', 'deepseek-reasoner', 'claude-3-opus', 'claude-3.5-sonnet'];
+    feedback.innerHTML = '<option value="">-- 从列表中选择或手动输入 --</option>' + commonModels.map(m => `<option value="${m}">${m}</option>`).join('');
+    toast('模型列表已加载', 'success');
+  }, 800);
+}
+
+function onModalModelSelect(val) {
+  if (val) document.getElementById('mmModel').value = val;
+}
+
+function toggleModelAdvanced() {
+  const body = document.getElementById('modelAdvancedBody');
+  const arrow = document.getElementById('modelAdvancedArrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.ss-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.settings-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  const activeItem = document.querySelector(`.ss-item[onclick="switchSettingsTab('${tab}')"]`);
+  if (activeItem) activeItem.classList.add('active');
+}
+
+function saveModel() {
+  const p = profiles[editingProfileModelIdx];
+  if (!p) return;
+  const modelId = document.getElementById('mmModel').value.trim();
+  if (!modelId) { toast('请输入模型 ID', 'error'); return; }
+  const modelData = {
+    model: modelId,
+    alias: document.getElementById('mmAlias').value.trim(),
+    contextWindow: document.getElementById('mmCtxWindow').value,
+    maxOutput: document.getElementById('mmMaxOutput').value,
+    temperature: document.getElementById('mmTemperature').value,
+    topP: document.getElementById('mmTopP').value,
+    reasoningEffort: document.getElementById('mmReasoning').value
+  };
+  if (!p.models) p.models = [];
+  if (editingModelIdx >= 0 && editingModelIdx < p.models.length) {
+    p.models[editingModelIdx] = modelData;
+    toast('模型已更新', 'success');
+  } else {
+    p.models.push(modelData);
+    toast('模型已添加', 'success');
+  }
+  saveProfilesToStore();
+  renderProfiles();
+  refreshModelSelectors();
+  hideModelModal();
+}
+
+function deleteCurrentModel() {
+  const p = profiles[editingProfileModelIdx];
+  if (!p || !p.models || editingModelIdx < 0 || editingModelIdx >= p.models.length) return;
+  if (!confirm('确定删除这个模型？')) return;
+  p.models.splice(editingModelIdx, 1);
+  saveProfilesToStore();
+  renderProfiles();
+  hideModelModal();
+  toast('模型已删除', 'success');
+}
+
+// Model discovery simulation
+function discoverModels() {
+  const feedback = document.getElementById('discoverFeedback');
+  const endpoint = document.getElementById('pfEndpoint').value.trim();
+  const apiKey = document.getElementById('pfApiKey').value.trim();
+
+  if (!endpoint || !apiKey) {
+    feedback.textContent = '请先填写 API 端点和密钥';
+    return;
+  }
+
+  feedback.textContent = '正在从 /v1/models 加载模型列表…';
+  feedback.style.color = '#585b70';
+
+  setTimeout(() => {
+    const commonModels = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'deepseek-chat', 'deepseek-reasoner', 'claude-3-opus', 'claude-3.5-sonnet'];
+    feedback.textContent = '发现 ' + commonModels.length + ' 个可用模型，请在下方添加模型。';
+    feedback.style.color = '#a6e3a1';
+    toast('发现 ' + commonModels.length + ' 个可用模型', 'success');
+  }, 1200);
+}
+
+// Advanced toggle
+function toggleTitleModelSection(show) {
+  document.getElementById('titleModelSection').style.display = show ? 'block' : 'none';
+}
+
+// Settings open/close
+function openSettings() {
+  document.getElementById('settingsOverlay').classList.add('open');
+  loadSettingsIntoForm();
+  renderProfiles();
+  refreshModelSelectors();
+}
+
+function closeSettings() {
+  document.getElementById('settingsOverlay').classList.remove('open');
+}
+
+function loadSettingsIntoForm() {
+  const s = loadSettings();
+  const customTitleModel = !!s.customTitleModel;
+  document.getElementById('customTitleModel').checked = customTitleModel;
+  document.getElementById('titleModelSelect').value = s.titleModel || 'auto';
+  toggleTitleModelSection(customTitleModel);
+  document.getElementById('defaultChatModel').value = s.defaultChatModel || '';
+  document.getElementById('autoLog').checked = !!s.autoLog;
+  document.getElementById('approvalMode').value = s.approvalMode || 'safe';
+  refreshModelSelectors();
+}
+
+function autoSaveSettings() {
+  const settings = {
+    profiles,
+    customTitleModel: document.getElementById('customTitleModel').checked,
+    titleModel: document.getElementById('titleModelSelect').value,
+    defaultChatModel: document.getElementById('defaultChatModel').value,
+    autoLog: document.getElementById('autoLog').checked,
+    approvalMode: document.getElementById('approvalMode').value,
+  };
+  saveSettingsToStore(settings);
+}
+
+function saveSettings() { autoSaveSettings(); }
+
+function testConnection() {
+  const feedback = document.getElementById('providerFeedback');
+  feedback.textContent = '正在测试连接…';
+  feedback.style.color = '#585b70';
+  setTimeout(() => {
+    feedback.textContent = '✓ Say hello with one word — hello! 连接成功';
+    feedback.style.color = '#a6e3a1';
+    setTimeout(() => { feedback.textContent = ''; }, 3000);
+    toast('连接测试成功', 'success');
+  }, 1500);
+}
+
+function openBatchTestModal() {
+  document.getElementById('batchTestResults').innerHTML = '';
+  document.getElementById('batchTestModalOverlay').classList.add('open');
+}
+function closeBatchTestModal() {
+  document.getElementById('batchTestModalOverlay').classList.remove('open');
+}
+function runBatchTest() {
+  const results = document.getElementById('batchTestResults');
+  results.innerHTML = '<div style="color:#585b70;">正在测试所有提供商的所有模型…</div>';
+  const concurrent = document.getElementById('batchConcurrent').checked;
+  const timeout = parseInt(document.getElementById('batchTimeout').value);
+  
+  let testCount = 0;
+  let html = '';
+  profiles.forEach((p, pi) => {
+    if (p.models && p.models.length > 0) {
+      p.models.forEach((m, mi) => {
+        testCount++;
+        const passed = Math.random() < 0.5;
+        const icon = passed ? '<span style="color:#a6e3a1;">✓</span>' : '<span style="color:#f38ba8;">✗</span>';
+        html += '<div style="padding:4px 0;font-size:12px;">' + icon + ' ' + escHtml(p.name) + ' / ' + escHtml(m.model || '未命名') + ' ' + (passed ? '通过' : '失败') + '</div>';
+        const btn = document.getElementById('mtb-' + pi + '-' + mi);
+        if (btn) {
+          btn.innerHTML = passed 
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2" stroke-linecap="round" style="width:14px;height:14px;"><polyline points="20 6 9 17 4 12"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="#f38ba8" stroke-width="2" stroke-linecap="round" style="width:14px;height:14px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+          btn.style.background = passed ? '#e6f9ed' : '#fde8ec';
+        }
+      });
+    }
+  });
+  
+  const delay = concurrent ? 1500 : testCount * 400;
+  setTimeout(() => {
+    results.innerHTML = '<div style="font-weight:600;margin-bottom:8px;">测试完成</div>' + html;
+    toast('一键全测完成', 'success');
+  }, delay);
+}
+
+function testModelConnection(pi, mi) {
+  const btn = document.getElementById('mtb-' + pi + '-' + mi);
+  if (!btn) return;
+  btn.innerHTML = '<div style="width:14px;height:14px;border:2px solid #ccc;border-top-color:var(--primary);border-radius:50%;animation:spin 0.6s linear infinite;"></div>';
+  btn.style.background = '#f8f9fc';
+  
+  setTimeout(() => {
+    const passed = Math.random() < 0.5;
+    btn.innerHTML = passed
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2" stroke-linecap="round" style="width:14px;height:14px;"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="#f38ba8" stroke-width="2" stroke-linecap="round" style="width:14px;height:14px;"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+    btn.style.background = passed ? '#e6f9ed' : '#fde8ec';
+    toast(passed ? '模型连接正常' : '模型连接超时', passed ? 'success' : 'error');
+  }, 1200);
+}
+
+// ===== Toast =====
+function toast(msg, type) {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || 'info');
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; }, 2500);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ===== UI Helpers =====
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Auto-resize textarea
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+function checkSendBtn() {
+  const input = document.getElementById('inputBox');
+  document.getElementById('sendBtn').disabled = input.value.trim() === '' && pendingFiles.length === 0;
+}
+
+function handleKey(e) {
+  const cs = loadChatSettings();
+  const isCtrlEnter = cs.sendKey === 'ctrl-enter';
+
+  if (e.key === 'Enter') {
+    if (isCtrlEnter) {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    } else {
+      if (!e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+  }
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarBackdrop').classList.toggle('open');
+}
+function closeSidebarMobile() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop').classList.remove('open');
+}
+
+// ===== Init =====
+sessions = loadSessions();
+if (sessions.length === 0) {
+  const s = createSession();
+  sessions.push(s);
+  saveSessions();
+}
+currentId = sessions[0].id;
+
+loadProfiles();
+initChatSettings();
+
+// Hidden select element for model
+const hiddenModelSelect = document.createElement('select');
+hiddenModelSelect.id = 'modelSelect';
+hiddenModelSelect.style.display = 'none';
+document.body.appendChild(hiddenModelSelect);
+
+// Load first available model as default
+function loadDefaultModel() {
+  hiddenModelSelect.innerHTML = '';
+  let firstVal = '';
+  profiles.forEach((p, pi) => {
+    if (p.models && p.models.length > 0) {
+      p.models.forEach((m, mi) => {
+        const val = pi + '_' + mi;
+        const label = m.alias || m.model || '未命名';
+        hiddenModelSelect.innerHTML += `<option value="${val}">${escHtml(label)}</option>`;
+        if (!firstVal) firstVal = val;
+      });
+    }
+  });
+  if (firstVal) {
+    hiddenModelSelect.value = firstVal;
+    // Try to restore saved
+    try {
+      const saved = JSON.parse(localStorage.getItem('aiToolbar'));
+      if (saved && saved.model) {
+        hiddenModelSelect.value = saved.model;
+      }
+    } catch {}
+  }
+  // Update the display name
+  const currentVal = hiddenModelSelect.value;
+  if (currentVal) {
+    const parts = currentVal.split('_');
+    const pi = parseInt(parts[0]);
+    const mi = parseInt(parts[1]);
+    const p = profiles[pi];
+    if (p && p.models && p.models[mi]) {
+      const m = p.models[mi];
+      document.getElementById('currentModelName').textContent = m.alias || m.model || '未命名';
+    }
+  } else {
+    document.getElementById('currentModelName').textContent = '选择模型';
+  }
+}
+
+loadDefaultModel();
+
+// Restore toolbar settings
+try {
+  const saved = JSON.parse(localStorage.getItem('aiToolbar'));
+  if (saved && saved.think) {
+    document.getElementById('thinkSelect').value = saved.think;
+  }
+} catch {}
+
+renderSidebar();
+renderMessages();
+updateHeader();
+document.getElementById('inputBox').focus();
+</script>
+</body>
+</html>
