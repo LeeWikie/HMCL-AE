@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-06-26T22:38:22.881Z" hostname="localhost" time="0.046">
+  <properties/>
+  <testcase name="testExecuteUnknownTool()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.006"/>
+  <testcase name="testExecuteFailureResult()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.012"/>
+  <testcase name="testBuildToolSpecificationsEmpty()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.0"/>
+  <testcase name="testBuildToolSpecificationsMultiple()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.026"/>
+  <testcase name="testExecuteKnownTool()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.001"/>
+  <testcase name="testBuildToolSpecificationsSingle()" classname="org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapterTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -57,6 +57,7 @@ val embedResources by configurations.registering
 dependencies {
     implementation(project(":HMCLCore"))
     implementation(project(":HMCLBoot"))
+    implementation(project(":HMCLAI"))
     implementation("libs:JFoenix")
     implementation(libs.jwebp)
     implementation(libs.fxsvgimage)
@@ -208,6 +209,7 @@ tasks.shadowJar {
         exclude(dependency("com.google.code.gson:.*:.*"))
         exclude(dependency("net.java.dev.jna:jna:.*"))
         exclude(dependency("libs:JFoenix:.*"))
+        exclude(dependency("dev.langchain4j:.*:.*"))
         exclude(project(":HMCLBoot"))
     }
 

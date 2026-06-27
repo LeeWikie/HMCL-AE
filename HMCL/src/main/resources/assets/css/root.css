@@ -206,6 +206,12 @@
     -fx-fill: -monet-on-secondary-container;
 }
 
+.ai-settings-sidebar-item,
+.navigation-drawer-item,
+.advanced-list-item {
+    -jfx-rippler-duration: 0.4s;
+}
+
 .navigation-drawer-item > .rippler-container > .container > VBox {
     -fx-padding: 0 0 0 0;
 }
@@ -1996,4 +2002,989 @@
 
 .update-pane:active .subtitle-label {
     -fx-text-fill: -monet-tertiary;
+}
+
+/*******************************************************************************
+ *                                                                             *
+ * AI Chat Bubbles                                                             *
+ *                                                                             *
+ ******************************************************************************/
+
+.ai-bubble {
+    -fx-padding: 12 16 12 16;
+    -fx-font-size: 14px;
+    -fx-wrap-text: true;
+    -fx-line-spacing: 2px;
+}
+
+.ai-bubble-user {
+    -fx-background-color: -monet-primary;
+    -fx-text-fill: white;
+    -fx-background-radius: 16 16 4 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 4, 0, 0, 2);
+}
+
+.ai-bubble-ai {
+    -fx-background-color: -monet-surface;
+    -fx-text-fill: -monet-on-surface;
+    -fx-background-radius: 16 16 16 4;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0.5;
+    -fx-border-radius: 16 16 16 4;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 3, 0, 0, 1);
+}
+
+.ai-bubble-error {
+    -fx-text-fill: -monet-error;
+}
+
+.ai-bubble-system {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 11px;
+    -fx-padding: 4 14 6 14;
+}
+
+.ai-bubble-wrapper {
+    -fx-padding: 6 16 6 16;
+}
+
+.ai-typing-indicator {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 4 16 6 16;
+}
+
+/* ---- AI Sidebar ---- */
+
+.ai-sidebar {
+    -fx-background-color: -monet-surface-container;
+}
+
+.ai-sidebar-new-btn {
+    -fx-background-color: -monet-primary-container;
+    -fx-text-fill: -monet-on-primary-container;
+    -fx-font-size: 13px;
+    -fx-padding: 8 0 8 0;
+    -fx-background-radius: 8;
+}
+
+.ai-session-list {
+    -fx-background-color: transparent;
+}
+
+.ai-session-item {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-cursor: hand;
+}
+
+.ai-session-item:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-session-item-active {
+    -fx-background-color: -monet-secondary-container;
+}
+
+.ai-session-title {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface;
+    -fx-text-overrun: ellipsis;
+}
+
+.ai-session-del-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-padding: 2;
+    -fx-min-width: 20;
+    -fx-min-height: 20;
+    -fx-max-width: 20;
+    -fx-max-height: 20;
+    -fx-opacity: 0;
+}
+
+.ai-session-item:hover .ai-session-del-btn {
+    -fx-opacity: 0.7;
+}
+
+.ai-session-del-btn:hover {
+    -fx-opacity: 1.0;
+    -fx-background-color: -monet-error-container;
+}
+
+.ai-sidebar-settings-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 13px;
+    -fx-padding: 8 12 8 12;
+    -fx-background-radius: 8;
+}
+
+.ai-sidebar-settings-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-sidebar-settings-btn-active {
+    -fx-background-color: -monet-secondary-container;
+    -fx-text-fill: -monet-on-secondary-container;
+}
+
+.ai-sidebar-separator {
+    -fx-padding: 4 8 4 8;
+}
+
+.ai-sidebar-separator .line {
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0.5;
+}
+
+.ai-settings-back-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-on-surface;
+    -fx-font-size: 13px;
+    -fx-padding: 4 8 4 8;
+    -fx-background-radius: 8;
+}
+
+.ai-chat-settings-backdrop {
+    -fx-background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* ---- AI Modal ---- */
+
+.ai-modal-backdrop {
+    -fx-background-color: rgba(0, 0, 0, 0.4);
+}
+
+.ai-modal-card {
+    -fx-background-color: -monet-surface;
+    -fx-background-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 20, 0, 0, 8);
+}
+
+.ai-modal-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-modal-close-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 16px;
+    -fx-padding: 2 6 2 6;
+    -fx-background-radius: 6;
+    -fx-cursor: hand;
+}
+
+.ai-modal-close-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-modal-footer {
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 12 0 0 0;
+}
+
+.ai-advanced-toggle {
+    -fx-text-fill: -monet-primary;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.ai-advanced-toggle:hover {
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-settings-back-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+/* ---- AI Main Header ---- */
+
+.ai-main-header {
+    -fx-background-color: -monet-surface;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ai-header-title {
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-header-subtitle {
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+/* ---- AI Empty State ---- */
+
+.ai-empty-state {
+    -fx-padding: 40;
+}
+
+.ai-empty-text {
+    -fx-font-size: 14px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+/* ---- AI Chat View ---- */
+
+.ai-chat-view {
+    -fx-background-color: -monet-surface-container-lowest;
+}
+
+.ai-chat-stack {
+    -fx-background-color: -monet-surface-container-lowest;
+}
+
+/* ---- AI Toolbar Selectors ---- */
+
+.ai-toolbar-selector {
+    -fx-font-size: 12px;
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 8;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 8;
+    -fx-border-width: 0.5;
+    -fx-padding: 1 24 1 10;
+}
+
+.ai-toolbar-selector > .arrow-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0 6 0 0;
+}
+
+.ai-toolbar-selector > .arrow-button > .arrow {
+    -fx-background-color: -monet-on-surface-variant;
+    -fx-shape: "M6 9l6 6 6-6z";
+    -fx-scale-x: 0.6;
+    -fx-scale-y: 0.6;
+}
+
+.ai-toolbar-selector:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-border-color: -monet-on-surface-variant;
+}
+
+.ai-toolbar-selector:focused {
+    -fx-border-color: -monet-primary;
+    -fx-border-width: 1.5;
+}
+
+.ai-toolbar-selector .list-cell {
+    -fx-text-fill: -monet-on-surface;
+    -fx-font-size: 12px;
+    -fx-padding: 2 6 2 6;
+}
+
+.ai-toolbar-selector .combo-box-popup .list-view {
+    -fx-background-color: -monet-surface;
+    -fx-background-radius: 8;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 8;
+    -fx-border-width: 0.5;
+    -fx-padding: 4;
+}
+
+.ai-toolbar-selector .combo-box-popup .list-cell {
+    -fx-padding: 6 10 6 10;
+    -fx-background-radius: 6;
+}
+
+.ai-toolbar-selector .combo-box-popup .list-cell:hover {
+    -fx-background-color: -monet-secondary-container;
+    -fx-text-fill: -monet-on-secondary-container;
+}
+
+.ai-messages-scroll {
+    -fx-background-color: transparent;
+}
+
+/* ---- AI Settings View ---- */
+
+.ai-settings-view {
+    -fx-background-color: -monet-surface-container-lowest;
+}
+
+.ai-settings-header {
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-settings-label {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+    -fx-padding: 8 0 2 0;
+}
+
+.ai-settings-combo {
+    -fx-font-size: 13px;
+}
+
+.ai-settings-section {
+    -fx-spacing: 8;
+    -fx-padding: 4 0 4 0;
+}
+
+.ai-settings-section-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+    -fx-padding: 4 0 4 0;
+}
+
+.ai-settings-sidebar {
+    -fx-background-color: -monet-surface-container;
+    -fx-padding: 8;
+    -fx-min-width: 140;
+    -fx-pref-width: 160;
+    -fx-spacing: 4;
+}
+
+.ai-settings-sidebar-item {
+    -fx-text-fill: -monet-on-surface;
+    -fx-padding: 10 12 10 12;
+    -fx-cursor: hand;
+}
+
+.ai-settings-sidebar-item:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-settings-sidebar-item-active {
+    -fx-background-color: -monet-primary-container;
+    -fx-text-fill: -monet-on-primary-container;
+}
+
+.ai-settings-body-stack {
+    -fx-padding: 4 4 16 4;
+}
+
+.ai-settings-scroll {
+    -fx-background-color: transparent;
+}
+
+/* ---- AI Provider Profile List ---- */
+
+.ai-profile-list {
+    -fx-background-color: transparent;
+    -fx-spacing: 4;
+}
+
+.ai-profile-item {
+    -fx-background-color: -monet-surface-container;
+    -fx-padding: 10 12 10 12;
+    -fx-cursor: hand;
+}
+
+.ai-profile-item:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-profile-item-active {
+    -fx-background-color: -monet-primary-container;
+}
+
+.ai-profile-item .ai-profile-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-profile-item .ai-profile-meta {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-profile-item-btns {
+    -fx-opacity: 0;
+}
+
+.ai-profile-item:hover .ai-profile-item-btns {
+    -fx-opacity: 0.8;
+}
+
+.ai-profile-item-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-padding: 2 6 2 6;
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-cursor: hand;
+}
+
+.ai-profile-item-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-text-fill: -monet-primary;
+}
+
+.ai-profile-item-btn.danger:hover {
+    -fx-background-color: -monet-error-container;
+    -fx-text-fill: -monet-on-error-container;
+}
+
+/* ---- AI Model Discovery ---- */
+
+.ai-model-row {
+    -fx-spacing: 6;
+}
+
+.ai-discover-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-primary;
+    -fx-font-size: 12px;
+    -fx-padding: 2 0 2 0;
+    -fx-cursor: hand;
+}
+
+.ai-discover-btn:hover {
+    -fx-text-fill: -monet-on-primary;
+    -fx-background-color: -monet-primary-container;
+    -fx-background-radius: 4;
+}
+
+/* ---- AI Suggestion Chips ---- */
+
+.ai-suggestions {
+    -fx-padding: 16 8 16 8;
+    -fx-spacing: 8;
+}
+
+.ai-suggestions-label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 0 4 4 4;
+}
+
+.ai-suggestion-chip {
+    -fx-background-color: -monet-surface;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 13px;
+    -fx-padding: 10 18 10 18;
+    -fx-background-radius: 20;
+    -fx-cursor: hand;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0.5;
+    -fx-border-radius: 20;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 2, 0, 0, 1);
+}
+
+.ai-suggestion-chip:hover {
+    -fx-background-color: -monet-primary-container;
+    -fx-text-fill: -monet-on-primary-container;
+    -fx-border-color: -monet-primary;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 4, 0, 0, 2);
+}
+
+/* ---- AI Input Bar ---- */
+
+.ai-input-bar {
+    -fx-background-color: -monet-surface;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1 0 0 0;
+}
+
+.ai-input-field {
+    -fx-font-size: 13px;
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 8;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 8;
+    -fx-border-width: 0.5;
+    -fx-padding: 6 10 6 10;
+}
+
+.ai-input-field:focused {
+    -fx-border-color: -monet-primary;
+    -fx-border-width: 1.5;
+}
+
+.ai-send-btn {
+    -fx-background-color: -monet-primary;
+    -fx-text-fill: -monet-on-primary;
+    -fx-background-radius: 8;
+}
+
+.ai-send-btn:hover {
+    -fx-background-color: derive(-monet-primary, 10%);
+}
+
+/* ---- AI Global Settings Section ---- */
+
+.ai-global-section {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 8;
+    -fx-padding: 12 12 12 12;
+    -fx-spacing: 10;
+}
+
+.ai-global-section-label {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-global-toggle-row {
+    -fx-spacing: 6;
+    -fx-alignment: center-left;
+}
+
+.ai-global-toggle-label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-global-toggle-desc {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 0 0 0 24;
+}
+
+.ai-global-combo {
+    -fx-font-size: 12px;
+    -fx-max-width: 200;
+}
+
+/* ---- AI Approval Badge in Header ---- */
+
+.ai-approval-badge {
+    -fx-font-size: 10px;
+    -fx-padding: 1 6 1 6;
+    -fx-background-radius: 4;
+    -fx-text-fill: -monet-on-primary-container;
+    -fx-background-color: -monet-primary-container;
+}
+
+.ai-approval-badge-safe {
+    -fx-background-color: -monet-primary-container;
+    -fx-text-fill: -monet-on-primary-container;
+}
+
+.ai-approval-badge-ask {
+    -fx-background-color: -monet-tertiary-container;
+    -fx-text-fill: -monet-on-tertiary-container;
+}
+
+.ai-approval-badge-yolo {
+    -fx-background-color: -monet-error-container;
+    -fx-text-fill: -monet-on-error-container;
+}
+
+/* ---- AI Tool Activity ---- */
+
+.ai-tool-activity {
+    -fx-background-color: -monet-surface-container;
+    -fx-padding: 4 12 4 12;
+    -fx-spacing: 4;
+}
+
+.ai-tool-activity-label {
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-tool-activity-item {
+    -fx-font-size: 10px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 1 0 1 0;
+}
+
+.ai-bubble-tool {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 11px;
+    -fx-padding: 4 0 4 0;
+}
+
+/* ---- AI Chat Settings Drawer ---- */
+
+.ai-chat-settings-drawer {
+    -fx-background-color: -monet-surface-container-lowest;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0 0 0 1;
+}
+
+.ai-chat-settings-header {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ai-chat-settings-header-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-chat-settings-close-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 14px;
+    -fx-padding: 4 8 4 8;
+    -fx-background-radius: 4;
+}
+
+.ai-chat-settings-close-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-chat-settings-body {
+    -fx-spacing: 12;
+}
+
+.ai-chat-settings-scroll {
+    -fx-background-color: transparent;
+}
+
+.ai-chat-settings-section {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 8;
+    -fx-padding: 12 12 12 12;
+    -fx-spacing: 6;
+}
+
+.ai-chat-settings-section-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+    -fx-padding: 2 0 4 0;
+}
+
+.ai-chat-settings-section-header {
+    -fx-cursor: hand;
+}
+
+.ai-chat-settings-section-header:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-background-radius: 4;
+}
+
+.ai-chat-settings-toggle-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-min-width: 20;
+    -fx-min-height: 20;
+    -fx-padding: 2;
+}
+
+.ai-chat-settings-toggle-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-chat-settings-section-content {
+    -fx-padding: 0;
+}
+
+.ai-chat-settings-section .label {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-chat-settings-section .combo-box {
+    -fx-font-size: 11px;
+    -fx-max-width: 140;
+}
+
+.ai-chat-settings-section .text-field {
+    -fx-font-size: 11px;
+    -fx-padding: 4 6 4 6;
+    -fx-background-radius: 4;
+}
+
+/* ---- AI Chat Message Styles ---- */
+
+.ai-bubble-name {
+    -fx-font-weight: bold;
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 0 4 2 4;
+}
+
+/* ---- AI Chat Font Sizes ---- */
+
+.ai-chat-font-small .ai-bubble {
+    -fx-font-size: 11px;
+}
+
+.ai-chat-font-normal .ai-bubble {
+    -fx-font-size: 13px;
+}
+
+.ai-chat-font-large .ai-bubble {
+    -fx-font-size: 16px;
+}
+
+/* ---- AI Session Management ---- */
+
+.ai-sidebar-manage-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 8 10 8 10;
+    -fx-background-radius: 8;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1;
+    -fx-border-style: dashed;
+}
+
+.ai-sidebar-manage-btn:hover {
+    -fx-background-color: -monet-primary-fixed-dim;
+    -fx-border-color: -monet-primary;
+}
+
+.ai-sidebar-manage-btn .svg {
+    -fx-fill: -monet-on-surface-variant;
+}
+
+.ai-sidebar-manage-btn:hover .svg {
+    -fx-fill: -monet-primary;
+}
+
+.ai-session-check {
+    -fx-min-width: 16;
+    -fx-min-height: 16;
+}
+
+.ai-manage-bar {
+    -fx-background-color: -monet-surface-container-high;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1 0 0 0;
+}
+
+.ai-manage-btn {
+    -fx-font-size: 11px;
+    -fx-padding: 4 8 4 8;
+}
+
+.ai-manage-delete-btn {
+    -fx-text-fill: -monet-error;
+}
+
+.ai-manage-delete-btn:hover {
+    -fx-background-color: -monet-error-container;
+}
+
+/* ---- AI Search Overlay ---- */
+
+.ai-search-backdrop {
+    -fx-background-color: rgba(0, 0, 0, 0.5);
+}
+
+.ai-search-dialog {
+    -fx-background-color: -monet-surface;
+    -fx-background-radius: 4;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+}
+
+.ai-search-title {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-search-title-row {
+    -fx-padding: 0 0 8 0;
+}
+
+.ai-search-close-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-min-width: 24;
+    -fx-min-height: 24;
+    -fx-cursor: hand;
+}
+
+.ai-search-close-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-search-field {
+    -fx-font-size: 13px;
+    -fx-padding: 8 12 8 12;
+    -fx-background-color: -monet-surface-container-high;
+    -fx-background-radius: 8;
+    -fx-text-fill: -monet-on-surface;
+    -fx-prompt-text-fill: -monet-on-surface-variant;
+}
+
+.ai-search-field:focused {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-border-color: -monet-primary;
+    -fx-border-width: 1;
+    -fx-border-radius: 8;
+}
+
+.ai-search-clear-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4;
+    -fx-min-width: 24;
+    -fx-min-height: 24;
+    -fx-font-size: 14px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-cursor: hand;
+}
+
+.ai-search-clear-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-search-empty {
+    -fx-font-size: 13px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 32 16 32 16;
+    -fx-alignment: center;
+}
+
+.ai-search-scroll {
+    -fx-background-color: transparent;
+}
+
+.ai-search-results {
+    -fx-padding: 4 0 0 0;
+}
+
+.ai-search-result-item {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+
+.ai-search-result-item:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-search-result-item-selected {
+    -fx-background-color: -monet-secondary-container;
+}
+
+.ai-search-result-title {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-search-result-preview {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-search-status {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-padding: 8 0 0 0;
+    -fx-alignment: center;
+}
+
+.ai-search-match-highlight {
+    -fx-background-color: -monet-tertiary-container;
+    -fx-background-radius: 4;
+}
+
+/* ---- AI File Upload ---- */
+
+.ai-input-attach-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-padding: 6;
+    -fx-min-width: 32;
+    -fx-min-height: 32;
+}
+
+.ai-input-attach-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-input-attach-btn .svg {
+    -fx-fill: -monet-on-surface-variant;
+}
+
+.ai-input-attach-btn:hover .svg {
+    -fx-fill: -monet-primary;
+}
+
+.ai-file-chip-area {
+    -fx-padding: 2 0 2 0;
+}
+
+.ai-file-chip {
+    -fx-background-color: -monet-secondary-container;
+    -fx-text-fill: -monet-on-secondary-container;
+    -fx-font-size: 11px;
+    -fx-padding: 2 8 2 8;
+    -fx-background-radius: 6;
+    -fx-max-width: 300;
+}
+
+.ai-file-chip-clear-btn {
+    -fx-background-color: transparent;
+    -fx-padding: 2;
+    -fx-min-width: 16;
+    -fx-min-height: 16;
+}
+
+.ai-file-chip-clear-btn .svg {
+    -fx-fill: -monet-on-surface-variant;
+}
+
+.ai-file-chip-clear-btn:hover .svg {
+    -fx-fill: -monet-error;
+}
+
+/* ---- AI Autocomplete Popup ---- */
+
+.ai-autocomplete-popup {
+    -fx-background-color: -monet-surface;
+    -fx-background-radius: 4;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-padding: 4;
+}
+
+.ai-autocomplete-scroll {
+    -fx-background-color: transparent;
+}
+
+.ai-autocomplete-item {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface;
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-cursor: hand;
+}
+
+.ai-autocomplete-item:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-autocomplete-item-selected {
+    -fx-background-color: -monet-secondary-container;
+    -fx-text-fill: -monet-on-secondary-container;
+}
+
+/* ---- AI Toolbar Icon Button ---- */
+
+.ai-toolbar-icon-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 8;
+    -fx-padding: 6;
+    -fx-min-width: 32;
+    -fx-min-height: 32;
+}
+
+.ai-toolbar-icon-btn:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-toolbar-icon-btn .svg {
+    -fx-fill: -monet-on-surface-variant;
+}
+
+.ai-toolbar-icon-btn:hover .svg {
+    -fx-fill: -monet-primary;
 }
