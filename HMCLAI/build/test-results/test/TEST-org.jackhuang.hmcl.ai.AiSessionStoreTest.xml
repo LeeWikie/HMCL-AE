@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.jackhuang.hmcl.ai.AiSessionStoreTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-06-26T22:38:19.904Z" hostname="localhost" time="0.165">
+  <properties/>
+  <testcase name="testCreateSessionAutoSelects()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.079"/>
+  <testcase name="testRecoveryFromInvalidCurrentSessionId()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.047"/>
+  <testcase name="testSetCurrentSessionIdOnUnknownIdIsIgnored()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.0"/>
+  <testcase name="testSetCurrentSessionIdToNull()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.001"/>
+  <testcase name="testListSessionsSortedByUpdated()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.012"/>
+  <testcase name="testLoadFromMissingFileReturnsEmpty()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.001"/>
+  <testcase name="testGetNonExistentSessionReturnsNull()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.001"/>
+  <testcase name="testSaveLoadRoundTrip()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.022"/>
+  <testcase name="testDeleteOnlySessionClearsCurrentId()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.001"/>
+  <testcase name="testDeleteCurrentSessionFallsBack()" classname="org.jackhuang.hmcl.ai.AiSessionStoreTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

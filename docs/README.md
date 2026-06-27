@@ -4,7 +4,7 @@
     <img src="/HMCL/src/main/resources/assets/img/icon@8x.png" alt="HMCL Logo" width="64"/>
 </div>
 
-<h1 align="center">Hello Minecraft! Launcher</h1>
+<h1 align="center">Hello Minecraft! Launcher - Agent Experience</h1>
 <!-- #END BLOCK -->
 
 <!-- #BEGIN BLOCK -->
@@ -36,9 +36,39 @@ HMCL has amazing cross-platform capabilities. Not only does it run on different 
 
 For systems and CPU architectures supported by HMCL, please refer to [this table](PLATFORM.md).
 
+HMCL-AE builds on this foundation with an AI co-pilot integrated into the launcher, designed to help when Minecraft won't start, mods conflict, or crash reports appear.
+
+## What HMCL-AE Can Do
+
+HMCL-AE adds AI-assisted tools that work inside the launcher itself. No external configuration, no separate applications to install.
+
+**AI Chat.** Ask questions about mod compatibility, setup steps, or Minecraft mechanics directly from the launcher. The chat works with multiple AI models and providers. You can switch between available backends in settings, or configure your own provider.
+
+**Crash Log Auto-Analysis.** Paste a crash report or point HMCL-AE at the log file, and it reads the stack trace to identify the likely cause. It understands common failure patterns: mod conflicts, Java version mismatches, missing dependencies, memory allocation errors. You get a diagnosis with specific suggestions in seconds.
+
+**Agent Diagnostic Assistance.** When the game behaves unexpectedly, HMCL-AE can inspect your current configuration. It cross-references installed mod versions, loader compatibility, and Java flags against known-good setups. Mismatches and potential problems are flagged so you can address them before spending hours in trial-and-error.
+
+The AI features use local models by default. Cloud providers are available if you choose to configure them.
+
+## Roadmap
+
+Features currently in development:
+
+- **Automated Mod Conflict Testing.** Test mod combinations in isolated game environments to detect conflicts before they disrupt play. Results are reported with reproduction steps.
+- **Mod and Modpack Recommendations.** Get suggestions for mods and modpacks based on your installed content and preferred play style.
+- **Game Stress Prediction.** Estimate how a modpack will perform on your system before downloading, based on hardware specs and known performance characteristics.
+
+## Quick Start
+
+1. Download HMCL-AE from the links in the [Download](#download) section below.
+2. Install as you would HMCL. Download the jar or platform package, then run it.
+3. Look for the assistant panel in the launcher interface. The AI features are ready to use with no additional setup required.
+
+You don't need an API key to get started. HMCL-AE ships with access to free model providers, and you can add your own provider in settings if you prefer a specific backend.
+
 ## Download
 
-You can download HMCL from the following sources:
+You can download HMCL-AE from the following sources:
 
 - [HMCL Official Website](https://hmcl.huangyuhui.net/download)
 - [GitHub Release](https://github.com/HMCL-dev/HMCL/releases)
@@ -46,9 +76,9 @@ You can download HMCL from the following sources:
 
 ## Contributing
 
-HMCL is a community-driven open-source project, and everyone is welcome to contribute code or provide suggestions.
+HMCL-AE is a community-driven open-source project, and everyone is welcome to contribute code or provide suggestions.
 
-You can contribute to HMCL development in the following ways:
+You can contribute to HMCL-AE development in the following ways:
 
 - Report bugs or request features by [creating an issue](https://github.com/HMCL-dev/HMCL/issues/new/choose) on GitHub.
 - Contribute code by forking the repository on GitHub and [submitting a pull request](https://github.com/HMCL-dev/HMCL/compare).

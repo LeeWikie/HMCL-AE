@@ -58,6 +58,7 @@ import org.jackhuang.hmcl.ui.decorator.DecoratorController;
 import org.jackhuang.hmcl.ui.download.DownloadPage;
 import org.jackhuang.hmcl.ui.main.LauncherSettingsPage;
 import org.jackhuang.hmcl.ui.main.RootPage;
+import org.jackhuang.hmcl.ui.ai.AIMainPage;
 import org.jackhuang.hmcl.ui.terracotta.TerracottaPage;
 import org.jackhuang.hmcl.ui.versions.GameListPage;
 import org.jackhuang.hmcl.ui.versions.VersionPage;
@@ -120,6 +121,7 @@ public final class Controllers {
     });
     private static LauncherSettingsPage settingsPage;
     private static Lazy<TerracottaPage> terracottaPage = new Lazy<>(TerracottaPage::new);
+    private static Lazy<AIMainPage> aiMainPage = new Lazy<>(AIMainPage::new);
 
     private Controllers() {
     }
@@ -207,6 +209,11 @@ public final class Controllers {
     @FXThread
     public static Node getTerracottaPage() {
         return terracottaPage.get();
+    }
+
+    @FXThread
+    public static AIMainPage getAiMainPage() {
+        return aiMainPage.get();
     }
 
     @FXThread

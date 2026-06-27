@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.jackhuang.hmcl.ai.llm.LlmClientTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-06-26T22:38:22.927Z" hostname="localhost" time="0.047">
+  <properties/>
+  <testcase name="testSendMessageError401()" classname="org.jackhuang.hmcl.ai.llm.LlmClientTest" time="0.006"/>
+  <testcase name="testSendMessageError429()" classname="org.jackhuang.hmcl.ai.llm.LlmClientTest" time="0.011"/>
+  <testcase name="testSendMessageSuccess()" classname="org.jackhuang.hmcl.ai.llm.LlmClientTest" time="0.009"/>
+  <testcase name="testSendMessageStreaming()" classname="org.jackhuang.hmcl.ai.llm.LlmClientTest" time="0.02"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

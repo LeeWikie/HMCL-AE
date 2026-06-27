@@ -32,6 +32,7 @@ import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.task.Schedulers;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.terracotta.TerracottaMetadata;
+import org.jackhuang.hmcl.theme.Themes;
 import org.jackhuang.hmcl.ui.Controllers;
 import org.jackhuang.hmcl.ui.FXUtils;
 import org.jackhuang.hmcl.ui.SVG;
@@ -225,6 +226,12 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
                 }
             });
 
+            // AI assistant
+            AdvancedListItem aiItem = new AdvancedListItem();
+            aiItem.setTitle(i18n("ai.title"));
+            aiItem.setLeftIcon(SVG.AI);
+            aiItem.setOnAction(e -> Controllers.navigate(Controllers.getAiMainPage()));
+
             // the left sidebar
             AdvancedListBox sideBar = new AdvancedListBox()
                     .startCategory(i18n("account").toUpperCase(Locale.ROOT))
@@ -236,6 +243,7 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
                     .startCategory(i18n("settings.launcher.general").toUpperCase(Locale.ROOT))
                     .add(launcherSettingsItem)
                     .add(terracottaItem)
+                    .add(aiItem)
                     .addNavigationDrawerItem(i18n("contact.chat"), SVG.CHAT, () -> {
                         Controllers.getSettingsPage().showFeedback();
                         Controllers.navigate(Controllers.getSettingsPage());

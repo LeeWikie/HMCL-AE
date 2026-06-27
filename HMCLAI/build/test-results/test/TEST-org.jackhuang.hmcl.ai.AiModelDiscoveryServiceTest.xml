@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-06-26T22:38:19.328Z" hostname="localhost" time="0.519">
+  <properties/>
+  <testcase name="testDeriveModelsUrlFromChatCompletions()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.404"/>
+  <testcase name="testDeriveModelsUrlFromV1Base()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.001"/>
+  <testcase name="testDeriveModelsUrlFromMessages()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.001"/>
+  <testcase name="testDeriveModelsUrlReturnsNullForUnknownPath()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.001"/>
+  <testcase name="testNon200ReturnsEmpty()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.061"/>
+  <testcase name="testEmptyDataArray()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.034"/>
+  <testcase name="testRestApiReturnsEmpty()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.001"/>
+  <testcase name="testMalformedJsonReturnsEmpty()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.002"/>
+  <testcase name="testAnthropicReturnsEmptyWithoutHttp()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.001"/>
+  <testcase name="testMissingDataFieldReturnsEmpty()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.0"/>
+  <testcase name="testParseStandardModelsResponse()" classname="org.jackhuang.hmcl.ai.AiModelDiscoveryServiceTest" time="0.006"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
