@@ -86,10 +86,6 @@ public final class Launcher extends Application {
         LOG.info("Dark Mode: " + Optional.ofNullable(FXUtils.DARK_MODE).map(ObservableBooleanValue::get).orElse(false));
         LOG.info("Reduced Motion: " + Objects.requireNonNullElse(FXUtils.REDUCED_MOTION, false));
 
-        // Fill gaps in the system's black-and-white emoji with the bundled monochrome
-        // emoji font (emoji-only fallback; does not affect other UI glyphs).
-        FXUtils.loadBundledEmojiFont();
-
         if (Screen.getScreens().isEmpty()) {
             LOG.info("No screen");
         } else {
