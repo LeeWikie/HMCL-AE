@@ -46,10 +46,10 @@ import java.util.concurrent.ExecutorService;
 /// shown and the download proceeds in the background for next time.
 public final class EmojiImages {
 
-    /// Upstream Twemoji asset base (the maintained jdecked/twemoji fork), 72x72 PNGs.
+    /// Upstream Noto Emoji colour asset base (googlefonts/noto-emoji), 128px PNGs.
     /// Default download source — kept pointing at the original repo to avoid re-distribution.
     private static final String BASE_URL =
-            "https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/";
+            "https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@main/png/128/";
 
     private static final Path CACHE_DIR = Metadata.HMCL_LOCAL_HOME.resolve("emoji-cache");
 
@@ -108,10 +108,14 @@ public final class EmojiImages {
                         plain.setLength(0);
                     }
                     ImageView view = new ImageView(image);
-                    double size = fontSize * 1.25;
+                    // Match the surrounding text height and sink slightly so the emoji sits on
+                    // the text baseline instead of floating above it (TextFlow aligns an
+                    // ImageView by its bottom edge).
+                    double size = fontSize * 1.2;
                     view.setFitWidth(size);
                     view.setFitHeight(size);
                     view.setPreserveRatio(true);
+                    view.setTranslateY(fontSize * 0.15);
                     nodes.add(view);
                 } else {
                     plain.append(cluster); // not cached yet — show monochrome text for now
@@ -149,17 +153,20 @@ public final class EmojiImages {
         return i;
     }
 
-    /// Builds the Twemoji filename for an emoji cluster: code points in lowercase hex joined
-    /// by '-', dropping U+FE0F (variation selector) per Twemoji's convention.
+    /// Builds the Noto Emoji filename for an emoji cluster: "emoji_u" followed by the code
+    /// points in lowercase hex joined by '_', dropping U+FE0F (variation selector) but
+    /// keeping U+200D (ZWJ), per noto-emoji's convention. e.g. 🧋 -> emoji_u1f9cb.
     private static String toFilename(String cluster) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder("emoji_u");
+        boolean first = true;
         int i = 0;
         while (i < cluster.length()) {
             int cp = cluster.codePointAt(i);
             i += Character.charCount(cp);
             if (cp == 0xFE0F) continue;
-            if (sb.length() > 0) sb.append('-');
+            if (!first) sb.append('_');
             sb.append(Integer.toHexString(cp));
+            first = false;
         }
         return sb.toString();
     }
