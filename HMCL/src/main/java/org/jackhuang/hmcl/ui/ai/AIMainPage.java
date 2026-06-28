@@ -246,6 +246,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// can find the matching card appended by onToolActivity.
     private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
 
+    /// Whether the message view should auto-scroll to the bottom on new content. Set false when
+    /// the user scrolls up to read history; restored when they scroll back to the bottom.
+    private boolean stickToBottom = true;
+
     /// The in-flight streaming response future (for stop/abort), and a generation counter
     /// used to ignore callbacks from a response the user has stopped.
     @Nullable
@@ -647,6 +651,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         scrollPane.getStyleClass().addAll("edge-to-edge", "ai-messages-scroll");
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         FXUtils.smoothScrolling(scrollPane);
+        // Stick-to-bottom: a wheel-up means the user is reading history, so stop auto-pinning;
+        // wheeling back down to the bottom resumes it. Driven by user wheel events only (not
+        // content-growth vvalue drift), so streaming never fights the user's scroll.
+        scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, e -> {
+            if (e.getDeltaY() > 0) {
+                stickToBottom = false;
+            } else if (e.getDeltaY() < 0 && scrollPane.getVvalue() >= 0.97) {
+                stickToBottom = true;
+            }
+        });
 
         messageList.setPadding(new Insets(16, 16, 24, 16));
         messageList.getStyleClass().add("ai-message-list");
@@ -1680,6 +1694,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
         pendingToolCards.clear();
+        stickToBottom = true; // a freshly-opened session starts pinned to the latest message
         for (LlmMessage msg : session.getMessages()) {
             String role = msg.getRole();
             if ("user".equals(role)) {
@@ -1771,6 +1786,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         streamingBubble = null;
         pendingToolCards.clear();
 
+        // Bind this stream to the session it belongs to. If the user switches to another
+        // session mid-stream, callbacks must NOT touch the (now different) message view —
+        // otherwise A's tokens leak into B and scrollToBottom fights the user (jitter/freeze).
+        final AiSession streamSession = session;
+
         final int generation = ++responseGeneration;
         StringBuilder fullContent = new StringBuilder();
         // Text of the current segment bubble (reset whenever a new segment starts).
@@ -1783,6 +1803,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 fullContent.append(token);
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return; // stopped/superseded
+                    if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     if (streamingBubble == null) {
                         // Text resumed after a tool call (or first text): start a new segment.
                         streamingBubble = createAiBubble("");
@@ -1803,6 +1824,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             public void onToolActivity(String toolName, String arguments) {
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
+                    if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     // Close off the current text segment so the tool card lands after it.
                     if (streamingBubble != null) {
                         finalizeAiBubble(streamingBubble, segment.toString(), null, false);
@@ -1820,6 +1842,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             public void onToolResult(String toolName, boolean success, String resultSummary) {
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
+                    if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     java.util.Deque<ToolCard> dq = pendingToolCards.get(toolName);
                     ToolCard card = dq != null ? dq.pollFirst() : null;
                     if (card != null) {
@@ -1833,18 +1856,24 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             public void onComplete(String completeText) {
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return; // stopped by the user
-                    String finalText = (completeText == null || completeText.isEmpty())
-                            ? segment.toString() : completeText;
-                    if (streamingBubble != null) {
-                        finalizeAiBubble(streamingBubble, finalText, usageHolder[0], true);
-                        streamingBubble = null;
-                    } else if (!finalText.isEmpty()) {
-                        // Final turn produced text that did not stream as tokens; render it now.
-                        Label b = createAiBubble("");
-                        finalizeAiBubble(b, finalText, usageHolder[0], true);
+                    // Render the answer only into its own session's view; but always release the
+                    // global streaming state (Stop button) and persist, even if completed in the
+                    // background while the user is viewing another session.
+                    if (sessionStore.getCurrentSession() == streamSession) {
+                        String finalText = (completeText == null || completeText.isEmpty())
+                                ? segment.toString() : completeText;
+                        if (streamingBubble != null) {
+                            finalizeAiBubble(streamingBubble, finalText, usageHolder[0], true);
+                            streamingBubble = null;
+                        } else if (!finalText.isEmpty()) {
+                            // Final turn produced text that did not stream (or was rebuilt after a
+                            // session switch); render it now.
+                            Label b = createAiBubble("");
+                            finalizeAiBubble(b, finalText, usageHolder[0], true);
+                        }
+                        setStatus(null);
                     }
                     exitStreamingState();
-                    setStatus(null);
                     persistStore();
                 });
             }
@@ -1852,7 +1881,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             @Override
             public void onError(LlmException error) {
                 if (generation != responseGeneration) return;
-                showAiError(streamingBubble, fullContent, error);
+                showAiError(streamingBubble, fullContent, error, streamSession);
             }
         }).exceptionally(ex -> {
             if (generation != responseGeneration) return null; // stopped; ignore
@@ -1864,7 +1893,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             LlmException error = cause instanceof LlmException
                     ? (LlmException) cause
                     : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
-            showAiError(streamingBubble, fullContent, error);
+            showAiError(streamingBubble, fullContent, error, streamSession);
             return null;
         });
 
@@ -1913,10 +1942,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         persistStore();
     }
 
-    private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error) {
+    private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,
+                             @Nullable AiSession owner) {
         Platform.runLater(() -> {
             streamingBubble = null;
             exitStreamingState();
+            // If the failed stream belongs to a session the user is no longer viewing, release the
+            // streaming state (above) but don't render the error into the other session's view.
+            if (owner != null && sessionStore.getCurrentSession() != owner) {
+                persistStore();
+                return;
+            }
             // The error may arrive between turns (current text segment already finalized, or none
             // yet); ensure there is a bubble to attach the partial text + error styling to.
             Label bubble = aiBubble;
@@ -2225,6 +2261,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void scrollToBottom() {
+        if (!stickToBottom) return;
         Platform.runLater(() -> scrollPane.setVvalue(1.0));
     }
 
