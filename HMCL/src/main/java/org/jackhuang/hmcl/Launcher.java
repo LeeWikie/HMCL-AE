@@ -81,7 +81,8 @@ public final class Launcher extends Application {
         CookieHandler.setDefault(COOKIE_MANAGER);
 
         LOG.info("JavaFX Version: " + System.getProperty("javafx.runtime.version"));
-        LOG.info("Prism Pipeline: " + FXUtils.GRAPHICS_PIPELINE);
+        LOG.info("Prism Pipeline: " + FXUtils.GRAPHICS_PIPELINE
+                + " (GPU acceleration " + (FXUtils.GPU_ACCELERATION_ENABLED ? "enabled" : "disabled") + ")");
         LOG.info("Dark Mode: " + Optional.ofNullable(FXUtils.DARK_MODE).map(ObservableBooleanValue::get).orElse(false));
         LOG.info("Reduced Motion: " + Objects.requireNonNullElse(FXUtils.REDUCED_MOTION, false));
 
