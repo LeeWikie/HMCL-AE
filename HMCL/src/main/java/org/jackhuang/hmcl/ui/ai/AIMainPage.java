@@ -624,7 +624,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             sessionStore.setCurrentSessionId(id);
             AiSession current = sessionStore.getCurrentSession();
             if (current != null) {
-                loadSessionMessages(current);
+                loadSession(current);
                 updateHeader(current);
             }
             // Update the active highlight in place instead of rebuilding the whole
@@ -1765,6 +1765,41 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /// Guards rapid session switching so the UI stays responsive: quick successive clicks are
+    /// debounced and a load that is already in flight for a given session id is not restarted.
+    @Nullable
+    private CompletableFuture<Void> pendingSessionLoad;
+    @Nullable
+    private String loadingSessionId;
+
+    private void loadSession(AiSession session) {
+        if (session == null) {
+            return;
+        }
+        String id = session.getId();
+        // Already loading this session — don't restart.
+        if (loadingSessionId != null && loadingSessionId.equals(id) && pendingSessionLoad != null && !pendingSessionLoad.isDone()) {
+            return;
+        }
+        // Cancel the previous load if a different session was requested.
+        if (pendingSessionLoad != null && !pendingSessionLoad.isDone()) {
+            pendingSessionLoad.cancel(true);
+        }
+        loadingSessionId = id;
+        pendingSessionLoad = CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(60); // brief debounce so rapid clicks coalesce
+            } catch (InterruptedException ignored) {
+                return;
+            }
+            Platform.runLater(() -> {
+                if (sessionStore.getCurrentSession() != session) return; // moved on already
+                loadSessionMessages(session);
+                updateHeader(session);
+            });
+        });
     }
 
     private void loadSessionMessages(AiSession session) {
