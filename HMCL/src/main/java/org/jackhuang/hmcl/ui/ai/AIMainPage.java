@@ -228,6 +228,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final TextField inputField = new TextField();
     private JFXButton sendBtn;
 
+    /// Panel shown above the input field when the agent calls the `ask` tool: renders the
+    /// structured questions and a confirm button. Hidden/unmanaged when no question is pending.
+    private final VBox askPanel = new VBox(8);
+    /// The in-flight `ask` future (completed on confirm, cancelled on stop/session switch).
+    @Nullable
+    private volatile java.util.concurrent.CompletableFuture<java.util.List<String>> activeAsk;
+
     // ---- Typing indicator ----
 
     private String typingBaseText = "";
@@ -410,6 +417,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AskTool(this::showAskPanel));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
@@ -1017,7 +1025,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // The @/ autocomplete popup lives as an overlay in the message area (created in
         // buildChatView); it deliberately takes no layout space here so the input bar
         // never grows and the buttons stay put.
-        VBox composerInner = new VBox(4, fileChipArea, inputField);
+        askPanel.getStyleClass().add("ai-ask-panel");
+        askPanel.setVisible(false);
+        askPanel.setManaged(false);
+        VBox composerInner = new VBox(4, askPanel, fileChipArea, inputField);
         composerInner.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(inputField, Priority.NEVER);
 
@@ -1691,6 +1702,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void loadSessionMessages(AiSession session) {
+        cancelActiveAsk(); // a pending question can't be answered for a backgrounded session
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
@@ -1922,8 +1934,138 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Stops the in-flight response: invalidates its callbacks, best-effort aborts the
     /// request, finalizes whatever was streamed so far, and resets the button.
+    /// {@link org.jackhuang.hmcl.ui.ai.tools.AskTool.AskUiHandler} implementation: called on the
+    /// agent's background thread, it renders the question panel on the FX thread and returns a
+    /// future the background thread blocks on. Completed when the user confirms; cancelled by
+    /// {@link #cancelActiveAsk()} on stop / session switch.
+    private java.util.concurrent.CompletableFuture<java.util.List<String>> showAskPanel(
+            java.util.List<org.jackhuang.hmcl.ui.ai.tools.AskTool.Question> questions) {
+        java.util.concurrent.CompletableFuture<java.util.List<String>> future =
+                new java.util.concurrent.CompletableFuture<>();
+        Platform.runLater(() -> {
+            cancelActiveAsk();
+            activeAsk = future;
+            askPanel.getChildren().clear();
+
+            Label title = new Label(i18n("ai.ask.title"));
+            title.getStyleClass().add("ai-ask-title");
+            askPanel.getChildren().add(title);
+
+            java.util.List<java.util.function.Supplier<String>> collectors = new java.util.ArrayList<>();
+            for (org.jackhuang.hmcl.ui.ai.tools.AskTool.Question q : questions) {
+                VBox qBox = new VBox(4);
+                qBox.getStyleClass().add("ai-ask-question");
+                Label qLabel = new Label(q.question());
+                qLabel.setWrapText(true);
+                qLabel.getStyleClass().add("ai-ask-q-label");
+                qBox.getChildren().add(qLabel);
+                collectors.add(buildAskControl(q, qBox));
+                askPanel.getChildren().add(qBox);
+            }
+
+            JFXButton confirm = new JFXButton(i18n("ai.ask.confirm"));
+            confirm.getStyleClass().add("ai-ask-confirm");
+            confirm.setOnAction(e -> {
+                if (activeAsk != future) return;
+                java.util.List<String> answers = new java.util.ArrayList<>();
+                for (java.util.function.Supplier<String> c : collectors) answers.add(c.get());
+                activeAsk = null;
+                hideAskPanel();
+                future.complete(answers);
+            });
+            askPanel.getChildren().add(confirm);
+            askPanel.setManaged(true);
+            askPanel.setVisible(true);
+            scrollToBottom();
+        });
+        return future;
+    }
+
+    /// Builds the input control(s) for one question into {@code qBox} and returns a supplier that
+    /// reads the user's answer as a string (multi-choice answers are comma-joined).
+    private java.util.function.Supplier<String> buildAskControl(
+            org.jackhuang.hmcl.ui.ai.tools.AskTool.Question q, VBox qBox) {
+        String type = q.type();
+        if ("single".equals(type) && !q.options().isEmpty()) {
+            javafx.scene.control.ToggleGroup group = new javafx.scene.control.ToggleGroup();
+            for (String opt : q.options()) {
+                javafx.scene.control.RadioButton rb = new javafx.scene.control.RadioButton(opt);
+                rb.setToggleGroup(group);
+                rb.getStyleClass().add("ai-ask-option");
+                qBox.getChildren().add(rb);
+            }
+            javafx.scene.control.RadioButton customRb = null;
+            TextField customField = null;
+            if (q.allowCustom()) {
+                customRb = new javafx.scene.control.RadioButton(i18n("ai.ask.custom"));
+                customRb.setToggleGroup(group);
+                customRb.getStyleClass().add("ai-ask-option");
+                customField = new TextField();
+                customField.setPromptText(i18n("ai.ask.custom_hint"));
+                qBox.getChildren().addAll(customRb, customField);
+            }
+            if (!group.getToggles().isEmpty()) group.selectToggle(group.getToggles().get(0));
+            final javafx.scene.control.RadioButton fCustomRb = customRb;
+            final TextField fCustomField = customField;
+            return () -> {
+                javafx.scene.control.Toggle sel = group.getSelectedToggle();
+                if (sel == null) return "";
+                if (fCustomRb != null && sel == fCustomRb) {
+                    return fCustomField.getText() == null ? "" : fCustomField.getText().trim();
+                }
+                return ((javafx.scene.control.RadioButton) sel).getText();
+            };
+        } else if ("multi".equals(type) && !q.options().isEmpty()) {
+            java.util.List<javafx.scene.control.CheckBox> boxes = new java.util.ArrayList<>();
+            for (String opt : q.options()) {
+                javafx.scene.control.CheckBox cb = new javafx.scene.control.CheckBox(opt);
+                cb.getStyleClass().add("ai-ask-option");
+                qBox.getChildren().add(cb);
+                boxes.add(cb);
+            }
+            TextField customField = null;
+            if (q.allowCustom()) {
+                customField = new TextField();
+                customField.setPromptText(i18n("ai.ask.custom_hint"));
+                qBox.getChildren().add(customField);
+            }
+            final TextField fCustomField = customField;
+            return () -> {
+                java.util.List<String> sel = new java.util.ArrayList<>();
+                for (javafx.scene.control.CheckBox cb : boxes) if (cb.isSelected()) sel.add(cb.getText());
+                if (fCustomField != null && fCustomField.getText() != null && !fCustomField.getText().isBlank()) {
+                    sel.add(fCustomField.getText().trim());
+                }
+                return String.join(", ", sel);
+            };
+        } else {
+            TextField field = new TextField();
+            field.setPromptText(i18n("ai.ask.text_hint"));
+            qBox.getChildren().add(field);
+            return () -> field.getText() == null ? "" : field.getText().trim();
+        }
+    }
+
+    private void hideAskPanel() {
+        askPanel.getChildren().clear();
+        askPanel.setVisible(false);
+        askPanel.setManaged(false);
+    }
+
+    /// Cancels any pending `ask` (so AskTool's blocked background thread unblocks with a failure)
+    /// and hides the panel. Called on stop and on session switch.
+    private void cancelActiveAsk() {
+        java.util.concurrent.CompletableFuture<java.util.List<String>> f = activeAsk;
+        activeAsk = null;
+        if (f != null && !f.isDone()) {
+            f.completeExceptionally(new java.util.concurrent.CancellationException("cancelled"));
+        }
+        hideAskPanel();
+    }
+
     private void stopResponse() {
         responseGeneration++; // invalidate any further callbacks from the stopped response
+        cancelActiveAsk();
         java.util.concurrent.CompletableFuture<Void> future = currentResponse;
         if (future != null) {
             future.cancel(true);

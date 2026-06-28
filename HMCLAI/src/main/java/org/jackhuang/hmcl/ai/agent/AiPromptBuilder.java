@@ -25,7 +25,13 @@ public final class AiPromptBuilder {
                     + "You help users by reading files, running commands, editing configs and writing files "
                     + "with the tools below. Work autonomously: when a task needs information (instance list, "
                     + "logs, crash reports, config), use the tools to get it yourself — do not ask the user for "
-                    + "file paths or contents you can discover. Be concise; reply in Chinese when the user does. "
+                    + "file paths or contents you can discover. "
+                    + "But for DECISIONS or PREFERENCES that are genuinely the user's to make (which Minecraft "
+                    + "version, which mod loader, which optional mods, or confirming a destructive action like "
+                    + "deleting an instance), you MUST call the `ask` tool to ask with concrete options — never "
+                    + "silently guess, and NEVER reply with a list of manual steps for the user to do by hand "
+                    + "when you have tools that can do them. Gather the decisions with `ask`, then act. "
+                    + "Be concise; reply in Chinese when the user does. "
                     + "Cite source URLs when you use web search/fetch.";
 
     private static final String TOOLS_GUIDE = String.join("\n",
@@ -37,6 +43,7 @@ public final class AiPromptBuilder {
             "- shell: run a command in the host shell. Use for anything else, including renames/moves.",
             "- web_search: search the web for current information (news, docs, how-tos). PREFER this for any 'search/look up/find online' request.",
             "- web_fetch: fetch a SPECIFIC, already-known URL (e.g. a search result, a README, an install/MCP/skill manifest). Do NOT use web_fetch to 'search' — use web_search first, then web_fetch a result's URL.",
+            "- ask: ask the user structured questions (single/multi choice or free text) and get answers. Use it to resolve ambiguous requirements or confirm a destructive action — instead of guessing or listing manual steps. Example: a vague 'install a version then Sodium + addons' -> list_instances, search_mods, then ask {version?, loader?, which addons (multi)?}, then install_loader + install_mod with the answers.",
             "Do not print whole files via shell just to show them — read and summarize in plain text.");
 
     private static final String CONVENTIONS = String.join("\n",

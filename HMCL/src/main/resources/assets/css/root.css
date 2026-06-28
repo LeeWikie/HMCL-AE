@@ -2377,6 +2377,42 @@
     -fx-border-width: 1.5;
 }
 
+/* ---- ask tool: structured question panel above the input ---- */
+.ai-ask-panel {
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 10;
+    -fx-border-color: -monet-primary;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-padding: 10 12 10 12;
+}
+
+.ai-ask-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-primary;
+}
+
+.ai-ask-question {
+    -fx-padding: 4 0 4 0;
+}
+
+.ai-ask-q-label {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: bold;
+}
+
+.ai-ask-option {
+    -fx-font-size: 12.5px;
+}
+
+.ai-ask-confirm {
+    -fx-background-color: -monet-primary;
+    -fx-text-fill: -monet-on-primary;
+    -fx-background-radius: 8;
+    -fx-padding: 6 18 6 18;
+}
+
 .ai-send-btn {
     -fx-background-color: -monet-primary;
     -fx-text-fill: -monet-on-primary;
