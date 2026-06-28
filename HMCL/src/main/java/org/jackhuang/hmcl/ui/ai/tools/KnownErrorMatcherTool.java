@@ -87,6 +87,9 @@ public final class KnownErrorMatcherTool implements Tool {
         if (raw == null) {
             raw = parameters.get("log");
         }
+        if (raw == null) {
+            raw = parameters.get("query"); // tool schema currently advertises a single param
+        }
         if (!(raw instanceof String)) {
             return ToolResult.failure("Missing or invalid 'text' parameter: "
                     + "a non-empty crash/log string is required (you may also use 'log').");

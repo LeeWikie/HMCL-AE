@@ -95,7 +95,8 @@ public final class InstallModTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String id = extractString(parameters, "id", null);
+        // Fall back to "query" since the tool schema currently advertises a single param.
+        String id = extractString(parameters, "id", extractString(parameters, "query", null));
         if (id == null || id.isBlank()) {
             return ToolResult.failure("Missing required parameter: id (the mod slug/project id from search_mods)");
         }
