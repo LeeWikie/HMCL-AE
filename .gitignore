@@ -74,3 +74,6 @@ language-subtag-registry
 !/.gemini/config.yaml
 .codex
 /.gradle-*/
+
+HMCL无AI集成项目.json
+.claude/
