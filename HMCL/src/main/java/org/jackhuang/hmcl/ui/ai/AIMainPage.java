@@ -409,6 +409,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListInstancesTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
