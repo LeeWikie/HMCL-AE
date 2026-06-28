@@ -22,7 +22,10 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.google.gson.annotations.SerializedName;
 import com.jfoenix.controls.JFXButton;
+import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXPopup;
+import com.jfoenix.controls.JFXRadioButton;
+import com.jfoenix.controls.JFXTextField;
 import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -1997,64 +2000,66 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// reads the user's answer as a string (multi-choice answers are comma-joined).
     private java.util.function.Supplier<String> buildAskControl(
             org.jackhuang.hmcl.ui.ai.tools.AskTool.Question q, VBox qBox) {
-        String type = q.type();
-        if ("single".equals(type) && !q.options().isEmpty()) {
-            javafx.scene.control.ToggleGroup group = new javafx.scene.control.ToggleGroup();
+        // Hard rule: EVERY question is options + an always-present "自定义" choice; the custom
+        // text field stays hidden until that choice is picked. No standalone free-text question.
+        boolean multi = "multi".equals(q.type());
+        JFXTextField customField = new JFXTextField();
+        customField.setPromptText(i18n("ai.ask.custom_hint"));
+        customField.getStyleClass().add("ai-ask-custom-field");
+        customField.setVisible(false);
+        customField.setManaged(false);
+
+        if (multi) {
+            java.util.List<JFXCheckBox> boxes = new java.util.ArrayList<>();
             for (String opt : q.options()) {
-                javafx.scene.control.RadioButton rb = new javafx.scene.control.RadioButton(opt);
-                rb.setToggleGroup(group);
-                rb.getStyleClass().add("ai-ask-option");
-                qBox.getChildren().add(rb);
-            }
-            javafx.scene.control.RadioButton customRb = null;
-            TextField customField = null;
-            if (q.allowCustom()) {
-                customRb = new javafx.scene.control.RadioButton(i18n("ai.ask.custom"));
-                customRb.setToggleGroup(group);
-                customRb.getStyleClass().add("ai-ask-option");
-                customField = new TextField();
-                customField.setPromptText(i18n("ai.ask.custom_hint"));
-                qBox.getChildren().addAll(customRb, customField);
-            }
-            if (!group.getToggles().isEmpty()) group.selectToggle(group.getToggles().get(0));
-            final javafx.scene.control.RadioButton fCustomRb = customRb;
-            final TextField fCustomField = customField;
-            return () -> {
-                javafx.scene.control.Toggle sel = group.getSelectedToggle();
-                if (sel == null) return "";
-                if (fCustomRb != null && sel == fCustomRb) {
-                    return fCustomField.getText() == null ? "" : fCustomField.getText().trim();
-                }
-                return ((javafx.scene.control.RadioButton) sel).getText();
-            };
-        } else if ("multi".equals(type) && !q.options().isEmpty()) {
-            java.util.List<javafx.scene.control.CheckBox> boxes = new java.util.ArrayList<>();
-            for (String opt : q.options()) {
-                javafx.scene.control.CheckBox cb = new javafx.scene.control.CheckBox(opt);
+                JFXCheckBox cb = new JFXCheckBox(opt);
                 cb.getStyleClass().add("ai-ask-option");
                 qBox.getChildren().add(cb);
                 boxes.add(cb);
             }
-            TextField customField = null;
-            if (q.allowCustom()) {
-                customField = new TextField();
-                customField.setPromptText(i18n("ai.ask.custom_hint"));
-                qBox.getChildren().add(customField);
-            }
-            final TextField fCustomField = customField;
+            JFXCheckBox customCb = new JFXCheckBox(i18n("ai.ask.custom"));
+            customCb.getStyleClass().add("ai-ask-option");
+            customCb.selectedProperty().addListener((o, ov, nv) -> {
+                customField.setVisible(nv);
+                customField.setManaged(nv);
+                if (nv) customField.requestFocus();
+            });
+            qBox.getChildren().addAll(customCb, customField);
             return () -> {
                 java.util.List<String> sel = new java.util.ArrayList<>();
-                for (javafx.scene.control.CheckBox cb : boxes) if (cb.isSelected()) sel.add(cb.getText());
-                if (fCustomField != null && fCustomField.getText() != null && !fCustomField.getText().isBlank()) {
-                    sel.add(fCustomField.getText().trim());
+                for (JFXCheckBox cb : boxes) if (cb.isSelected()) sel.add(cb.getText());
+                if (customCb.isSelected() && customField.getText() != null && !customField.getText().isBlank()) {
+                    sel.add(customField.getText().trim());
                 }
                 return String.join(", ", sel);
             };
         } else {
-            TextField field = new TextField();
-            field.setPromptText(i18n("ai.ask.text_hint"));
-            qBox.getChildren().add(field);
-            return () -> field.getText() == null ? "" : field.getText().trim();
+            javafx.scene.control.ToggleGroup group = new javafx.scene.control.ToggleGroup();
+            for (String opt : q.options()) {
+                JFXRadioButton rb = new JFXRadioButton(opt);
+                rb.setToggleGroup(group);
+                rb.getStyleClass().add("ai-ask-option");
+                qBox.getChildren().add(rb);
+            }
+            JFXRadioButton customRb = new JFXRadioButton(i18n("ai.ask.custom"));
+            customRb.setToggleGroup(group);
+            customRb.getStyleClass().add("ai-ask-option");
+            customRb.selectedProperty().addListener((o, ov, nv) -> {
+                customField.setVisible(nv);
+                customField.setManaged(nv);
+                if (nv) customField.requestFocus();
+            });
+            qBox.getChildren().addAll(customRb, customField);
+            // Default to the first concrete option, or the custom choice if none were given.
+            if (!group.getToggles().isEmpty()) group.selectToggle(group.getToggles().get(0));
+            return () -> {
+                javafx.scene.control.Toggle sel = group.getSelectedToggle();
+                if (sel == null) return "";
+                if (sel == customRb) {
+                    return customField.getText() == null ? "" : customField.getText().trim();
+                }
+                return ((JFXRadioButton) sel).getText();
+            };
         }
     }
 

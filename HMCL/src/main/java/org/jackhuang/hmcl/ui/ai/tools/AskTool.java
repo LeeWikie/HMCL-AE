@@ -78,10 +78,12 @@ public final class AskTool implements ToolSpec {
                 + "which optional mods, etc.) or to confirm a destructive action — instead of guessing or "
                 + "telling the user to perform manual steps you could do yourself with other tools. "
                 + "Parameter 'questions' is a JSON array; each item is an object: "
-                + "{\"question\": string, \"type\": \"single\"|\"multi\"|\"text\", "
-                + "\"options\": [string, ...] (for single/multi), \"allowCustom\": bool (offer a custom input)}. "
-                + "Example: [{\"question\":\"安装哪个版本?\",\"type\":\"single\",\"options\":[\"最新正式版\"],\"allowCustom\":true},"
-                + "{\"question\":\"哪个加载器?\",\"type\":\"single\",\"options\":[\"Fabric\",\"Forge\",\"NeoForge\",\"Quilt\"],\"allowCustom\":true},"
+                + "{\"question\": string, \"type\": \"single\"|\"multi\", \"options\": [string, ...]}. "
+                + "EVERY question MUST be single or multi and MUST include at least one concrete option; "
+                + "never use a free-text-only question. A custom '自定义' choice is appended automatically "
+                + "for the user to type their own value — do not add it yourself. "
+                + "Example: [{\"question\":\"安装哪个版本?\",\"type\":\"single\",\"options\":[\"1.21.1\",\"1.20.1\"]},"
+                + "{\"question\":\"哪个加载器?\",\"type\":\"single\",\"options\":[\"Fabric\",\"Forge\",\"NeoForge\",\"Quilt\"]},"
                 + "{\"question\":\"安装哪些附属?\",\"type\":\"multi\",\"options\":[\"Sodium Extra\",\"Iris Shaders\"]}].";
     }
 
