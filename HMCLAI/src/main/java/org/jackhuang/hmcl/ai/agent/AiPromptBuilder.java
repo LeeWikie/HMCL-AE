@@ -132,6 +132,14 @@ public final class AiPromptBuilder {
         Path gameDir = resolveGameDir();
         if (gameDir != null) {
             ctx.add("- Game directory: " + gameDir);
+            Tool gctTool = toolRegistry.get("resolve_game_context");
+            if (gctTool instanceof GameContextTool gct) {
+                String inst = gct.getInstanceName();
+                ctx.add("- Selected instance: " + (inst != null ? inst : "(base directory)")
+                        + " | Version isolation: " + (gct.isIsolated()
+                            ? "ON — mods/saves/config live under versions/" + (inst != null ? inst : "<name>") + "/"
+                            : "OFF — shared in the base .minecraft across all versions"));
+            }
             ctx.add("- Logs: " + gameDir.resolve("logs"));
             ctx.add("- Crash reports: " + gameDir.resolve("crash-reports"));
             ctx.add("- Mods: " + gameDir.resolve("mods"));

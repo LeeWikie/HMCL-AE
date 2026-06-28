@@ -446,6 +446,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void refreshGameContext() {
         Path runDir = resolveCurrentGameDir();
         gameContextTool.setGameDir(runDir);
+        // Surface the selected instance + version-isolation state to the agent.
+        try {
+            Profile profile = Profiles.getSelectedProfile();
+            String sel = profile != null ? Profiles.getSelectedInstance(profile) : null;
+            boolean isolated = runDir != null && profile != null
+                    && !runDir.equals(profile.getRepository().getBaseDirectory());
+            gameContextTool.setInstanceInfo(sel, isolated);
+        } catch (Throwable ignored) {
+            gameContextTool.setInstanceInfo(null, false);
+        }
         if (runDir != null) {
             fileReadTool.addRoot(runDir);
             fileWriteTool.addRoot(runDir);
@@ -531,6 +541,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sidebarScrollPane.add(newChatItem);
         sidebarScrollPane.add(sessionListBox);
         VBox.setVgrow(sidebarScrollPane, Priority.ALWAYS);
+        // Let the scroll area shrink below its content height so it scrolls internally
+        // instead of pushing the pinned "AI settings" entry off the bottom.
+        sidebarScrollPane.setMinHeight(0);
 
         AdvancedListItem settingsItem = new AdvancedListItem();
         settingsItem.getStyleClass().add("navigation-drawer-item");

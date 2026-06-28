@@ -106,6 +106,7 @@ public final class InstallModTool implements Tool {
         String gameVersion = extractString(parameters, "gameVersion", null);
         String versionName = extractString(parameters, "version", null);
         String modsDirOverride = extractString(parameters, "modsDir", null);
+        String instance = extractString(parameters, "instance", null);
 
         RemoteAddonRepository repository;
         if ("curseforge".equalsIgnoreCase(source)) {
@@ -154,10 +155,25 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Selected version '" + selected.name() + "' has no downloadable file.");
         }
 
-        // Determine the destination folder.
-        Path modsDir = modsDirOverride != null
-                ? Path.of(modsDirOverride).toAbsolutePath().normalize()
-                : gameDirectory.resolve("mods");
+        // Determine the destination folder. Priority: explicit modsDir override >
+        // a named target instance (isolation-aware via getRunDirectory) > the selected instance.
+        Path modsDir;
+        if (modsDirOverride != null) {
+            modsDir = Path.of(modsDirOverride).toAbsolutePath().normalize();
+        } else if (instance != null && !instance.isBlank()) {
+            try {
+                var repo = org.jackhuang.hmcl.setting.Profiles.getSelectedProfile().getRepository();
+                if (!repo.hasVersion(instance)) {
+                    return ToolResult.failure("No such instance '" + instance
+                            + "'. Use list_instances to see installed instances.");
+                }
+                modsDir = repo.getRunDirectory(instance).resolve("mods");
+            } catch (Throwable t) {
+                return ToolResult.failure("Could not resolve instance '" + instance + "': " + t);
+            }
+        } else {
+            modsDir = gameDirectory.resolve("mods");
+        }
 
         Path dest = modsDir.resolve(file.filename());
         if (Files.exists(dest)) {

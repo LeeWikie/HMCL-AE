@@ -26,6 +26,27 @@ public final class GameContextTool implements ToolSpec {
         return gameDir;
     }
 
+    @Nullable
+    private String instanceName;
+    private boolean isolated;
+
+    /// Records the selected instance's name and whether version isolation is on.
+    /// Isolation ON => mods/saves/config live under versions/&lt;name&gt;/; OFF => they are
+    /// shared in the base .minecraft directory across all versions.
+    public void setInstanceInfo(@Nullable String instanceName, boolean isolated) {
+        this.instanceName = instanceName;
+        this.isolated = isolated;
+    }
+
+    @Nullable
+    public String getInstanceName() {
+        return instanceName;
+    }
+
+    public boolean isIsolated() {
+        return isolated;
+    }
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.READ_ONLY;
@@ -65,6 +86,12 @@ public final class GameContextTool implements ToolSpec {
         paths.put("shaderPacksDir", gameDir.resolve("shaderpacks").toString());
 
         StringBuilder sb = new StringBuilder();
+        if (instanceName != null) {
+            sb.append("selectedInstance: ").append(instanceName).append('\n');
+        }
+        sb.append("versionIsolation: ").append(isolated
+                ? "ON (mods/saves/config under versions/" + (instanceName != null ? instanceName : "<name>") + "/)"
+                : "OFF (shared in base .minecraft across all versions)").append('\n');
         for (var entry : paths.entrySet()) {
             sb.append(entry.getKey()).append(": ").append(entry.getValue());
             if (Files.isDirectory(Path.of(entry.getValue()))) {
