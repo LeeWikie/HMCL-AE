@@ -11,13 +11,8 @@
 <!-- #PROPERTY NAME=BADGES -->
 <div align="center">
 
-[![GitHub](https://img.shields.io/badge/GitHub-repo-blue?style=flat-square&logo=github)](https://github.com/HMCL-dev/HMCL)
-[![CNB](https://img.shields.io/badge/CNB-mirror-ff6200?style=flat-square&logo=cloudnativebuild)](https://cnb.cool/HMCL-dev/HMCL)
-[![Gitee](https://img.shields.io/badge/Gitee-mirror-c71d23?style=flat-square&logo=gitee)](https://gitee.com/huanghongxun/HMCL)
-
-[![QQ Group](https://img.shields.io/badge/QQ-gray?style=flat-square&logo=qq&logoColor=ffffff)](https://docs.hmcl.net/groups.html)
-[![Discord](https://img.shields.io/badge/Discord-gray?style=flat-square&logo=discord)](https://discord.gg/jVvC7HfM6U)
-[![Bilibili](https://img.shields.io/badge/Bilibili-gray?style=flat-square&logo=bilibili)](https://space.bilibili.com/20314891)
+[![GitHub](https://img.shields.io/badge/GitHub-repo-blue?style=flat-square&logo=github)](https://github.com/LeeWikie/HMCL-AE)
+[![GPLv3](https://img.shields.io/badge/License-GPLv3-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0.html)
 
 </div>
 <!-- #END BLOCK -->
@@ -25,83 +20,87 @@
 ---
 
 <!-- #BEGIN LANGUAGE_SWITCHER -->
-**English** (**Standard**, [uʍoᗡ ǝpᴉsd∩](README_en_Qabs.md)) | 中文 ([简体](README_zh.md), [繁體](README_zh_Hant.md), [文言](README_lzh.md)) | [日本語](README_ja.md) | [español](README_es.md) | [русский](README_ru.md) | [українська](README_uk.md)
+**English** | 中文 ([简体](README_zh.md), [繁體](README_zh_Hant.md)) | [日本語](README_ja.md) | [español](README_es.md) | [русский](README_ru.md) | [українська](README_uk.md)
 <!-- #END LANGUAGE_SWITCHER -->
 
 ## Introduction
 
-HMCL is an open-source, cross-platform Minecraft launcher that supports Mod Management, Game Customizing, ModLoader Installing (Forge, NeoForge, Cleanroom, Fabric, Legacy Fabric, Quilt, LiteLoader, and OptiFine), Modpack Creating, UI Customization, and more.
+HMCL-AE is a modified version of [HMCL (Hello Minecraft! Launcher)](https://github.com/HMCL-dev/HMCL) — the open-source, cross-platform Minecraft launcher — with an AI agent assistant integrated into the launcher. The AI can read game files, search for mods, install versions and mods, diagnose crashes, and more, using real tools rather than just chatting.
 
-HMCL has amazing cross-platform capabilities. Not only does it run on different operating systems like Windows, Linux, macOS, and FreeBSD, but it also supports various CPU architectures such as x86, ARM, RISC-V, MIPS, and LoongArch. You can easily enjoy Minecraft across different platforms through HMCL.
+HMCL-AE inherits all of HMCL's features: mod management (Forge / NeoForge / Fabric / Quilt / OptiFine), modpack support, Java management, account login, Terracotta multiplayer, and cross-platform support (Windows, Linux, macOS, FreeBSD; x86, ARM, RISC-V, MIPS, LoongArch).
 
-For systems and CPU architectures supported by HMCL, please refer to [this table](PLATFORM.md).
+**This is beta software under active development.** Expect rough edges. Feedback is welcomed.
 
-HMCL-AE builds on this foundation with an AI co-pilot integrated into the launcher, designed to help when Minecraft won't start, mods conflict, or crash reports appear.
+## What the AI Agent Can Do
 
-## What HMCL-AE Can Do
+The AI is an **agent with real tools** — it calls tools, gets results, and decides what to do next in a loop, not just chat.
 
-HMCL-AE adds AI-assisted tools that work inside the launcher itself. No external configuration, no separate applications to install.
+**Tools available:**
+- **Filesystem**: `read`, `write`, `edit`, `grep`, `glob` — read crash logs, edit config files, search the game directory.
+- **Shell**: run commands (under the configured approval mode).
+- **Web**: `web_search` (Tavily / SearxNG), `web_fetch` — look up mod updates, wiki pages.
+- **Minecraft operations**: list installed instances & real live versions; search & install mods, resource packs, shaders, modpacks from Modrinth / CurseForge; install a Minecraft version + mod loader fully automatically; launch; rename / delete instances.
+- **Crash diagnosis**: matches known crash patterns (reuses HMCL's built-in analyzer).
+- **Structured questions** (`ask`): when the agent needs your decision (which version? which mods?) a step-by-step question panel appears above the input field.
+- **Self-configuration**: built-in skills (`config-hmcl-ae`, `config-hmcl`) let the agent configure the launcher itself by editing config files.
 
-**AI Chat.** Ask questions about mod compatibility, setup steps, or Minecraft mechanics directly from the launcher. The chat works with multiple AI models and providers. You can switch between available backends in settings, or configure your own provider.
+**What this means in practice:**
+- "帮我装个最新版+Fabric，再装Sodium及能用的附属" → the agent lists real versions, searches for Sodium addons, asks which ones you want, installs the version + loader + mods, and reports when it's done.
+- "分析一下我的崩溃报告" → reads `crash-reports/`, matches known errors, explains the cause and fix in plain language.
+- "把xxx实例改名为yyy" → renames it directly.
 
-**Crash Log Auto-Analysis.** Paste a crash report or point HMCL-AE at the log file, and it reads the stack trace to identify the likely cause. It understands common failure patterns: mod conflicts, Java version mismatches, missing dependencies, memory allocation errors. You get a diagnosis with specific suggestions in seconds.
+## Requirements
 
-**Agent Diagnostic Assistance.** When the game behaves unexpectedly, HMCL-AE can inspect your current configuration. It cross-references installed mod versions, loader compatibility, and Java flags against known-good setups. Mismatches and potential problems are flagged so you can address them before spending hours in trial-and-error.
-
-The AI features use local models by default. Cloud providers are available if you choose to configure them.
-
-## Roadmap
-
-Features currently in development:
-
-- **Automated Mod Conflict Testing.** Test mod combinations in isolated game environments to detect conflicts before they disrupt play. Results are reported with reproduction steps.
-- **Mod and Modpack Recommendations.** Get suggestions for mods and modpacks based on your installed content and preferred play style.
-- **Game Stress Prediction.** Estimate how a modpack will perform on your system before downloading, based on hardware specs and known performance characteristics.
+- An **AI provider API key** (OpenAI, DeepSeek, Anthropic, or any OpenAI-compatible endpoint). The AI features do **not** work without one — there are no built-in free models.
+- Java 8+ (Java 17+ recommended for best performance).
+- The launcher itself is free and open source; API usage is billed by the provider you configure.
 
 ## Quick Start
 
-1. Download HMCL-AE from the links in the [Download](#download) section below.
-2. Install as you would HMCL. Download the jar or platform package, then run it.
-3. Look for the assistant panel in the launcher interface. The AI features are ready to use with no additional setup required.
-
-You don't need an API key to get started. HMCL-AE ships with access to free model providers, and you can add your own provider in settings if you prefer a specific backend.
+1. Download from the [Downloads](#download) section below.
+2. Run `HMCL-AE-测试版.exe` (Windows) or `java -jar HMCL-AE-测试版.exe` (Linux / macOS).
+3. Go to **AI 助手(Assistant)** → **AI 设置(Settings)** → **服务商(Providers)**, add your API endpoint + key + model name.
+4. Start a conversation.
 
 ## Download
 
-You can download HMCL-AE from the following sources:
+This is a beta release. Download links:
 
-- [HMCL Official Website](https://hmcl.huangyuhui.net/download)
-- [GitHub Release](https://github.com/HMCL-dev/HMCL/releases)
-- [CNB Release](https://cnb.cool/HMCL-dev/HMCL/-/releases)
+- [GitHub Releases](https://github.com/LeeWikie/HMCL-AE/releases)
+- Windows `.exe` and cross-platform `.jar` (the `.exe` is also a valid jar — `java -jar` works on Linux/macOS).
+
+## Roadmap (near-term)
+
+- **Background install with progress** — downloads currently block the chat. Moving them to HMCL's native task/background system with progress bars is the next priority.
+- Account login tools — automate adding Microsoft / offline accounts.
+- Java management tools — auto-detect and select the right Java version per instance.
+- Conversation editing refinements — action bar visibility on just-sent messages.
+
+## Known Issues
+
+See the included `HMCL-AE 测试版说明与已知问题.md` for an up-to-date, honest list of known issues (in Chinese).
 
 ## Contributing
 
-HMCL-AE is a community-driven open-source project, and everyone is welcome to contribute code or provide suggestions.
+HMCL-AE is a community-driven open-source project (GPLv3). Bug reports, feature requests, and code contributions are welcome.
 
-You can contribute to HMCL-AE development in the following ways:
+- [Report issues](https://github.com/LeeWikie/HMCL-AE/issues)
+- [Submit pull requests](https://github.com/LeeWikie/HMCL-AE/pulls)
 
-- Report bugs or request features by [creating an issue](https://github.com/HMCL-dev/HMCL/issues/new/choose) on GitHub.
-- Contribute code by forking the repository on GitHub and [submitting a pull request](https://github.com/HMCL-dev/HMCL/compare).
+Before contributing code, please read [HMCL's Contributing Guide](./Contributing.md) for build instructions and debug options.
 
-Before contributing, please read the [Contributing Guide](./Contributing.md), which includes the following:
+HMCL-AE inherits from HMCL, which has had more than 120 contributors since 2015.
 
-- [How to build and run HMCL from source](./Contributing.md#build-hmcl)
-- [Adjusting HMCL behavior using debug options](./Contributing.md#debug-options)
-
-## Contributors
-
-Since 2015, more than 120 contributors have participated in HMCL. Thank you for your hard work!
-
-[![Contributors](https://contrib.rocks/image?repo=HMCL-dev/HMCL)](https://github.com/HMCL-dev/HMCL/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=LeeWikie/HMCL-AE)](https://github.com/LeeWikie/HMCL-AE/graphs/contributors)
 
 ## License
 
-The software is distributed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) license with the following additional terms:
+Distributed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html) with the following additional terms:
 
 ### Additional terms under GPLv3 Section 7
 
 1. When you distribute a modified version of the software, you must change the software name or the version number in a reasonable way in order to distinguish it from the original version. (Under [GPLv3, 7(c)](https://github.com/HMCL-dev/HMCL/blob/11820e31a85d8989e41d97476712b07e7094b190/LICENSE#L372-L374))
 
-   The software name and the version number can be edited [here](https://github.com/HMCL-dev/HMCL/blob/86529c6f15b3be54ed8d89ece47566cf57f43eb7/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java#L36-L38).
+   The software name and the version number can be edited [here](https://github.com/LeeWikie/HMCL-AE/blob/ai-feature/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java).
 
 2. You must not remove the copyright declaration displayed in the software. (Under [GPLv3, 7(b)](https://github.com/HMCL-dev/HMCL/blob/11820e31a85d8989e41d97476712b07e7094b190/LICENSE#L368-L370))
