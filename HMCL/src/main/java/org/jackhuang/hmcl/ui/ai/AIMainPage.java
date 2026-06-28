@@ -1852,10 +1852,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 () -> deleteMessageAt(index));
         bar.getChildren().add(del);
 
-        messageList.getChildren().add(bar);
+        // Align actions to the same side as the bubble: right for user, left for AI.
+        HBox row = new HBox(bar);
+        row.setAlignment(isUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+        row.setPadding(new Insets(0, 16, 6, 16));
+        messageList.getChildren().add(row);
     }
 
-    /// Builds a small, icon-only JFXButton with a tooltip, styled by .ai-bubble-action-btn.
     private static JFXButton smallIcon(SVG icon, String tooltip, Runnable action) {
         JFXButton btn = new JFXButton();
         btn.setGraphic(icon.createIcon(16));
@@ -1863,6 +1866,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         btn.setTooltip(new javafx.scene.control.Tooltip(tooltip));
         btn.setOnAction(e -> action.run());
         return btn;
+    }
+
+    /// Forks the conversation into a new session containing everything up to {@code index}.
+    private void branchFrom(int index) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) return;
+        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + " ✦");
+        persistStore();
+        refreshSessionList();
+        loadSessionMessages(branch);
     }
 
     /// Regenerate the AI response from a given assistant message index: drop the assistant
@@ -1900,18 +1913,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         cur.removeAt(index);
         persistStore();
         loadSessionMessages(cur);
-    }
-
-    /// Forks the conversation into a new session containing everything up to {@code index}.
-    private void branchFrom(int index) {
-        AiSession cur = sessionStore.getCurrentSession();
-        if (cur == null) {
-            return;
-        }
-        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + " ✦");
-        persistStore();
-        refreshSessionList();
-        loadSessionMessages(branch);
     }
 
     /// Edit a user message: drop it and everything after, then load its text into the input
