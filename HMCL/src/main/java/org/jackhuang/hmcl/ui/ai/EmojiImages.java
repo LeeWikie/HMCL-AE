@@ -101,9 +101,7 @@ public final class EmojiImages {
                 int clusterEnd = consumeCluster(text, i);
                 String cluster = text.substring(i, clusterEnd);
                 String filename = toFilename(cluster);
-                // Colour mode (opt-in): Twemoji PNG fetched on demand. Default mode: local
-                // black-and-white raster from the bundled Noto Emoji font (offline, fills gaps).
-                Image image = enabled ? imageFor(filename) : EmojiMonoImages.imageFor(cluster, filename);
+                Image image = imageFor(filename);
                 if (image != null) {
                     if (plain.length() > 0) {
                         nodes.add(new Text(plain.toString()));

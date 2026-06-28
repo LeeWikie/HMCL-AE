@@ -229,10 +229,8 @@ public final class MarkdownMessageView extends VBox {
     private void appendInline(TextFlow flow, Node node, boolean bold, boolean italic, boolean strike) {
         if (node instanceof org.commonmark.node.Text text) {
             String literal = text.getLiteral();
-            if (EmojiImages.containsEmoji(literal)) {
-                // Emoji present: split into text runs + inline emoji images. Black-and-white by
-                // default (local Noto raster, fills glyphs the system font lacks), colour Twemoji
-                // when the user enables it.
+            if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(literal)) {
+                // Colour-emoji mode: split into text runs + inline emoji images.
                 flow.getChildren().addAll(EmojiImages.toNodes(literal, 13));
             } else {
                 flow.getChildren().add(styledText(literal, bold, italic, false, strike));
