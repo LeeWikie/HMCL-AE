@@ -562,8 +562,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
         )));
 
-        AdvancedListBox bottomBox = new AdvancedListBox();
-        bottomBox.add(settingsItem);
+        // Pin "AI settings" as a fixed-height row at the very bottom: it never grows or
+        // shrinks, so however long the session list gets, the scroll area above absorbs the
+        // change and this entry always keeps its own dedicated, full-size space.
+        settingsItem.setMinHeight(Region.USE_PREF_SIZE);
+        VBox bottomBox = new VBox(settingsItem);
+        bottomBox.getStyleClass().add("ai-sidebar-bottom");
+        VBox.setVgrow(bottomBox, Priority.NEVER);
+        bottomBox.setMinHeight(Region.USE_PREF_SIZE);
+        bottomBox.setMaxHeight(Region.USE_PREF_SIZE);
         sidebarRoot.getChildren().addAll(sidebarScrollPane, bottomBox);
         refreshSessionList();
     }
