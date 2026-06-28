@@ -2209,11 +2209,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return nameLabel;
     }
 
-    /// Builds a bubble's text content: a colour-emoji TextFlow when colour emoji is enabled
-    /// and the text contains emoji, otherwise a plain wrapped Label. Both carry the given
-    /// bubble style classes.
+    /// Builds a bubble's text content: an emoji TextFlow when the text contains emoji (black-and-
+    /// white inline images by default, colour Twemoji when enabled), otherwise a plain wrapped
+    /// Label. Both carry the given bubble style classes.
     private static Node bubbleTextNode(String text, String... styleClasses) {
-        if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(text)) {
+        if (EmojiImages.containsEmoji(text)) {
             javafx.scene.text.TextFlow flow = new javafx.scene.text.TextFlow();
             flow.setMaxWidth(480);
             flow.getChildren().addAll(EmojiImages.toNodes(text, 14));
