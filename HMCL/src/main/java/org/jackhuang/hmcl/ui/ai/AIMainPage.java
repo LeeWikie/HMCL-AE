@@ -2271,6 +2271,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         wrapper.setAlignment(align);
         wrapper.setPadding(new Insets(2, 0, 2, 0));
         wrapper.getStyleClass().add("ai-bubble-wrapper");
+        // Rasterise each finished bubble so scrolling a long conversation reuses the cached
+        // bitmap (a pure translate) instead of repainting every TextFlow — the default cache
+        // hint re-renders at quality on real transforms, so there is no blur on resize.
+        wrapper.setCache(true);
         return wrapper;
     }
 
