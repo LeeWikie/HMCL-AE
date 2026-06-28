@@ -37,6 +37,7 @@ public final class AiPromptBuilder {
     private static final String TOOLS_GUIDE = String.join("\n",
             "Tools and when to use them:",
             "- read: read a file, or list a directory's entries.",
+            "- list_game_versions: list the REAL, live Minecraft versions (latest release/snapshot + recent). Call this before asking the user which version — never rely on your training memory of which versions exist.",
             "- glob: find files by name pattern (e.g. logs/*.log). grep: search file contents by regex.",
             "- write: create a new file or completely overwrite one (auto-creates parent dirs).",
             "- edit: make a surgical change to an existing file (old_string must match exactly).",
@@ -52,6 +53,13 @@ public final class AiPromptBuilder {
                     + "'name.jar.disabled' = disabled. Toggle by renaming the file (use shell).",
             "- Latest log: <logsDir>/latest.log. Crash reports: <crashReportsDir>/. Game options: <gameDir>/options.txt.",
             "- Mods: <gameDir>/mods. In-game config: <gameDir>/config. Launcher config: the read/write tool's config root.");
+
+    private static final String PLAYBOOKS = String.join("\n",
+            "Operating playbooks (follow end-to-end with tools; never hand the user manual steps you can do yourself):",
+            "[Fresh install + mods] e.g. \"装个最新版+Sodium全家桶\": 1) list_instances. 2) list_game_versions to get REAL versions (never guess from memory). 3) search_mods for the requested mod(s) to get real options/compatibility. 4) ask the user with REAL options: which version (from list_game_versions), which loader (Fabric for the Sodium family), which addons (multi, from search_mods); pick sensible defaults and ask only what matters. 5) install_loader(gameVersion, loader) to create the instance; tell the user it may take a while. 6) install_mod for each chosen mod, passing instance = the just-installed instance name so files land in the right place (see Version isolation). 7) verify (read/glob the mods dir) and tell the user it's ready (offer launch_instance).",
+            "[Add mods to an existing instance]: 1) list_instances; ask which instance if ambiguous. 2) search_mods; ask which to install (multi, real options) if unspecified. 3) install_mod with instance = that instance. 4) verify + report.",
+            "[Diagnose a crash / \"游戏崩溃了\"]: 1) read logs/latest.log and the newest file in crash-reports/ (glob then read). 2) match_known_errors on that text. 3) explain the cause in plain language + the concrete fix; if you can perform the fix (toggle a mod, change memory, install a mod) do it (confirm anything destructive).",
+            "Version isolation: the runtime context states the selected instance and whether isolation is ON. ON => that instance's mods/saves/config live under versions/<name>/; OFF => they are SHARED in the base .minecraft across all versions. Before installing mods, know which it is and pass the target instance to install_mod. If isolation is OFF, warn that version-specific mods will be shared across versions.");
 
     private final AiSettings settings;
     private final ToolRegistry toolRegistry;

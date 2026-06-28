@@ -417,6 +417,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(gameContextTool);
         // HMCL-operation tools (let the agent actually install/launch), reusing HMCL APIs.
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListInstancesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListGameVersionsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
