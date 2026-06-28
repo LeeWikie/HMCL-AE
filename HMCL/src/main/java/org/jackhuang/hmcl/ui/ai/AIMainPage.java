@@ -537,12 +537,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         newChatItem.setLeftIcon(SVG.ADD);
         newChatItem.setOnAction(e -> createSession());
 
+        // "New Chat" pinned at the top: fixed height, never scrolls with the session list.
+        newChatItem.setMinHeight(Region.USE_PREF_SIZE);
+        VBox topBox = new VBox(newChatItem);
+        topBox.getStyleClass().add("ai-sidebar-top");
+        VBox.setVgrow(topBox, Priority.NEVER);
+        topBox.setMinHeight(Region.USE_PREF_SIZE);
+        topBox.setMaxHeight(Region.USE_PREF_SIZE);
+
         sidebarScrollPane = new AdvancedListBox();
-        sidebarScrollPane.add(newChatItem);
         sidebarScrollPane.add(sessionListBox);
         VBox.setVgrow(sidebarScrollPane, Priority.ALWAYS);
-        // Let the scroll area shrink below its content height so it scrolls internally
-        // instead of pushing the pinned "AI settings" entry off the bottom.
+        // Shrink below content height so only the session list scrolls, between the pinned
+        // "New Chat" (top) and "AI settings" (bottom) rows.
         sidebarScrollPane.setMinHeight(0);
 
         AdvancedListItem settingsItem = new AdvancedListItem();
@@ -571,7 +578,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         VBox.setVgrow(bottomBox, Priority.NEVER);
         bottomBox.setMinHeight(Region.USE_PREF_SIZE);
         bottomBox.setMaxHeight(Region.USE_PREF_SIZE);
-        sidebarRoot.getChildren().addAll(sidebarScrollPane, bottomBox);
+        sidebarRoot.getChildren().addAll(topBox, sidebarScrollPane, bottomBox);
         refreshSessionList();
     }
 
