@@ -1890,6 +1890,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Align actions to the same side as the bubble: right for user, left for AI.
         HBox row = new HBox(bar);
         row.setAlignment(isUser ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+        // Match the bubble-wrapper's padding (4 16 4 16) so the icon bar sits directly below
+        // the bubble's horizontal extent — the left edge of the AI bubble starts at 16px, the
+        // right edge of the user bubble ends at 16px from the message-list edge.
         row.setPadding(new Insets(0, 16, 6, 16));
         messageList.getChildren().add(row);
     }

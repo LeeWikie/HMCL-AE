@@ -2049,9 +2049,9 @@
     -fx-padding: 4 16 4 16;
 }
 
-/* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble. */
+/* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble.
+   Padding is set in code so user/AI bars can align to their respective sides. */
 .ai-bubble-actions {
-    -fx-padding: 0 16 6 16;
     -fx-alignment: center-left;
 }
 
