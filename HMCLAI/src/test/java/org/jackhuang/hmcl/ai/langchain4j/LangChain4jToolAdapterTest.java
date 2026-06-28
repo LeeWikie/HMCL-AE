@@ -111,7 +111,9 @@ public final class LangChain4jToolAdapterTest {
         assertEquals("stub-output", result.text());
     }
 
-    /// Verifies that executing an unknown tool returns null.
+    /// Verifies that executing an unknown tool returns a non-null error
+    /// result (never null) so the model receives a matching tool result and
+    /// can self-correct, as required by the OpenAI/Anthropic APIs.
     @Test
     public void testExecuteUnknownTool() {
         ToolRegistry registry = new ToolRegistry();
@@ -123,7 +125,35 @@ public final class LangChain4jToolAdapterTest {
                 .build();
 
         ToolExecutionResultMessage result = adapter.execute(request);
-        assertNull(result);
+        assertNotNull(result);
+        assertEquals("nonexistent", result.toolName());
+        assertTrue(result.text().startsWith("Error:"));
+        assertTrue(result.text().contains("not found"));
+    }
+
+    /// Verifies that a tool which throws is caught and surfaced to the model
+    /// as a non-null "Error: ..." result rather than aborting the turn.
+    @Test
+    public void testExecuteThrowingTool() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new Tool() {
+            @Override public String getName() { return "throwing-tool"; }
+            @Override public String getDescription() { return "Always throws."; }
+            @Override public ToolResult execute(Map<String, Object> p) {
+                throw new IllegalStateException("kaboom");
+            }
+        });
+        LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry);
+
+        ToolExecutionRequest request = ToolExecutionRequest.builder()
+                .name("throwing-tool")
+                .arguments("{}")
+                .build();
+
+        ToolExecutionResultMessage result = adapter.execute(request);
+        assertNotNull(result);
+        assertTrue(result.text().startsWith("Error:"));
+        assertTrue(result.text().contains("kaboom"));
     }
 
     /// Verifies that a tool that returns a failure produces a result

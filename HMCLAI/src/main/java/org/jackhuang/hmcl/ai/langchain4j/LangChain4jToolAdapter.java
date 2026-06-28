@@ -26,7 +26,6 @@ import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -126,22 +125,43 @@ public final class LangChain4jToolAdapter {
     /// wrapped in a LangChain4j
     /// [`ToolExecutionResultMessage`].
     ///
+    /// This method follows the "Pi" coding-agent principle: every tool call
+    /// MUST yield a result that is fed back to the model so it can
+    /// self-correct. It therefore NEVER returns {@code null}. Any failure —
+    /// an unknown tool, a tool that throws, or a tool that reports an error —
+    /// is surfaced to the model as a normal tool result whose text is clearly
+    /// prefixed with {@code "Error:"}. Returning {@code null} would leave the
+    /// assistant's tool-use request without a matching tool result, which the
+    /// OpenAI/Anthropic APIs reject on the next request.
+    ///
     /// @param request the tool execution request from the model
-    /// @return a result message to inject into the conversation context,
-    ///         or {@code null} if the tool is not found
-    @Nullable
+    /// @return a non-null result message to inject into the conversation
+    ///         context; carries an {@code "Error: ..."} text on any failure
     public ToolExecutionResultMessage execute(ToolExecutionRequest request) {
         Tool tool = registry.get(request.name());
         if (tool == null) {
-            return null;
+            return ToolExecutionResultMessage.from(request,
+                    "Error: tool '" + request.name() + "' not found");
         }
 
-        Map<String, Object> parameters = parseArguments(request.arguments());
-        ToolResult result = tool.execute(parameters);
-
-        String text = result.isSuccess()
-                ? result.getOutput()
-                : "Error: " + result.getError();
+        String text;
+        try {
+            Map<String, Object> parameters = parseArguments(request.arguments());
+            ToolResult result = tool.execute(parameters);
+            if (result == null) {
+                text = "Error: tool '" + request.name()
+                        + "' returned no result";
+            } else if (result.isSuccess()) {
+                text = result.getOutput();
+            } else {
+                text = "Error: " + result.getError();
+            }
+        } catch (Exception e) {
+            String message = e.getMessage();
+            text = "Error: " + (message != null && !message.isBlank()
+                    ? message
+                    : e.getClass().getSimpleName());
+        }
 
         return ToolExecutionResultMessage.from(request, text);
     }
