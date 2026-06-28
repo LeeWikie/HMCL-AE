@@ -11,9 +11,11 @@ import org.jetbrains.annotations.NotNullByDefault;
 /// | Permission        | Safe | Ask  | YOLO |
 /// |-------------------|------|------|------|
 /// | READ_ONLY         | ✓    | ✓    | ✓    |
-/// | CONTROLLED_WRITE  | ✗    | ✓    | ✓    |
-/// | DANGEROUS_WRITE   | ✗    | ask  | ✓    |
-/// | EXTERNAL_NETWORK  | ✗    | ✓    | ✓    |
+/// | CONTROLLED_WRITE  | ✓    | ✓    | ✓    |
+/// | DANGEROUS_WRITE   | ask  | ask  | ✓    |
+/// | EXTERNAL_NETWORK  | ✓    | ✓    | ✓    |
+///
+/// Safe mode only confirms DANGEROUS operations (not every write/network call).
 ///
 /// The policy never blocks by itself — callers (e.g. the chat adapter or UI)
 /// use `check` to decide whether to proceed, show confirmation, or block.
@@ -51,18 +53,13 @@ public final class AiExecutionPolicy {
                 return Decision.ALLOW;
             case SAFE:
             default:
-                switch (permission) {
-                    case READ_ONLY:
-                        return Decision.ALLOW;
-                    case CONTROLLED_WRITE:
-                        return Decision.ASK;
-                    case DANGEROUS_WRITE:
-                        return Decision.BLOCK;
-                    case EXTERNAL_NETWORK:
-                        return Decision.ASK;
+                // Safe mode = ONLY dangerous operations require confirmation; read-only,
+                // controlled writes and network calls run automatically.
+                if (permission == ToolPermission.DANGEROUS_WRITE) {
+                    return dangerousConfirmationEnabled ? Decision.ASK : Decision.ALLOW;
                 }
+                return Decision.ALLOW;
         }
-        return Decision.ALLOW;
     }
 
     public AiApprovalMode getMode() {

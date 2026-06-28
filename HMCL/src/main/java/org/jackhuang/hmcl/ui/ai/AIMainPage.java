@@ -1726,8 +1726,32 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
                             searchConfig);
-                    return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb);
+                    return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
+                            this::confirmDangerousOperation);
                 });
+    }
+
+    /// Blocking confirmation used by the tool layer before a dangerous operation runs.
+    /// Invoked on the agent's background thread: shows a dialog on the FX thread and waits
+    /// for the user's answer (denying on timeout/error so the agent can never hang).
+    private boolean confirmDangerousOperation(String toolName, String summary) {
+        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                Controllers.confirm(
+                        i18n("ai.confirm.dangerous.text", summary),
+                        i18n("ai.confirm.dangerous.title"),
+                        () -> future.complete(true),
+                        () -> future.complete(false));
+            } catch (Throwable t) {
+                future.complete(false);
+            }
+        });
+        try {
+            return future.get(120, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private void loadSessionMessages(AiSession session) {

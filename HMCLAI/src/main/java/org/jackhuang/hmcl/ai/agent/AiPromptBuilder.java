@@ -201,10 +201,10 @@ public final class AiPromptBuilder {
 
     private static String describePolicy(AiExecutionPolicy policy) {
         return switch (policy.getMode()) {
-            case SAFE -> "Safe – read-only tools are allowed automatically; "
-                    + "controlled-write and network tools require user confirmation; "
-                    + "dangerous writes are blocked.";
-            case ASK -> "Ask – most tools are allowed, but dangerous writes require confirmation.";
+            case SAFE -> "Safe – read-only, controlled-write and network tools run automatically; "
+                    + "ONLY dangerous operations (e.g. destructive shell commands, deleting an instance) "
+                    + "require the user's confirmation.";
+            case ASK -> "Ask – tools run automatically; only dangerous operations require confirmation.";
             case YOLO -> "YOLO – all tools are allowed without confirmation. "
                     + "Use responsibly and always explain dangerous actions before performing them.";
         };

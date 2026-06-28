@@ -21,7 +21,11 @@ import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import org.jackhuang.hmcl.ai.tools.AiExecutionPolicy;
+import org.jackhuang.hmcl.ai.tools.DangerousCommands;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolConfirmHandler;
+import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
@@ -47,12 +51,23 @@ import java.util.Map;
 public final class LangChain4jToolAdapter {
 
     private final ToolRegistry registry;
+    private final AiExecutionPolicy policy;
+    @Nullable
+    private final ToolConfirmHandler confirmHandler;
 
-    /// Creates an adapter backed by the given tool registry.
-    ///
-    /// @param registry the HMCL tool registry; must not be {@code null}
+    /// Creates an adapter with no safety enforcement (allow-all). Used by tests and
+    /// callers that gate elsewhere.
     public LangChain4jToolAdapter(ToolRegistry registry) {
+        this(registry, new AiExecutionPolicy(org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null);
+    }
+
+    /// Creates an adapter that enforces {@code policy}, asking {@code confirmHandler} to
+    /// confirm any operation the policy marks ASK (e.g. dangerous shell commands in safe mode).
+    public LangChain4jToolAdapter(ToolRegistry registry, AiExecutionPolicy policy,
+                                  @Nullable ToolConfirmHandler confirmHandler) {
         this.registry = registry;
+        this.policy = policy;
+        this.confirmHandler = confirmHandler;
     }
 
     /// Builds LangChain4j [`ToolSpecification`] instances for all non-disabled
@@ -148,6 +163,33 @@ public final class LangChain4jToolAdapter {
         String text;
         try {
             Map<String, Object> parameters = parseArguments(request.arguments());
+
+            // Safety policy: block or confirm dangerous operations before running them.
+            ToolPermission perm = (tool instanceof ToolSpec spec)
+                    ? spec.getPermission() : ToolPermission.CONTROLLED_WRITE;
+            if ("shell".equals(tool.getName())) {
+                Object cmd = parameters.containsKey("command")
+                        ? parameters.get("command") : parameters.get("query");
+                if (cmd != null && DangerousCommands.isDangerous(cmd.toString())) {
+                    perm = ToolPermission.DANGEROUS_WRITE;
+                }
+            }
+            AiExecutionPolicy.Decision decision = policy.check(perm);
+            if (decision == AiExecutionPolicy.Decision.BLOCK) {
+                return ToolExecutionResultMessage.from(request,
+                        "Error: blocked by the current approval mode. Ask the user to switch to a "
+                                + "less restrictive mode, or accomplish this a safer way.");
+            }
+            if (decision == AiExecutionPolicy.Decision.ASK) {
+                boolean approved = confirmHandler != null
+                        && confirmHandler.confirm(tool.getName(), summarizeForConfirm(tool.getName(), parameters));
+                if (!approved) {
+                    return ToolExecutionResultMessage.from(request,
+                            "Error: the user declined to confirm this operation. Do not retry it; "
+                                    + "suggest an alternative or ask what they would prefer.");
+                }
+            }
+
             ToolResult result = tool.execute(parameters);
             if (result == null) {
                 text = "Error: tool '" + request.name()
@@ -178,6 +220,16 @@ public final class LangChain4jToolAdapter {
     private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
     private static final java.lang.reflect.Type MAP_TYPE =
             new com.google.gson.reflect.TypeToken<Map<String, Object>>(){}.getType();
+
+    /// Builds a short human-readable summary of a pending tool call for the confirm dialog.
+    private static String summarizeForConfirm(String toolName, Map<String, Object> params) {
+        Object cmd = params.containsKey("command") ? params.get("command") : params.get("query");
+        String detail = cmd != null ? cmd.toString() : params.toString();
+        if (detail.length() > 300) {
+            detail = detail.substring(0, 300) + "…";
+        }
+        return toolName + ": " + detail;
+    }
 
     private Map<String, Object> parseArguments(String argumentsJson) {
         if (argumentsJson == null || argumentsJson.isBlank()) {

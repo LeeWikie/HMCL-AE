@@ -109,8 +109,19 @@ public final class ChatAgentFactory {
     /// @return a new {@link ChatAgent} instance
     public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
                                    AiPromptBuilder promptBuilder) {
+        return build(settings, session, tools, promptBuilder, null);
+    }
+
+    /// Same as {@link #build(AiSettings, AiSession, ToolRegistry, AiPromptBuilder)} but with a
+    /// confirmation handler the tool layer calls before running dangerous operations.
+    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
+                                   AiPromptBuilder promptBuilder,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler) {
         LlmConfig config = buildConfig(settings);
-        AiChatClient client = resolveClient(config, tools);
+        org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
+                new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
+                        settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled());
+        AiChatClient client = resolveClient(config, tools, policy, confirmHandler);
         ChatAgent agent = new ChatAgent(client, session, settings, promptBuilder);
         session.setContextBudget(settings.getContextWindow());
         return agent;
@@ -274,11 +285,19 @@ public final class ChatAgentFactory {
     ///               to disable tools
     /// @return an AiChatClient ready for use
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools) {
+        // Connection-test / non-interactive paths: no safety enforcement needed.
+        return resolveClient(config, tools, new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
+                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null);
+    }
+
+    private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools,
+                                              org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy,
+                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler) {
         String provider = config.getProvider();
         AiProtocolFamily family = provider != null ? AiProtocolFamily.fromId(provider) : null;
 
         LangChain4jToolAdapter toolAdapter = tools != null
-                ? new LangChain4jToolAdapter(tools)
+                ? new LangChain4jToolAdapter(tools, policy, confirmHandler)
                 : null;
 
         if (family != null) {
