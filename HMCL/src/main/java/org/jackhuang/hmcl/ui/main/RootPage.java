@@ -229,7 +229,7 @@ public class RootPage extends DecoratorAnimatedPage implements DecoratorPage {
             // AI assistant
             AdvancedListItem aiItem = new AdvancedListItem();
             aiItem.setTitle(i18n("ai.title"));
-            aiItem.setLeftIcon(SVG.AI);
+            aiItem.setLeftIcon(SVG.INFO);
             aiItem.setOnAction(e -> Controllers.navigate(Controllers.getAiMainPage()));
 
             // the left sidebar
