@@ -1964,9 +1964,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             Label title = new Label(i18n("ai.ask.title"));
             title.getStyleClass().add("ai-ask-title");
-            askPanel.getChildren().add(title);
 
-            java.util.List<java.util.function.Supplier<String>> collectors = new java.util.ArrayList<>();
+            int n = questions.size();
+            // Build every question's control once up front, so answers persist while the user
+            // navigates back and forth between steps (only the displayed question changes).
+            java.util.List<VBox> qBoxes = new java.util.ArrayList<>(n);
+            java.util.List<java.util.function.Supplier<String>> collectors = new java.util.ArrayList<>(n);
             for (org.jackhuang.hmcl.ui.ai.tools.AskTool.Question q : questions) {
                 VBox qBox = new VBox(4);
                 qBox.getStyleClass().add("ai-ask-question");
@@ -1975,11 +1978,39 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 qLabel.getStyleClass().add("ai-ask-q-label");
                 qBox.getChildren().add(qLabel);
                 collectors.add(buildAskControl(q, qBox));
-                askPanel.getChildren().add(qBox);
+                qBoxes.add(qBox);
             }
 
+            // One-question-at-a-time wizard: a body that shows the current step + a nav bar.
+            VBox body = new VBox();
+            body.getStyleClass().add("ai-ask-body");
+
+            JFXButton back = new JFXButton(i18n("ai.ask.back"));
+            back.getStyleClass().add("ai-ask-nav");
+            JFXButton next = new JFXButton(i18n("ai.ask.next"));
+            next.getStyleClass().add("ai-ask-nav");
             JFXButton confirm = new JFXButton(i18n("ai.ask.confirm"));
             confirm.getStyleClass().add("ai-ask-confirm");
+            Region navSpacer = new Region();
+            HBox.setHgrow(navSpacer, Priority.ALWAYS);
+            HBox nav = new HBox(8, back, navSpacer, next, confirm);
+            nav.getStyleClass().add("ai-ask-nav-bar");
+
+            int[] current = {0};
+            Runnable render = () -> {
+                int i = current[0];
+                body.getChildren().setAll(qBoxes.get(i));
+                title.setText(n > 1 ? i18n("ai.ask.title") + "  (" + (i + 1) + "/" + n + ")" : i18n("ai.ask.title"));
+                back.setVisible(i > 0);
+                back.setManaged(i > 0);
+                boolean last = i == n - 1;
+                next.setVisible(!last);
+                next.setManaged(!last);
+                confirm.setVisible(last);
+                confirm.setManaged(last);
+            };
+            back.setOnAction(e -> { if (current[0] > 0) { current[0]--; render.run(); } });
+            next.setOnAction(e -> { if (current[0] < n - 1) { current[0]++; render.run(); } });
             confirm.setOnAction(e -> {
                 if (activeAsk != future) return;
                 java.util.List<String> answers = new java.util.ArrayList<>();
@@ -1988,7 +2019,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 hideAskPanel();
                 future.complete(answers);
             });
-            askPanel.getChildren().add(confirm);
+
+            askPanel.getChildren().addAll(title, body, nav);
+            render.run();
             askPanel.setManaged(true);
             askPanel.setVisible(true);
             scrollToBottom();
