@@ -934,12 +934,29 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 skillList
         );
 
-        // ③ 工具权限 — 按来源分类展示，使内置工具清晰可见（不再埋进单个折叠项）。
+        // ③ 工具权限。内置工具(本地/文件系统/搜索)默认折叠收起(高级、罕用);
+        //    技能 / MCP 工具来自用户配置,保持可见。
         List<AiToolCatalog.Descriptor> descriptors = buildToolDescriptors();
-        ToolSource[] categoryOrder = {
-                ToolSource.LOCAL, ToolSource.FILESYSTEM, ToolSource.SEARCH, ToolSource.SKILL, ToolSource.MCP
-        };
-        for (ToolSource source : categoryOrder) {
+
+        ComponentSublist builtinSublist = new ComponentSublist();
+        builtinSublist.setTitle("系统内置工具（高级）");
+        builtinSublist.setHasSubtitle(true);
+        builtinSublist.setDescription("内置工具(read/write/edit/shell 等)的权限覆盖；默认跟随上方全局设置，一般无需展开。");
+        boolean anyBuiltin = false;
+        for (AiToolCatalog.Descriptor descriptor : descriptors) {
+            ToolSource s = descriptor.source();
+            if (s == ToolSource.LOCAL || s == ToolSource.FILESYSTEM || s == ToolSource.SEARCH) {
+                builtinSublist.getContent().add(buildToolPermissionRow(descriptor));
+                anyBuiltin = true;
+            }
+        }
+        if (anyBuiltin) {
+            ComponentList builtinCard = new ComponentList();
+            builtinCard.getContent().add(builtinSublist);
+            root.getChildren().addAll(ComponentList.createComponentListTitle("内置工具"), builtinCard);
+        }
+
+        for (ToolSource source : new ToolSource[]{ToolSource.SKILL, ToolSource.MCP}) {
             ComponentList group = new ComponentList();
             boolean any = false;
             for (AiToolCatalog.Descriptor descriptor : descriptors) {
