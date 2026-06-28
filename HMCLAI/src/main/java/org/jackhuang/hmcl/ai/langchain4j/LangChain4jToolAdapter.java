@@ -237,7 +237,29 @@ public final class LangChain4jToolAdapter {
         }
         try {
             Map<String, Object> result = GSON.fromJson(argumentsJson, MAP_TYPE);
-            return result != null ? result : Collections.emptyMap();
+            if (result == null) {
+                return Collections.emptyMap();
+            }
+            // Models often pack a whole JSON object into the single advertised "query"
+            // parameter (for tools that don't publish a structured schema). Unwrap it so
+            // multi-parameter tools still receive their real keys (action, newName, id, ...).
+            Object q = result.get("query");
+            if (q instanceof String s) {
+                String t = s.trim();
+                if (t.startsWith("{") && t.endsWith("}")) {
+                    try {
+                        Map<String, Object> inner = GSON.fromJson(t, MAP_TYPE);
+                        if (inner != null) {
+                            for (Map.Entry<String, Object> e : inner.entrySet()) {
+                                result.putIfAbsent(e.getKey(), e.getValue());
+                            }
+                        }
+                    } catch (com.google.gson.JsonParseException ignored) {
+                        // not a JSON object — leave "query" untouched
+                    }
+                }
+            }
+            return result;
         } catch (com.google.gson.JsonParseException e) {
             return Collections.singletonMap("query", argumentsJson);
         }

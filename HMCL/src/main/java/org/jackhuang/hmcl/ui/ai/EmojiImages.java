@@ -188,8 +188,13 @@ public final class EmojiImages {
             } catch (RuntimeException ignored) {
             }
         }
+        // Not cached on disk yet: kick a disk download for next launch, and return an
+        // async-loading remote image so the colour emoji fills in as soon as it arrives —
+        // no monochrome text fallback that would otherwise "cover" the colour version.
         download(filename, file);
-        return null;
+        Image remote = new Image(BASE_URL + filename + ".png", true);
+        MEMORY.put(filename, remote);
+        return remote;
     }
 
     private static void download(String filename, Path file) {

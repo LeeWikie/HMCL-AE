@@ -2126,6 +2126,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             next.getStyleClass().add("ai-ask-nav");
             JFXButton confirm = new JFXButton(i18n("ai.ask.confirm"));
             confirm.getStyleClass().add("ai-ask-confirm");
+            // While the question panel is up, Enter must submit (the confirm button) and must
+            // NOT trigger the Send/Stop button — pressing Enter used to fire Stop (the default
+            // button during streaming) and cancel the whole response.
+            confirm.setDefaultButton(true);
+            sendBtn.setDefaultButton(false);
             Region navSpacer = new Region();
             HBox.setHgrow(navSpacer, Priority.ALWAYS);
             HBox nav = new HBox(8, back, navSpacer, next, confirm);
@@ -2235,6 +2240,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         askPanel.getChildren().clear();
         askPanel.setVisible(false);
         askPanel.setManaged(false);
+        sendBtn.setDefaultButton(true); // restore Enter→Send now the question panel is gone
     }
 
     /// Cancels any pending `ask` (so AskTool's blocked background thread unblocks with a failure)
