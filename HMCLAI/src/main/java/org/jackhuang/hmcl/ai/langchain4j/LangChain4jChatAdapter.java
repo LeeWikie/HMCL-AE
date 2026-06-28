@@ -174,12 +174,13 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             // Add assistant message (with tool requests) to conversation
             conversation.add(aiMessage);
 
-            // Execute tools and add results to conversation
+            // Execute every tool request and add exactly one result per
+            // request. The adapter never returns null, so every assistant
+            // tool-use request gets a matching tool result — required by the
+            // OpenAI/Anthropic APIs — even when a tool fails (the failure is
+            // returned to the model as an "Error: ..." result so it can retry).
             for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
-                ToolExecutionResultMessage result = toolAdapter.execute(req);
-                if (result != null) {
-                    conversation.add(result);
-                }
+                conversation.add(toolAdapter.execute(req));
             }
         }
 
