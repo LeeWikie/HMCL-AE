@@ -1,0 +1,92 @@
+/*
+ * Hello Minecraft! Launcher - Agent Experience
+ * Copyright (C) 2026 huangyuhui <huanghongxun2008@126.com> and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.jackhuang.hmcl.ui.ai.tools;
+
+import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jetbrains.annotations.NotNullByDefault;
+
+import java.util.Map;
+
+/// Renames a Minecraft instance (version) of the currently selected profile.
+///
+/// Reuses the exact repository call performed by the native rename action in
+/// {@code Versions.renameVersion}: {@link HMCLGameRepository#renameVersion(String, String)}.
+@NotNullByDefault
+public final class RenameInstanceTool implements Tool {
+
+    @Override
+    public String getName() {
+        return "rename_instance";
+    }
+
+    @Override
+    public String getDescription() {
+        return "Rename an existing Minecraft instance (version) in the currently selected profile. "
+                + "Parameters: instance (current instance name; falls back to 'query'), "
+                + "newName (the new instance name). "
+                + "The new name must be a valid version id and must not already be used by another instance. "
+                + "Returns the old and new name on success.";
+    }
+
+    @Override
+    public ToolResult execute(Map<String, Object> parameters) {
+        String instance = InstanceToolSupport.instanceName(parameters);
+        String newName = InstanceToolSupport.string(parameters, "newName");
+
+        if (instance == null) {
+            return ToolResult.failure("Missing required parameter: 'instance' (or 'query').");
+        }
+        if (newName == null) {
+            return ToolResult.failure("Missing required parameter: 'newName'.");
+        }
+
+        HMCLGameRepository repository = InstanceToolSupport.repository();
+
+        if (!repository.isLoaded()) {
+            return ToolResult.failure("The game repository is not loaded yet; please try again in a moment.");
+        }
+        if (!repository.hasVersion(instance)) {
+            return ToolResult.failure("No such instance: '" + instance + "'.");
+        }
+        if (newName.equals(instance)) {
+            return ToolResult.success("Instance '" + instance + "' already has that name; nothing to do.");
+        }
+        if (!HMCLGameRepository.isValidVersionId(newName)) {
+            return ToolResult.failure("Invalid new instance name: '" + newName + "'.");
+        }
+        if (repository.versionIdConflicts(newName)) {
+            return ToolResult.failure("The name '" + newName + "' is already taken by another instance.");
+        }
+
+        boolean ok;
+        try {
+            ok = repository.renameVersion(instance, newName);
+        } catch (UnsupportedOperationException e) {
+            return ToolResult.failure("This repository does not support renaming instances.");
+        }
+        if (!ok) {
+            return ToolResult.failure("Failed to rename '" + instance + "' to '" + newName
+                    + "' (the version json may be malformed or an I/O error occurred).");
+        }
+
+        repository.refreshVersions();
+        return ToolResult.success("Renamed instance '" + instance + "' to '" + newName + "'.");
+    }
+}

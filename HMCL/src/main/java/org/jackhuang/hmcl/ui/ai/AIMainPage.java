@@ -420,6 +420,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AskTool(this::showAskPanel));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
+        // Content management (reuse HMCL remote repos + download/install pipeline).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchResourcePacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallResourcePackTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchShadersTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallShaderTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModpacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallModpackTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchWorldsTool());
+        // Instance lifecycle (rename/duplicate are reversible; delete is confirm-gated).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RenameInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DuplicateInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();

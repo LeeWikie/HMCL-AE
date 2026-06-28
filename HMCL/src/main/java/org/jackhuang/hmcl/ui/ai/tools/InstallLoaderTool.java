@@ -106,6 +106,17 @@ public final class InstallLoaderTool implements ToolSpec {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
+        // Defensive outer guard: HMCL's install pipeline can throw unchecked exceptions
+        // (e.g. UnsupportedOperationException from version lists that don't support a
+        // given refresh mode). Never let a bare exception escape to the model.
+        try {
+            return doExecute(parameters);
+        } catch (Throwable t) {
+            return ToolResult.failure("install_loader failed unexpectedly: " + describe(t));
+        }
+    }
+
+    private ToolResult doExecute(Map<String, Object> parameters) {
         String gameVersionParam = string(parameters.get("gameVersion"));
         String loaderParam = string(parameters.get("loader"));
         String loaderVersionParam = string(parameters.get("loaderVersion"));
@@ -164,21 +175,36 @@ public final class InstallLoaderTool implements ToolSpec {
             return ToolResult.failure("Failed to access the Minecraft version list: " + describe(e));
         }
 
-        String refreshError = await(gameList.refreshAsync(), VERSION_LIST_TIMEOUT_SECONDS, "Loading the Minecraft version list");
-        if (refreshError != null) {
-            return ToolResult.failure(refreshError + ". Check your network connection.");
-        }
-
         String gameVersion;
         String requested = gameVersionParam.trim();
         String requestedLower = requested.toLowerCase(Locale.ROOT);
-        if (requestedLower.equals("latest") || requestedLower.equals("latest-release") || requestedLower.equals("latest_release")) {
+        boolean wantLatest = requestedLower.equals("latest")
+                || requestedLower.equals("latest-release") || requestedLower.equals("latest_release");
+
+        if (wantLatest) {
+            // Resolving "latest" needs the full list. Not every source supports a full
+            // refresh (some throw UnsupportedOperationException), so fall back gracefully.
+            String refreshError = await(gameList.refreshAsync(), VERSION_LIST_TIMEOUT_SECONDS,
+                    "Loading the Minecraft version list");
+            if (refreshError != null) {
+                return ToolResult.failure("Could not load the full version list to resolve 'latest' ("
+                        + refreshError + "). Please specify an explicit version such as 1.21.1.");
+            }
             String latest = newestRelease(gameList.getVersions(""));
             if (latest == null) {
-                return ToolResult.failure("Could not determine the latest Minecraft release.");
+                return ToolResult.failure("Could not determine the latest Minecraft release; "
+                        + "please specify an explicit version such as 1.21.1.");
             }
             gameVersion = latest;
         } else {
+            // Per-version load — the exact entry point HMCL's own download UI uses
+            // (loadAsync → refreshAsync(gameVersion)), which works for multi-source lists
+            // that reject a full refreshAsync().
+            String loadError = await(gameList.loadAsync(requested), VERSION_LIST_TIMEOUT_SECONDS,
+                    "Loading Minecraft " + requested);
+            if (loadError != null) {
+                return ToolResult.failure(loadError + ". Check your network, or the version may not exist.");
+            }
             if (gameList.getVersion(requested, requested).isEmpty()) {
                 return ToolResult.failure("Unknown Minecraft version '" + requested + "'. "
                         + "It does not exist in the remote version list.");
