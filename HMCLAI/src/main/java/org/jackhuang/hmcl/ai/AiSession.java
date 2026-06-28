@@ -146,6 +146,16 @@ public final class AiSession {
         return messages.size();
     }
 
+    /// Removes the single message at {@code index} so it disappears from the conversation
+    /// context. No-op if the index is out of range.
+    public synchronized void removeAt(int index) {
+        if (index < 0 || index >= messages.size()) {
+            return;
+        }
+        messages.remove(index);
+        this.updatedAt = Instant.now();
+    }
+
     /// Clears all messages from the session and bumps the updated-at timestamp.
     ///
     /// Call this when the user invokes the "new conversation" action.

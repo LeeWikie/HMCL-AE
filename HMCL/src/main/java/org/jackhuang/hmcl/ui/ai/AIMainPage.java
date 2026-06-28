@@ -537,9 +537,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         newChatItem.setOnAction(e -> createSession());
 
         // "New Chat" pinned at the top: fixed height, never scrolls with the session list.
-        newChatItem.setMinHeight(Region.USE_PREF_SIZE);
-        VBox topBox = new VBox(newChatItem);
-        topBox.getStyleClass().add("ai-sidebar-top");
+        // Same container (AdvancedListBox) the New Chat row originally lived in, so its padding
+        // and top position stay identical to before — just pinned and fixed-height.
+        AdvancedListBox topBox = new AdvancedListBox();
+        topBox.add(newChatItem);
         VBox.setVgrow(topBox, Priority.NEVER);
         topBox.setMinHeight(Region.USE_PREF_SIZE);
         topBox.setMaxHeight(Region.USE_PREF_SIZE);
@@ -571,9 +572,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Pin "AI settings" as a fixed-height row at the very bottom: it never grows or
         // shrinks, so however long the session list gets, the scroll area above absorbs the
         // change and this entry always keeps its own dedicated, full-size space.
-        settingsItem.setMinHeight(Region.USE_PREF_SIZE);
-        VBox bottomBox = new VBox(settingsItem);
-        bottomBox.getStyleClass().add("ai-sidebar-bottom");
+        AdvancedListBox bottomBox = new AdvancedListBox();
+        bottomBox.add(settingsItem);
         VBox.setVgrow(bottomBox, Priority.NEVER);
         bottomBox.setMinHeight(Region.USE_PREF_SIZE);
         bottomBox.setMaxHeight(Region.USE_PREF_SIZE);
@@ -1779,10 +1779,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             String role = msg.getRole();
             if ("user".equals(role)) {
                 addUserBubble(msg.getContent(), true);
-                attachMessageMenu(msg.getContent(), role, index);
+                attachMessageActions(msg.getContent(), role, index);
             } else if ("assistant".equals(role)) {
                 createAiBubble(msg.getContent(), msg.getUsage());
-                attachMessageMenu(msg.getContent(), role, index);
+                attachMessageActions(msg.getContent(), role, index);
             } else if (isToolMessage(msg.getContent())) {
                 if (aiSettings.isToolCallDisplayEnabled()) {
                     addToolMessage(msg.getContent());
@@ -1810,34 +1810,96 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return content.startsWith("Tool result for ");
     }
 
-    /// Attaches a right-click menu (copy / branch / edit / resend) to the message bubble most
-    /// recently added to {@link #messageList}, bound to {@code index} in the session history.
-    private void attachMessageMenu(String content, String role, int index) {
+    /// Appends a row of small icon-only action buttons below the message bubble most recently
+    /// added to {@link #messageList}, bound to {@code index} in the session history.
+    /// Left-to-right: copy, regenerate, branch, delete. User messages also show edit and resend.
+    private void attachMessageActions(String content, String role, int index) {
         var children = messageList.getChildren();
         if (children.isEmpty()) {
             return;
         }
-        Node node = children.get(children.size() - 1);
-        javafx.scene.control.ContextMenu menu = new javafx.scene.control.ContextMenu();
+        Node bubble = children.get(children.size() - 1);
+        HBox bar = new HBox(4);
+        bar.getStyleClass().add("ai-bubble-actions");
 
-        javafx.scene.control.MenuItem copy = new javafx.scene.control.MenuItem(i18n("ai.msg.copy"));
-        copy.setOnAction(e -> {
-            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
-            cc.putString(content == null ? "" : content);
-            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
-        });
-        javafx.scene.control.MenuItem branch = new javafx.scene.control.MenuItem(i18n("ai.msg.branch"));
-        branch.setOnAction(e -> branchFrom(index));
-        menu.getItems().addAll(copy, branch);
+        JFXButton copy = smallIcon(SVG.CONTENT_COPY, i18n("ai.msg.copy"),
+                () -> {
+                    javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+                    cc.putString(content == null ? "" : content);
+                    javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+                });
+        bar.getChildren().add(copy);
 
-        if ("user".equals(role)) {
-            javafx.scene.control.MenuItem edit = new javafx.scene.control.MenuItem(i18n("ai.msg.edit"));
-            edit.setOnAction(e -> editUserMessage(index, content));
-            javafx.scene.control.MenuItem resend = new javafx.scene.control.MenuItem(i18n("ai.msg.resend"));
-            resend.setOnAction(e -> resendUserMessage(index, content));
-            menu.getItems().addAll(edit, resend);
+        boolean isUser = "user".equals(role);
+        if (isUser) {
+            JFXButton edit = smallIcon(SVG.EDIT, i18n("ai.msg.edit"),
+                    () -> editUserMessage(index, content));
+            bar.getChildren().add(edit);
         }
-        node.setOnContextMenuRequested(ev -> menu.show(node, ev.getScreenX(), ev.getScreenY()));
+
+        JFXButton regenerate = smallIcon(SVG.REFRESH, i18n("ai.msg.resend"),
+                () -> {
+                    if (isUser) resendUserMessage(index, content);
+                    else regenerateFrom(index);
+                });
+        bar.getChildren().add(regenerate);
+
+        JFXButton branch = smallIcon(SVG.SCHEMA, i18n("ai.msg.branch"),
+                () -> branchFrom(index));
+        bar.getChildren().add(branch);
+
+        JFXButton del = smallIcon(SVG.DELETE_FOREVER, i18n("ai.msg.delete"),
+                () -> deleteMessageAt(index));
+        bar.getChildren().add(del);
+
+        messageList.getChildren().add(bar);
+    }
+
+    /// Builds a small, icon-only JFXButton with a tooltip, styled by .ai-bubble-action-btn.
+    private static JFXButton smallIcon(SVG icon, String tooltip, Runnable action) {
+        JFXButton btn = new JFXButton();
+        btn.setGraphic(icon.createIcon(16));
+        btn.getStyleClass().add("ai-bubble-action-btn");
+        btn.setTooltip(new javafx.scene.control.Tooltip(tooltip));
+        btn.setOnAction(e -> action.run());
+        return btn;
+    }
+
+    /// Regenerate the AI response from a given assistant message index: drop the assistant
+    /// and everything after it, then resend the preceding user message.
+    private void regenerateFrom(int index) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        // Walk backwards for the preceding user prompt.
+        java.util.List<org.jackhuang.hmcl.ai.llm.LlmMessage> msgs = cur.getMessages();
+        String prompt = "";
+        for (int i = index - 1; i >= 0; i--) {
+            if ("user".equals(msgs.get(i).getRole())) {
+                prompt = msgs.get(i).getContent();
+                index = i;
+                break;
+            }
+        }
+        cur.truncateFrom(index);
+        persistStore();
+        loadSessionMessages(cur);
+        if (!prompt.isEmpty()) {
+            inputField.setText(prompt);
+            sendMessage();
+        }
+    }
+
+    /// Deletes a single message from the session and re-renders, so it disappears from context.
+    private void deleteMessageAt(int index) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        cur.removeAt(index);
+        persistStore();
+        loadSessionMessages(cur);
     }
 
     /// Forks the conversation into a new session containing everything up to {@code index}.

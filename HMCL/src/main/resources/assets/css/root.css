@@ -2049,6 +2049,24 @@
     -fx-padding: 4 16 4 16;
 }
 
+/* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble. */
+.ai-bubble-actions {
+    -fx-padding: 0 16 6 16;
+    -fx-alignment: center-left;
+}
+
+.ai-bubble-action-btn {
+    -jfx-button-type: FLAT;
+    -fx-background-color: transparent;
+    -fx-padding: 2;
+    -fx-min-width: 20;
+    -fx-min-height: 20;
+}
+.ai-bubble-action-btn:hover {
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 4;
+}
+
 /* Markdown native rendering (commonmark AST -> JavaFX nodes). Text nodes use -fx-fill
    (not -fx-text-fill), so colour them explicitly with the theme on-surface colour. */
 .ai-markdown-view .text {
