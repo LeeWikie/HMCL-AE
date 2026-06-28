@@ -237,8 +237,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             new KeyFrame(javafx.util.Duration.millis(800), e -> statusLabel.setText(typingBaseText + "..."))
     );
 
+    /// The current streaming AI *text segment* bubble (null between turns, i.e. while a tool
+    /// card is the last thing appended). A new bubble is created when text resumes after a tool.
     @Nullable
     private Label streamingBubble;
+
+    /// Tool-call cards awaiting their result, keyed by tool name (FIFO per name) so onToolResult
+    /// can find the matching card appended by onToolActivity.
+    private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
 
     /// The in-flight streaming response future (for stop/abort), and a generation counter
     /// used to ignore callbacks from a response the user has stopped.
@@ -1672,6 +1678,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void loadSessionMessages(AiSession session) {
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
+        streamingBubble = null;
+        pendingToolCards.clear();
         for (LlmMessage msg : session.getMessages()) {
             String role = msg.getRole();
             if ("user".equals(role)) {
@@ -1758,11 +1766,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void startAiResponse(ChatAgent agent, AiSession session, String userInput) {
-        Label aiBubble = createAiBubble("");
-        streamingBubble = aiBubble;
+        // Render a whole turn as an in-order sequence appended to the end of the list:
+        // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
+        streamingBubble = null;
+        pendingToolCards.clear();
 
         final int generation = ++responseGeneration;
         StringBuilder fullContent = new StringBuilder();
+        // Text of the current segment bubble (reset whenever a new segment starts).
+        StringBuilder segment = new StringBuilder();
         // Holds provider-reported usage (if any) so onComplete can render the footer.
         LlmUsage[] usageHolder = {null};
         currentResponse = agent.sendStreaming(userInput, new LlmStreamCallback() {
@@ -1771,7 +1783,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 fullContent.append(token);
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return; // stopped/superseded
-                    aiBubble.setText(fullContent.toString());
+                    if (streamingBubble == null) {
+                        // Text resumed after a tool call (or first text): start a new segment.
+                        streamingBubble = createAiBubble("");
+                        segment.setLength(0);
+                    }
+                    segment.append(token);
+                    streamingBubble.setText(segment.toString());
                     scrollToBottom();
                 });
             }
@@ -1783,10 +1801,31 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolActivity(String toolName, String arguments) {
-                if (!aiSettings.isToolCallDisplayEnabled()) return;
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
-                    insertToolActivity(i18n("ai.tool.executing", toolName));
+                    // Close off the current text segment so the tool card lands after it.
+                    if (streamingBubble != null) {
+                        finalizeAiBubble(streamingBubble, segment.toString(), null, false);
+                        streamingBubble = null;
+                    }
+                    if (!aiSettings.isToolCallDisplayEnabled()) return;
+                    ToolCard card = new ToolCard(toolName);
+                    messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
+                    pendingToolCards.computeIfAbsent(toolName, k -> new java.util.ArrayDeque<>()).addLast(card);
+                    scrollToBottom();
+                });
+            }
+
+            @Override
+            public void onToolResult(String toolName, boolean success, String resultSummary) {
+                Platform.runLater(() -> {
+                    if (generation != responseGeneration) return;
+                    java.util.Deque<ToolCard> dq = pendingToolCards.get(toolName);
+                    ToolCard card = dq != null ? dq.pollFirst() : null;
+                    if (card != null) {
+                        card.complete(success, resultSummary);
+                        scrollToBottom();
+                    }
                 });
             }
 
@@ -1794,10 +1833,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             public void onComplete(String completeText) {
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return; // stopped by the user
-                    streamingBubble = null;
-                    // Finalize the streamed bubble in place: swap in Markdown rendering
-                    // and append the token-usage footer.
-                    finalizeAiBubble(aiBubble, completeText, usageHolder[0]);
+                    String finalText = (completeText == null || completeText.isEmpty())
+                            ? segment.toString() : completeText;
+                    if (streamingBubble != null) {
+                        finalizeAiBubble(streamingBubble, finalText, usageHolder[0], true);
+                        streamingBubble = null;
+                    } else if (!finalText.isEmpty()) {
+                        // Final turn produced text that did not stream as tokens; render it now.
+                        Label b = createAiBubble("");
+                        finalizeAiBubble(b, finalText, usageHolder[0], true);
+                    }
                     exitStreamingState();
                     setStatus(null);
                     persistStore();
@@ -1807,7 +1852,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             @Override
             public void onError(LlmException error) {
                 if (generation != responseGeneration) return;
-                showAiError(aiBubble, fullContent, error);
+                showAiError(streamingBubble, fullContent, error);
             }
         }).exceptionally(ex -> {
             if (generation != responseGeneration) return null; // stopped; ignore
@@ -1819,7 +1864,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             LlmException error = cause instanceof LlmException
                     ? (LlmException) cause
                     : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
-            showAiError(aiBubble, fullContent, error);
+            showAiError(streamingBubble, fullContent, error);
             return null;
         });
 
@@ -1868,13 +1913,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         persistStore();
     }
 
-    private void showAiError(Label aiBubble, StringBuilder fullContent, LlmException error) {
+    private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error) {
         Platform.runLater(() -> {
             streamingBubble = null;
             exitStreamingState();
-            if (fullContent.length() > 0) {
-                aiBubble.setText(fullContent.toString());
+            // The error may arrive between turns (current text segment already finalized, or none
+            // yet); ensure there is a bubble to attach the partial text + error styling to.
+            Label bubble = aiBubble;
+            if (bubble == null) {
+                bubble = createAiBubble("");
             }
+            if (fullContent.length() > 0) {
+                bubble.setText(fullContent.toString());
+            }
+            final Label target = bubble;
             int statusCode = error.getStatusCode();
             String message;
             if (statusCode == 401) {
@@ -1889,7 +1941,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 message = i18n("ai.error.api_error", error.getMessage());
             }
             setStatus(message);
-            aiBubble.getStyleClass().add("ai-bubble-error");
+            target.getStyleClass().add("ai-bubble-error");
             scrollToBottom();
             persistStore();
         });
@@ -2014,6 +2066,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// footer. Mirrors {@link #createAiBubble(String, LlmUsage)} so a just-streamed
     /// bubble matches one rendered from a reloaded session.
     private void finalizeAiBubble(Label aiBubble, String completeText, @Nullable LlmUsage usage) {
+        finalizeAiBubble(aiBubble, completeText, usage, true);
+    }
+
+    /// @param withFooter whether to append the token-usage footer; false for intermediate
+    ///                   text segments of a multi-turn (tool-using) response.
+    private void finalizeAiBubble(Label aiBubble, String completeText, @Nullable LlmUsage usage, boolean withFooter) {
         if (!(aiBubble.getParent() instanceof VBox bubbleBox)) {
             return;
         }
@@ -2024,11 +2082,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 aiBubble.setManaged(false);
                 mdView.getStyleClass().addAll("ai-bubble", "ai-bubble-ai");
                 bubbleBox.getChildren().add(bubbleBox.getChildren().indexOf(aiBubble), mdView);
+            } else {
+                aiBubble.setText(completeText);
             }
         }
-        Node footer = buildUsageFooter(completeText, usage);
-        if (footer != null) {
-            bubbleBox.getChildren().add(footer);
+        if (withFooter) {
+            Node footer = buildUsageFooter(completeText, usage);
+            if (footer != null) {
+                bubbleBox.getChildren().add(footer);
+            }
         }
     }
 
@@ -2090,16 +2152,51 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         scrollToBottom();
     }
 
-    /// Inserts a tool-activity entry just above the streaming AI bubble (which stays at the
-    /// bottom), so the agent's tool calls appear in order before its final answer.
-    private void insertToolActivity(String text) {
-        Label label = new Label(text);
-        label.setWrapText(true);
-        label.setMaxWidth(480);
-        label.getStyleClass().addAll("ai-bubble", "ai-bubble-tool");
-        int idx = Math.max(0, messageList.getChildren().size() - 1);
-        messageList.getChildren().add(idx, wrapBubble(label, Pos.CENTER_LEFT));
-        scrollToBottom();
+    /// A tool-call card shown inline in the conversation, in chronological order: it appears
+    /// when the agent invokes a tool ("调用中") and is updated in place when the tool finishes
+    /// ("已完成"/"失败"). The result text is collapsible — click the header to expand it.
+    private final class ToolCard extends VBox {
+        private final Label header = new Label();
+        private final Label result = new Label();
+        private final String toolName;
+
+        ToolCard(String toolName) {
+            super(2);
+            this.toolName = toolName;
+            getStyleClass().addAll("ai-bubble", "ai-bubble-tool", "ai-tool-card");
+            setMaxWidth(480);
+
+            header.setText(i18n("ai.tool.calling", toolName));
+            header.setWrapText(true);
+            header.getStyleClass().add("ai-tool-card-header");
+
+            result.setWrapText(true);
+            result.setMaxWidth(440);
+            result.getStyleClass().add("ai-tool-card-result");
+            result.setVisible(false);
+            result.setManaged(false);
+
+            header.setOnMouseClicked(e -> {
+                String r = result.getText();
+                if (r != null && !r.isEmpty()) {
+                    boolean show = !result.isVisible();
+                    result.setVisible(show);
+                    result.setManaged(show);
+                }
+            });
+
+            getChildren().addAll(header, result);
+        }
+
+        /// Updates the card once its tool finishes; stores the (collapsible) result text.
+        void complete(boolean success, @Nullable String summary) {
+            header.setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
+            getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
+            if (summary != null && !summary.isBlank()) {
+                result.setText(summary.strip());
+                header.getStyleClass().add("ai-tool-card-expandable");
+            }
+        }
     }
 
     /// Adds a tool event entry to the message list with tool-specific styling

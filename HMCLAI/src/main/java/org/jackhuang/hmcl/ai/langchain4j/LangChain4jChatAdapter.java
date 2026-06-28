@@ -175,6 +175,12 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                         ToolExecutionResultMessage result = toolAdapter.execute(req);
                         if (result != null) {
                             conversation.add(result);
+                            String resultText = result.text() != null ? result.text() : "";
+                            boolean success = !resultText.startsWith("Error:");
+                            String summary = resultText.length() > 300
+                                    ? resultText.substring(0, 300) + "…"
+                                    : resultText;
+                            callback.onToolResult(req.name(), success, summary);
                         }
                     }
                     streamTurn(conversation, callback, cycle + 1);

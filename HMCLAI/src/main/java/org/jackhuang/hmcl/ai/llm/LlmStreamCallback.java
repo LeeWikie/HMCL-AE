@@ -50,6 +50,15 @@ public interface LlmStreamCallback {
     default void onToolActivity(String toolName, String arguments) {
     }
 
+    /// Called after a tool finishes executing during the agent loop, so the UI can update
+    /// the matching tool-call card with the outcome. Pairs with [#onToolActivity].
+    ///
+    /// @param toolName      the name of the tool that ran
+    /// @param success       `true` when the tool succeeded (result is not an error)
+    /// @param resultSummary a short, trimmed summary of the tool result
+    default void onToolResult(String toolName, boolean success, String resultSummary) {
+    }
+
     /// Called when the streaming response has completed successfully.
     ///
     /// @param fullResponse the complete concatenated response text

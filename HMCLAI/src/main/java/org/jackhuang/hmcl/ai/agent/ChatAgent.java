@@ -94,6 +94,7 @@ public final class ChatAgent {
             @Override public void onToken(String t) { full.append(t); callback.onToken(t); }
             @Override public void onUsage(LlmUsage u) { this.usage = u; callback.onUsage(u); }
             @Override public void onToolActivity(String name, String args) { callback.onToolActivity(name, args); }
+            @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
             @Override public void onComplete(String c) {
                 String f = c != null && full.isEmpty() ? c : full.toString();
                 LlmMessage aiMessage = new LlmMessage("assistant", f);
