@@ -395,6 +395,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new WebFetchTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
         toolRegistry.register(gameContextTool);
+        // HMCL-operation tools (let the agent actually install/launch), reusing HMCL APIs.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListInstancesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
@@ -411,6 +417,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             editTool.addRoot(runDir);
             grepTool.addRoot(runDir);
             globTool.addRoot(runDir);
+            // install_mod needs the current instance's run dir; re-register on refresh.
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallModTool(runDir));
         }
     }
 
