@@ -259,6 +259,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             .disableHtmlEscaping()
             .create();
     private static final String CHAT_SETTINGS_FILE = "ai-chat-settings.json";
+    private static final String SEARCH_CONFIG_FILE = "ai-search-settings.json";
+    /// Web-search config, loaded from disk and shared by the web_search tool + the prompt.
+    private final org.jackhuang.hmcl.ai.search.AiSearchConfig searchConfig;
 
     @Nullable
     private VBox chatSettingsDrawer;
@@ -325,6 +328,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         this.chatSettings = loadChatSettings();
+        this.searchConfig = loadSearchConfig();
 
         if (sessionStore.getCurrentSession() == null) {
             sessionStore.createSession();
@@ -389,6 +393,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(globTool);
         toolRegistry.register(new ShellTool());
         toolRegistry.register(new WebFetchTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
         toolRegistry.register(gameContextTool);
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
@@ -1651,7 +1656,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 id -> {
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
-                            new org.jackhuang.hmcl.ai.search.AiSearchConfig());
+                            searchConfig);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb);
                 });
     }
@@ -2131,6 +2136,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return new ChatSettings();
         } catch (IOException | JsonParseException e) {
             return new ChatSettings();
+        }
+    }
+
+    /// Loads the web-search config from disk (defaults — disabled — if absent or corrupt).
+    private org.jackhuang.hmcl.ai.search.AiSearchConfig loadSearchConfig() {
+        Path filePath = SettingsManager.localConfigDirectory().resolve(SEARCH_CONFIG_FILE);
+        try {
+            String json = Files.readString(filePath, StandardCharsets.UTF_8);
+            org.jackhuang.hmcl.ai.search.AiSearchConfig loaded =
+                    CHAT_SETTINGS_GSON.fromJson(json, org.jackhuang.hmcl.ai.search.AiSearchConfig.class);
+            return loaded != null ? loaded : new org.jackhuang.hmcl.ai.search.AiSearchConfig();
+        } catch (NoSuchFileException e) {
+            return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
+        } catch (IOException | JsonParseException e) {
+            return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
         }
     }
 

@@ -35,7 +35,8 @@ public final class AiPromptBuilder {
             "- write: create a new file or completely overwrite one (auto-creates parent dirs).",
             "- edit: make a surgical change to an existing file (old_string must match exactly).",
             "- shell: run a command in the host shell. Use for anything else, including renames/moves.",
-            "- web_fetch: fetch a URL (install instructions, READMEs, MCP/skill manifests) before acting.",
+            "- web_search: search the web for current information (news, docs, how-tos). PREFER this for any 'search/look up/find online' request.",
+            "- web_fetch: fetch a SPECIFIC, already-known URL (e.g. a search result, a README, an install/MCP/skill manifest). Do NOT use web_fetch to 'search' — use web_search first, then web_fetch a result's URL.",
             "Do not print whole files via shell just to show them — read and summarize in plain text.");
 
     private static final String CONVENTIONS = String.join("\n",
