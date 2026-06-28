@@ -26,8 +26,9 @@ jwebp = "0.2.0"
 weburl = "0.2.0"
 uuid-tools = "0.2.0"
 
-langchain4j = "1.15.1"
+langchain4j = "1.16.2"
 commonmark = "0.24.0"
+langchain4j-mcp = "1.16.2-beta26"
 
 # testing
 junit = "6.0.1"
@@ -69,6 +70,8 @@ uuid-tools = { module = "org.glavo:uuid-tools", version.ref = "uuid-tools" }
 # LangChain4j
 langchain4j-open-ai = { module = "dev.langchain4j:langchain4j-open-ai", version.ref = "langchain4j" }
 langchain4j-http-client-jdk = { module = "dev.langchain4j:langchain4j-http-client-jdk", version.ref = "langchain4j" }
+langchain4j-anthropic = { module = "dev.langchain4j:langchain4j-anthropic", version.ref = "langchain4j" }
+langchain4j-mcp = { module = "dev.langchain4j:langchain4j-mcp", version.ref = "langchain4j-mcp" }
 
 # Markdown
 commonmark = { module = "org.commonmark:commonmark", version.ref = "commonmark" }

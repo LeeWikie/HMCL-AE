@@ -58,6 +58,12 @@ dependencies {
     implementation(project(":HMCLCore"))
     implementation(project(":HMCLBoot"))
     implementation(project(":HMCLAI"))
+    // Markdown: parse with commonmark and render the AST to native JavaFX nodes
+    // (tables, lists, code blocks, …) in the AI chat.
+    implementation(libs.commonmark)
+    implementation(libs.commonmark.ext.gfm.tables)
+    implementation(libs.commonmark.ext.gfm.strikethrough)
+    implementation(libs.commonmark.ext.autolink)
     implementation("libs:JFoenix")
     implementation(libs.jwebp)
     implementation(libs.fxsvgimage)

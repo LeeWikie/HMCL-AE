@@ -38,7 +38,7 @@ import java.util.regex.Pattern;
 /// Low-confidence results should trigger Layer 2 escalation — automated modular
 /// testing via {@link ModToggleTool} and {@link FileBackupTool}.
 @NotNullByDefault
-public final class CrashAnalyzerTool implements Tool {
+public final class CrashAnalyzerTool implements ToolSpec {
 
     /// The confidence level of the crash analysis.
     public enum Confidence {
@@ -89,6 +89,16 @@ public final class CrashAnalyzerTool implements Tool {
         return "Analyzes a Minecraft crash report text to extract the error type, "
                 + "stack trace summary, mod list, and suspected cause. "
                 + "Provide the full crash report as the 'crash_text' parameter.";
+    }
+
+    @Override
+    public ToolPermission getPermission() {
+        return ToolPermission.READ_ONLY;
+    }
+
+    @Override
+    public ToolSource getSource() {
+        return ToolSource.LOCAL;
     }
 
     /// Parses the crash report text provided in the `"crash_text"` parameter.

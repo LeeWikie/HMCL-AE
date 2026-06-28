@@ -34,6 +34,22 @@ public interface LlmStreamCallback {
     /// @param token a single text token; never `null`
     void onToken(String token);
 
+    /// Called when token usage for the response becomes available, before
+    /// [#onComplete]. Only invoked when the provider reports a usage object;
+    /// implementations that do not display usage may ignore this.
+    ///
+    /// @param usage the token usage reported by the provider
+    default void onUsage(LlmUsage usage) {
+    }
+
+    /// Called when the model requests a tool call during the agent loop, before the tool
+    /// runs. Lets the UI show agent activity (gated by the tool-call display setting).
+    ///
+    /// @param toolName  the name of the tool being invoked
+    /// @param arguments the raw JSON arguments string (may be empty)
+    default void onToolActivity(String toolName, String arguments) {
+    }
+
     /// Called when the streaming response has completed successfully.
     ///
     /// @param fullResponse the complete concatenated response text

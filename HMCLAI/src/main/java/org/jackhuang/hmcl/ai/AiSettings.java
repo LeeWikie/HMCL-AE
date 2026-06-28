@@ -501,16 +501,26 @@ public final class AiSettings {
     /// @param profile the profile to add or update
     public void putProfile(AiProviderProfile profile) {
         synchronized (profiles) {
+            boolean replaced = false;
             for (int i = 0; i < profiles.size(); i++) {
                 if (profiles.get(i).getId().equals(profile.getId())) {
                     profiles.set(i, profile);
-                    return;
+                    replaced = true;
+                    break;
                 }
             }
-            profiles.add(profile);
+            if (!replaced) {
+                profiles.add(profile);
+            }
         }
         if (selectedProfileId == null) {
             selectedProfileId = profile.getId();
+        }
+        // Refresh the derived global request-config FROM the profile whenever the
+        // active profile is added or edited, so newly-entered endpoint/API key take
+        // effect immediately and the values are never lost on the next save.
+        AiProviderProfile active = findSelectedProfile();
+        if (active != null && active.getId().equals(profile.getId())) {
             applyProfileToProperties(profile);
         }
     }
@@ -596,17 +606,6 @@ public final class AiSettings {
         provider.set(profile.getProtocolFamily());
     }
 
-    /// Copies current JavaFX property values back into the given profile.
-    private void applyPropertiesToProfile(AiProviderProfile profile) {
-        profile.setEndpoint(endpoint.get());
-        profile.setApiKey(apiKey.get());
-        profile.setProtocolFamily(provider.get());
-        if (model.get() != null && !model.get().isEmpty()
-                && !model.get().equals(LlmConfig.DEFAULT_MODEL)) {
-            profile.setDefaultModelId(model.get());
-        }
-    }
-
     // ---- Persistence ---------------------------------------------------------------
 
     /// Loads settings from the JSON file. If the file does not exist or is
@@ -667,10 +666,12 @@ public final class AiSettings {
     public void save() throws IOException {
         Files.createDirectories(filePath.getParent());
 
-        AiProviderProfile active = findSelectedProfile();
-        if (active != null) {
-            applyPropertiesToProfile(active);
-        }
+        // NOTE: provider profiles are the source of truth. We deliberately do NOT copy
+        // the (legacy, possibly stale) global endpoint/apiKey/provider properties back
+        // into the selected profile here — doing so previously clobbered freshly-edited
+        // provider endpoint/API keys, making them "disappear" on the next save.
+        // The global request-config is instead refreshed FROM the profile in putProfile
+        // and on selection/load via applyProfileToProperties.
 
         PersistedData data = new PersistedData();
         data.maxTokens = maxTokens.get();
@@ -808,12 +809,10 @@ public final class AiSettings {
         if ("anthropic".equals(providerId)) {
             return AiProtocolFamily.ANTHROPIC.getId();
         }
-        if ("ollama".equals(providerId) || "custom".equals(providerId)
-                || "deepseek".equals(providerId) || "openai".equals(providerId)
-                || "google".equals(providerId)) {
-            return AiProtocolFamily.OPENAI_COMPLETIONS.getId();
-        }
-        return AiProtocolFamily.RESTAPI.getId();
+        // RESTAPI is deprecated and unsupported at runtime; map every other legacy
+        // provider (including unknown ones) to the OpenAI-compatible family so no
+        // migrated profile lands in an unusable protocol family.
+        return AiProtocolFamily.OPENAI_COMPLETIONS.getId();
     }
 
     /// Applies old-style fields from the persisted data to the JavaFX properties.

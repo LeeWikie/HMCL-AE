@@ -206,7 +206,6 @@
     -fx-fill: -monet-on-secondary-container;
 }
 
-.ai-settings-sidebar-item,
 .navigation-drawer-item,
 .advanced-list-item {
     -jfx-rippler-duration: 0.4s;
@@ -2011,41 +2010,109 @@
  ******************************************************************************/
 
 .ai-bubble {
-    -fx-padding: 12 16 12 16;
+    -fx-padding: 10 14 10 14;
     -fx-font-size: 14px;
     -fx-wrap-text: true;
     -fx-line-spacing: 2px;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
 }
 
 .ai-bubble-user {
-    -fx-background-color: -monet-primary;
-    -fx-text-fill: white;
-    -fx-background-radius: 16 16 4 16;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 4, 0, 0, 2);
+    -fx-background-color: -monet-secondary-container;
+    -fx-border-color: -monet-secondary-container;
+    -fx-text-fill: -monet-on-secondary-container;
 }
 
 .ai-bubble-ai {
-    -fx-background-color: -monet-surface;
-    -fx-text-fill: -monet-on-surface;
-    -fx-background-radius: 16 16 16 4;
+    -fx-background-color: -monet-surface-container-low;
     -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0.5;
-    -fx-border-radius: 16 16 16 4;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 3, 0, 0, 1);
+    -fx-text-fill: -monet-on-surface;
 }
 
 .ai-bubble-error {
-    -fx-text-fill: -monet-error;
+    -fx-background-color: -monet-error-container;
+    -fx-border-color: -monet-error-container;
+    -fx-text-fill: -monet-on-error-container;
 }
 
 .ai-bubble-system {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
     -fx-text-fill: -monet-on-surface-variant;
     -fx-font-size: 11px;
     -fx-padding: 4 14 6 14;
 }
 
 .ai-bubble-wrapper {
-    -fx-padding: 6 16 6 16;
+    -fx-padding: 4 16 4 16;
+}
+
+/* Markdown native rendering (commonmark AST -> JavaFX nodes). Text nodes use -fx-fill
+   (not -fx-text-fill), so colour them explicitly with the theme on-surface colour. */
+.ai-markdown-view .text {
+    -fx-fill: -monet-on-surface;
+}
+
+/* Colour-emoji bubbles render text as a TextFlow; colour its Text nodes to match. */
+.ai-bubble-user .text {
+    -fx-fill: -monet-on-secondary-container;
+}
+.ai-bubble-ai .text {
+    -fx-fill: -monet-on-surface;
+}
+
+.ai-markdown-view .md-list-marker {
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-markdown-view .md-code-inline {
+    -fx-fill: -monet-primary;
+}
+
+.ai-markdown-view .md-link {
+    -fx-fill: -monet-primary;
+}
+
+.ai-markdown-view .md-code-block {
+    -fx-background-color: -monet-surface-container;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-background-radius: 8;
+    -fx-padding: 10 12 10 12;
+}
+
+.ai-markdown-view .md-blockquote {
+    -fx-border-color: -monet-primary;
+    -fx-border-width: 0 0 0 3;
+    -fx-padding: 2 0 2 10;
+}
+
+.ai-markdown-view .md-hr {
+    -fx-background-color: -monet-outline-variant;
+}
+
+.ai-markdown-view .md-table {
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1;
+}
+
+.ai-markdown-view .md-th {
+    -fx-background-color: -monet-surface-container;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0 1 1 0;
+}
+
+.ai-markdown-view .md-td {
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 0 1 1 0;
+}
+
+/* Flat message style strips bubble fills/borders for plain text rendering */
+.ai-msg-flat .ai-bubble {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 4 14 4 14;
 }
 
 .ai-typing-indicator {
@@ -2054,63 +2121,6 @@
     -fx-padding: 4 16 6 16;
 }
 
-/* ---- AI Sidebar ---- */
-
-.ai-sidebar {
-    -fx-background-color: -monet-surface-container;
-}
-
-.ai-sidebar-new-btn {
-    -fx-background-color: -monet-primary-container;
-    -fx-text-fill: -monet-on-primary-container;
-    -fx-font-size: 13px;
-    -fx-padding: 8 0 8 0;
-    -fx-background-radius: 8;
-}
-
-.ai-session-list {
-    -fx-background-color: transparent;
-}
-
-.ai-session-item {
-    -fx-background-color: transparent;
-    -fx-background-radius: 6;
-    -fx-cursor: hand;
-}
-
-.ai-session-item:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-session-item-active {
-    -fx-background-color: -monet-secondary-container;
-}
-
-.ai-session-title {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface;
-    -fx-text-overrun: ellipsis;
-}
-
-.ai-session-del-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-padding: 2;
-    -fx-min-width: 20;
-    -fx-min-height: 20;
-    -fx-max-width: 20;
-    -fx-max-height: 20;
-    -fx-opacity: 0;
-}
-
-.ai-session-item:hover .ai-session-del-btn {
-    -fx-opacity: 0.7;
-}
-
-.ai-session-del-btn:hover {
-    -fx-opacity: 1.0;
-    -fx-background-color: -monet-error-container;
-}
 
 .ai-sidebar-settings-btn {
     -fx-background-color: transparent;
@@ -2138,54 +2148,8 @@
     -fx-border-width: 0.5;
 }
 
-.ai-settings-back-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface;
-    -fx-font-size: 13px;
-    -fx-padding: 4 8 4 8;
-    -fx-background-radius: 8;
-}
-
 .ai-chat-settings-backdrop {
     -fx-background-color: rgba(0, 0, 0, 0.3);
-}
-
-/* ---- AI Modal ---- */
-
-.ai-modal-backdrop {
-    -fx-background-color: rgba(0, 0, 0, 0.4);
-}
-
-.ai-modal-card {
-    -fx-background-color: -monet-surface;
-    -fx-background-radius: 12;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.2), 20, 0, 0, 8);
-}
-
-.ai-modal-title {
-    -fx-font-size: 15px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-modal-close-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 16px;
-    -fx-padding: 2 6 2 6;
-    -fx-background-radius: 6;
-    -fx-cursor: hand;
-}
-
-.ai-modal-close-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-modal-footer {
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1 0 0 0;
-    -fx-padding: 12 0 0 0;
 }
 
 .ai-advanced-toggle {
@@ -2198,17 +2162,31 @@
     -fx-text-fill: -monet-on-surface;
 }
 
-.ai-settings-back-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
+/* ---- AI Header Selectors (compact LineSelectButton) ---- */
+
+.ai-header-selector {
+    -fx-font-size: 11px;
+}
+
+.ai-header-selector > .rippler-container > .line-component-container {
+    -fx-padding: 0 4 0 8;
+    -fx-spacing: 8;
+}
+
+.ai-header-selector .trailing-label {
+    -fx-font-size: 11px;
+}
+
+.ai-header-selector .trailing-icon {
+    -fx-padding: 0;
+}
+
+.ai-header-selector .svg {
+    -fx-scale-x: 0.8;
+    -fx-scale-y: 0.8;
 }
 
 /* ---- AI Main Header ---- */
-
-.ai-main-header {
-    -fx-background-color: -monet-surface;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0 0 1 0;
-}
 
 .ai-header-title {
     -fx-text-fill: -monet-on-surface;
@@ -2216,6 +2194,15 @@
 
 .ai-header-subtitle {
     -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-header-avatar {
+    -fx-background-color: -monet-primary-container;
+    -fx-background-radius: 17;
+}
+
+.ai-header-avatar .svg {
+    -fx-fill: -monet-on-primary-container;
 }
 
 /* ---- AI Empty State ---- */
@@ -2232,11 +2219,11 @@
 /* ---- AI Chat View ---- */
 
 .ai-chat-view {
-    -fx-background-color: -monet-surface-container-lowest;
+    -fx-background-color: transparent;
 }
 
 .ai-chat-stack {
-    -fx-background-color: -monet-surface-container-lowest;
+    -fx-background-color: transparent;
 }
 
 /* ---- AI Toolbar Selectors ---- */
@@ -2302,127 +2289,16 @@
     -fx-background-color: transparent;
 }
 
-/* ---- AI Settings View ---- */
-
-.ai-settings-view {
-    -fx-background-color: -monet-surface-container-lowest;
-}
-
-.ai-settings-header {
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-settings-label {
-    -fx-font-size: 13px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-    -fx-padding: 8 0 2 0;
-}
-
-.ai-settings-combo {
-    -fx-font-size: 13px;
-}
-
-.ai-settings-section {
-    -fx-spacing: 8;
-    -fx-padding: 4 0 4 0;
-}
-
-.ai-settings-section-title {
-    -fx-font-size: 14px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-    -fx-padding: 4 0 4 0;
-}
-
-.ai-settings-sidebar {
-    -fx-background-color: -monet-surface-container;
-    -fx-padding: 8;
-    -fx-min-width: 140;
-    -fx-pref-width: 160;
-    -fx-spacing: 4;
-}
-
-.ai-settings-sidebar-item {
-    -fx-text-fill: -monet-on-surface;
-    -fx-padding: 10 12 10 12;
-    -fx-cursor: hand;
-}
-
-.ai-settings-sidebar-item:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-settings-sidebar-item-active {
-    -fx-background-color: -monet-primary-container;
-    -fx-text-fill: -monet-on-primary-container;
-}
-
-.ai-settings-body-stack {
-    -fx-padding: 4 4 16 4;
-}
-
-.ai-settings-scroll {
+.ai-messages-scroll > .viewport {
     -fx-background-color: transparent;
 }
 
-/* ---- AI Provider Profile List ---- */
-
-.ai-profile-list {
+.ai-messages-area {
     -fx-background-color: transparent;
-    -fx-spacing: 4;
 }
 
-.ai-profile-item {
-    -fx-background-color: -monet-surface-container;
-    -fx-padding: 10 12 10 12;
-    -fx-cursor: hand;
-}
-
-.ai-profile-item:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-profile-item-active {
-    -fx-background-color: -monet-primary-container;
-}
-
-.ai-profile-item .ai-profile-name {
-    -fx-font-size: 13px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-profile-item .ai-profile-meta {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-}
-
-.ai-profile-item-btns {
-    -fx-opacity: 0;
-}
-
-.ai-profile-item:hover .ai-profile-item-btns {
-    -fx-opacity: 0.8;
-}
-
-.ai-profile-item-btn {
+.ai-message-list {
     -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-padding: 2 6 2 6;
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-cursor: hand;
-}
-
-.ai-profile-item-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-text-fill: -monet-primary;
-}
-
-.ai-profile-item-btn.danger:hover {
-    -fx-background-color: -monet-error-container;
-    -fx-text-fill: -monet-on-error-container;
 }
 
 /* ---- AI Model Discovery ---- */
@@ -2481,7 +2357,7 @@
 /* ---- AI Input Bar ---- */
 
 .ai-input-bar {
-    -fx-background-color: -monet-surface;
+    -fx-background-color: transparent;
     -fx-border-color: -monet-outline-variant;
     -fx-border-width: 1 0 0 0;
 }
@@ -2701,6 +2577,13 @@
     -fx-font-size: 11px;
     -fx-text-fill: -monet-on-surface-variant;
     -fx-padding: 0 4 2 4;
+}
+
+.ai-usage-footer {
+    -fx-font-size: 10px;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-opacity: 0.7;
+    -fx-padding: 2 4 0 4;
 }
 
 /* ---- AI Chat Font Sizes ---- */

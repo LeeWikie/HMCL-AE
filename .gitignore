@@ -27,6 +27,7 @@ language-subtag-registry
 # gradle build
 /build/
 /HMCL/build/
+/HMCLAI/build/
 /HMCLCore/build/
 /HMCLBoot/build/
 /minecraft/libraries/HMCLTransformerDiscoveryService/build/

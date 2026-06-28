@@ -50,6 +50,10 @@ public class LineButton extends LineButtonBase {
         getStyleClass().add(DEFAULT_STYLE_CLASS);
     }
 
+    protected OverrunStyle getTrailingTextOverrun() {
+        return OverrunStyle.CENTER_ELLIPSIS;
+    }
+
     protected int getTrailingTextIndex() {
         return IDX_TRAILING;
     }
@@ -119,7 +123,7 @@ public class LineButton extends LineButtonBase {
                         if (trailingTextLabel == null) {
                             trailingTextLabel = new Label();
                             trailingTextLabel.getStyleClass().add("trailing-label");
-                            trailingTextLabel.setTextOverrun(OverrunStyle.CENTER_ELLIPSIS);
+                            trailingTextLabel.setTextOverrun(getTrailingTextOverrun());
                             trailingTextLabel.setMouseTransparent(true);
                         }
                         trailingTextLabel.setText(message);

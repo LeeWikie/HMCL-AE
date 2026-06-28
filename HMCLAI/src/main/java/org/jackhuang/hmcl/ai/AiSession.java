@@ -31,22 +31,24 @@ import java.util.UUID;
 /// Conversation session that stores message history alongside stable metadata.
 ///
 /// Each session carries a unique {@link #id}, a user-editable {@link #title},
-/// and creation/update timestamps. The message list is auto-pruned to keep at most
-/// {@value #MAX_MESSAGES} messages (~10 turns of user + assistant). When a new
-/// message would exceed the limit, the oldest messages are dropped first.
+/// and creation/update timestamps. The message list is auto-pruned to keep the
+/// estimated token count within the configured budget (default 100K tokens,
+/// Older messages are dropped first when the budget is exceeded.
+///
+/// Token estimation uses a simple character-count heuristic (~4 chars per token),
+/// which is conservative but sufficient for context window management.
 ///
 /// Sessions are serializable to JSON via Gson for use with {@link AiSessionStore}.
-///
-/// All public methods modifying shared state are thread-safe through internal
-/// synchronization.
-///
-/// @see LlmMessage
-/// @see AiSessionStore
 @NotNullByDefault
 public final class AiSession {
 
-    /// The maximum number of messages retained before auto-pruning begins.
-    private static final int MAX_MESSAGES = 20;
+    /// Maximum estimated tokens to retain in context (100K default).
+    private volatile int maxContextTokens = 100_000;
+
+    /// Rough chars-per-token heuristic used for pruning decisions.
+    private static final int CHARS_PER_TOKEN = 4;
+    /// Safety margin: reserve ~20% of context for the response.
+    private static final double BUDGET_RATIO = 0.8;
 
     @SerializedName("id")
     private final String id;
@@ -84,7 +86,7 @@ public final class AiSession {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.messages.addAll(messages);
-        pruneMessages();
+        pruneByTokenBudget();
     }
 
     /// Returns the unique session identifier.
@@ -115,16 +117,17 @@ public final class AiSession {
         return updatedAt;
     }
 
-    /// Appends a message to the session history.
-    ///
-    /// If the total number of messages would exceed {@value #MAX_MESSAGES},
-    /// the oldest messages are removed from the front of the list before
-    /// the new message is appended. The updated-at timestamp is bumped.
-    ///
-    /// @param message the message to add; must not be `null`
+    /// Sets the maximum context token budget for this session, typically
+    /// derived from the model's context window size (e.g. 128000 for GPT-4o).
+    public void setContextBudget(int modelContextWindow) {
+        this.maxContextTokens = (int) (modelContextWindow * BUDGET_RATIO);
+    }
+
+    /// Appends a message to the session history. If the estimated token count
+    /// exceeds the context budget, oldest messages are pruned.
     public synchronized void addMessage(LlmMessage message) {
         messages.add(message);
-        pruneMessages();
+        pruneByTokenBudget();
         this.updatedAt = Instant.now();
     }
 
@@ -152,11 +155,20 @@ public final class AiSession {
         return messages;
     }
 
-    /// Prunes messages from the front of the list until the count is within
-    /// {@value #MAX_MESSAGES}. Must be called while holding {@code this} lock.
-    private void pruneMessages() {
-        while (messages.size() > MAX_MESSAGES) {
-            messages.remove(0);
+    /// Prunes oldest messages until the estimated token count is within the budget.
+    private void pruneByTokenBudget() {
+        while (estimateTokens() > maxContextTokens && messages.size() > 2) {
+            messages.remove(0); // drop oldest
         }
+    }
+
+    /// Estimates total tokens by summing per-message char counts divided by 4.
+    private int estimateTokens() {
+        int chars = 0;
+        for (LlmMessage m : messages) {
+            String c = m.getContent();
+            if (c != null) chars += c.length();
+        }
+        return chars / CHARS_PER_TOKEN;
     }
 }

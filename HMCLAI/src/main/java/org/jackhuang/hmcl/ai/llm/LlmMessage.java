@@ -19,6 +19,7 @@ package org.jackhuang.hmcl.ai.llm;
 
 import com.google.gson.annotations.SerializedName;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 /// Represents a single message in a chat completion conversation.
 ///
@@ -35,6 +36,12 @@ public final class LlmMessage {
 
     @SerializedName("content")
     private String content;
+
+    /// Optional token usage for an assistant message. Only persisted for display;
+    /// ignored when the conversation is sent to the model.
+    @SerializedName("usage")
+    @Nullable
+    private LlmUsage usage;
 
     /// Package-private no-arg constructor for Gson deserialization.
     LlmMessage() {
@@ -57,5 +64,18 @@ public final class LlmMessage {
     /// Returns the text content of the message.
     public String getContent() {
         return content;
+    }
+
+    /// Returns the token usage attached to this message, or `null` if none.
+    @Nullable
+    public LlmUsage getUsage() {
+        return usage;
+    }
+
+    /// Attaches token usage to this message (typically an assistant response).
+    ///
+    /// @param usage the usage to attach, or `null` to clear
+    public void setUsage(@Nullable LlmUsage usage) {
+        this.usage = usage;
     }
 }

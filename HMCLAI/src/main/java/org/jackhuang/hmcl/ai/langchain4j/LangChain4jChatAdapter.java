@@ -28,9 +28,11 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.output.TokenUsage;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.llm.LlmStreamCallback;
+import org.jackhuang.hmcl.ai.llm.LlmUsage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -116,13 +118,31 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         }, executor);
     }
 
+    /// Maximum tool-call cycles before giving up, as a runaway backstop (Pi loops until
+    /// done; we keep a generous cap so a misbehaving model can't loop forever).
+    private static final int MAX_TOOL_CYCLES = 25;
+
     @Override
     public void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback) {
-        List<ChatMessage> l4jMessages = convertMessages(messages);
+        List<ChatMessage> conversation = new ArrayList<>(convertMessages(messages));
+        streamTurn(conversation, callback, 0);
+    }
 
-        streamingChatModel.chat(l4jMessages, new StreamingChatResponseHandler() {
-            private final StringBuilder fullResponse = new StringBuilder();
+    /// One turn of the streaming agent loop: stream the model's response (with tools
+    /// attached); if it asks for tool calls, execute them, append the results, and recurse;
+    /// otherwise finish. Mirrors Pi's loop — keep going until the model stops calling tools.
+    private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle) {
+        if (cycle >= MAX_TOOL_CYCLES) {
+            callback.onComplete("");
+            return;
+        }
 
+        ChatRequest.Builder requestBuilder = ChatRequest.builder().messages(conversation);
+        if (toolAdapter != null && !toolAdapter.buildToolSpecifications().isEmpty()) {
+            requestBuilder.toolSpecifications(toolAdapter.buildToolSpecifications());
+        }
+
+        streamingChatModel.chat(requestBuilder.build(), new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String token) {
                 if (token != null && !token.isEmpty()) {
@@ -132,9 +152,37 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
             @Override
             public void onCompleteResponse(ChatResponse response) {
-                String content = response.aiMessage() != null
-                        ? response.aiMessage().text() : fullResponse.toString();
-                callback.onComplete(content != null ? content : "");
+                TokenUsage usage = response.tokenUsage();
+                if (usage != null) {
+                    Integer in = usage.inputTokenCount();
+                    Integer out = usage.outputTokenCount();
+                    Integer total = usage.totalTokenCount();
+                    LlmUsage reported = LlmUsage.of(
+                            in != null ? in : 0,
+                            out != null ? out : 0,
+                            total != null ? total : 0);
+                    if (reported.hasData()) {
+                        callback.onUsage(reported);
+                    }
+                }
+
+                AiMessage aiMessage = response.aiMessage();
+                if (aiMessage != null && aiMessage.hasToolExecutionRequests()) {
+                    // Tool-call turn: record it, run each tool, feed results back, loop.
+                    conversation.add(aiMessage);
+                    for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
+                        callback.onToolActivity(req.name(), req.arguments());
+                        ToolExecutionResultMessage result = toolAdapter.execute(req);
+                        if (result != null) {
+                            conversation.add(result);
+                        }
+                    }
+                    streamTurn(conversation, callback, cycle + 1);
+                    return;
+                }
+
+                String content = aiMessage != null && aiMessage.text() != null ? aiMessage.text() : "";
+                callback.onComplete(content);
             }
 
             @Override
@@ -153,7 +201,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     private String doChat(List<LlmMessage> messages) {
         List<ChatMessage> conversation = new ArrayList<>(convertMessages(messages));
 
-        for (int cycle = 0; cycle < 3; cycle++) {
+        for (int cycle = 0; cycle < MAX_TOOL_CYCLES; cycle++) {
             ChatRequest.Builder requestBuilder = ChatRequest.builder()
                     .messages(conversation);
 

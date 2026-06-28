@@ -37,7 +37,7 @@ import java.util.Map;
 /// All operations are idempotent: backup overwrites any existing backup file;
 /// restore is a no-op if no backup exists.
 @NotNullByDefault
-public final class FileBackupTool implements Tool {
+public final class FileBackupTool implements ToolSpec {
 
     /// Suffix appended to the original path for backup files.
     private static final String BACKUP_SUFFIX = ".ae-backup";
@@ -53,6 +53,16 @@ public final class FileBackupTool implements Tool {
     @Override
     public String getDescription() {
         return "Backup or restore a file atomically. Parameters: action (\"backup\" or \"restore\"), path (absolute file path). On backup, creates a .ae-backup copy with SHA-256 checksum. On restore, copies the backup back. Returns operation result with path and checksum.";
+    }
+
+    @Override
+    public ToolPermission getPermission() {
+        return ToolPermission.CONTROLLED_WRITE;
+    }
+
+    @Override
+    public ToolSource getSource() {
+        return ToolSource.FILESYSTEM;
     }
 
     @Override

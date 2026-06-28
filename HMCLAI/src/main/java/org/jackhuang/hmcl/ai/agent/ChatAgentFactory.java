@@ -25,7 +25,6 @@ import org.jackhuang.hmcl.ai.langchain4j.AiChatClient;
 import org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter;
 import org.jackhuang.hmcl.ai.langchain4j.LangChain4jModelFactory;
 import org.jackhuang.hmcl.ai.langchain4j.LangChain4jToolAdapter;
-import org.jackhuang.hmcl.ai.llm.LlmClient;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
@@ -108,10 +107,13 @@ public final class ChatAgentFactory {
     /// @param session  the conversation session to bind; must not be `null`
     /// @param tools    the tool registry; must not be `null`
     /// @return a new {@link ChatAgent} instance
-    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools) {
+    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
+                                   AiPromptBuilder promptBuilder) {
         LlmConfig config = buildConfig(settings);
         AiChatClient client = resolveClient(config, tools);
-        return new ChatAgent(client, session, settings);
+        ChatAgent agent = new ChatAgent(client, session, settings, promptBuilder);
+        session.setContextBudget(settings.getContextWindow());
+        return agent;
     }
 
     /// Tests the connection to the configured LLM endpoint with a lightweight
@@ -186,6 +188,52 @@ public final class ChatAgentFactory {
         }
     }
 
+    /// Tests connectivity for an explicit endpoint / API key / model / protocol family,
+    /// without touching the global settings. Used by the batch model-test dialog.
+    ///
+    /// @return the model's reply text on success
+    /// @throws LlmException     if the API returns an error
+    /// @throws TimeoutException if the request times out
+    public static String testConnectionSync(String endpoint, String apiKey, String model,
+                                            String providerFamily, long timeoutSeconds)
+            throws LlmException, InterruptedException, TimeoutException {
+        LlmConfig testConfig = new LlmConfig(
+                endpoint,
+                apiKey,
+                model == null || model.isEmpty() ? LlmConfig.DEFAULT_MODEL : model,
+                providerFamily,
+                TEST_MAX_TOKENS,
+                0.0,
+                TEST_TIMEOUT,
+                LlmConfig.DEFAULT_CONTEXT_WINDOW,
+                TEST_MAX_TOKENS,
+                LlmConfig.DEFAULT_TOP_P,
+                LlmConfig.DEFAULT_PRESENCE_PENALTY,
+                LlmConfig.DEFAULT_FREQUENCY_PENALTY,
+                null,
+                null,
+                false,
+                Collections.emptyList());
+        AiChatClient client = resolveClient(testConfig, null);
+        try {
+            return client.sendMessage(Collections.singletonList(new LlmMessage("user", TEST_PROMPT)))
+                    .get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            while (cause != null) {
+                if (cause instanceof LlmException) {
+                    throw (LlmException) cause;
+                }
+                if (cause.getCause() != null && cause.getCause() != cause) {
+                    cause = cause.getCause();
+                } else {
+                    break;
+                }
+            }
+            throw new LlmException("Connection test failed", 0, e);
+        }
+    }
+
     /// Builds an [`LlmConfig`] from the given settings.
     ///
     /// @param settings the AI settings; must not be {@code null}
@@ -229,33 +277,37 @@ public final class ChatAgentFactory {
         String provider = config.getProvider();
         AiProtocolFamily family = provider != null ? AiProtocolFamily.fromId(provider) : null;
 
+        LangChain4jToolAdapter toolAdapter = tools != null
+                ? new LangChain4jToolAdapter(tools)
+                : null;
+
         if (family != null) {
-            if (family.isOpenaiCompatible()) {
-                LangChain4jToolAdapter toolAdapter = tools != null
-                        ? new LangChain4jToolAdapter(tools)
-                        : null;
-                return new LangChain4jChatAdapter(
-                        MODEL_FACTORY.buildChatModel(config),
-                        MODEL_FACTORY.buildStreamingChatModel(config),
-                        toolAdapter
-                );
-            }
-            return new UnsupportedAiChatClient(
-                    "Protocol family '" + provider + "' is not yet supported for runtime chat"
-            );
+            return switch (family) {
+                case OPENAI_COMPLETIONS, OPENAI_REASONING ->
+                    new LangChain4jChatAdapter(
+                            MODEL_FACTORY.buildChatModel(config),
+                            MODEL_FACTORY.buildStreamingChatModel(config),
+                            toolAdapter);
+                case ANTHROPIC ->
+                    new LangChain4jChatAdapter(
+                            MODEL_FACTORY.buildAnthropicChatModel(config),
+                            MODEL_FACTORY.buildAnthropicStreamingChatModel(config),
+                            toolAdapter);
+                case RESTAPI ->
+                    new UnsupportedAiChatClient("REST API protocol family is no longer supported.");
+            };
         }
 
         if (provider != null && LANGCHAIN4J_PROVIDERS.contains(provider)) {
-            LangChain4jToolAdapter toolAdapter = tools != null
-                    ? new LangChain4jToolAdapter(tools)
-                    : null;
             return new LangChain4jChatAdapter(
                     MODEL_FACTORY.buildChatModel(config),
                     MODEL_FACTORY.buildStreamingChatModel(config),
                     toolAdapter
             );
         }
-        return new LlmClient(config);
+
+        return new UnsupportedAiChatClient(
+                "Provider '" + provider + "' is not supported. Add it in AI Settings.");
     }
 
     /// Small adapter used to fail honestly when a protocol family is configured

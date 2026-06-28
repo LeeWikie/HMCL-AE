@@ -39,7 +39,7 @@ import java.util.Map;
 /// This tool does NOT perform its own backups — pair with {@link FileBackupTool} for
 /// rollback capability before bulk operations.
 @NotNullByDefault
-public final class ModToggleTool implements Tool {
+public final class ModToggleTool implements ToolSpec {
 
     /// Extension suffix used for disabled mods.
     private static final String DISABLED_SUFFIX = ".disabled";
@@ -58,6 +58,16 @@ public final class ModToggleTool implements Tool {
                 + "When disabling, renames .jar to .jar.disabled. "
                 + "When enabling, renames .jar.disabled back to .jar. "
                 + "Returns the count and list of affected mods.";
+    }
+
+    @Override
+    public ToolPermission getPermission() {
+        return ToolPermission.CONTROLLED_WRITE;
+    }
+
+    @Override
+    public ToolSource getSource() {
+        return ToolSource.FILESYSTEM;
     }
 
     @Override

@@ -24,6 +24,7 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.ai.tools.ToolSpec;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,11 +55,12 @@ public final class LangChain4jToolAdapter {
         this.registry = registry;
     }
 
-    /// Builds LangChain4j [`ToolSpecification`] instances for all tools
-    /// currently registered in the HMCL tool registry.
+    /// Builds LangChain4j [`ToolSpecification`] instances for all non-disabled
+    /// tools in the HMCL tool registry.
     ///
-    /// Each specification exposes a single optional `"query"` string
-    /// parameter so the model can pass arbitrary query text.
+    /// Tools that implement {@link ToolSpec} and support structured schema
+    /// contribute richer parameter info.  All others use the legacy flat
+    /// {@code "query"} parameter.
     ///
     /// @return an unmodifiable list of tool specifications
     public List<ToolSpecification> buildToolSpecifications() {
@@ -68,16 +70,52 @@ public final class LangChain4jToolAdapter {
         }
         List<ToolSpecification> specs = new ArrayList<>(tools.size());
         for (Tool tool : tools) {
-            specs.add(ToolSpecification.builder()
+            ToolSpecification.Builder builder = ToolSpecification.builder()
                     .name(tool.getName())
-                    .description(tool.getDescription())
-                    .parameters(JsonObjectSchema.builder()
-                            .addStringProperty("query",
-                                    "An optional query or input for the tool")
-                            .build())
+                    .description(tool.getDescription());
+            JsonObjectSchema schema = null;
+            if (tool instanceof ToolSpec spec && spec.supportsStructuredSchema()) {
+                schema = parseSchema(spec.getInputSchemaJson());
+            }
+            builder.parameters(schema != null ? schema : JsonObjectSchema.builder()
+                    .addStringProperty("query", "An optional query or input for the tool")
                     .build());
+            specs.add(builder.build());
         }
         return Collections.unmodifiableList(specs);
+    }
+
+    /// Parses a (flat) JSON Schema string into a LangChain4j [`JsonObjectSchema`],
+    /// mapping each `properties` entry to a typed property. Returns null on failure so
+    /// the caller can fall back to the flat `"query"` schema.
+    @Nullable
+    @SuppressWarnings("unchecked")
+    private static JsonObjectSchema parseSchema(String json) {
+        try {
+            Map<String, Object> root = GSON.fromJson(json, MAP_TYPE);
+            if (root == null || !(root.get("properties") instanceof Map<?, ?> props) || props.isEmpty()) {
+                return null;
+            }
+            JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
+            for (Map.Entry<String, Object> entry : ((Map<String, Object>) props).entrySet()) {
+                String name = entry.getKey();
+                String type = "string";
+                String description = "";
+                if (entry.getValue() instanceof Map<?, ?> meta) {
+                    if (meta.get("type") != null) type = meta.get("type").toString();
+                    if (meta.get("description") != null) description = meta.get("description").toString();
+                }
+                switch (type) {
+                    case "integer" -> builder.addIntegerProperty(name, description);
+                    case "number" -> builder.addNumberProperty(name, description);
+                    case "boolean" -> builder.addBooleanProperty(name, description);
+                    default -> builder.addStringProperty(name, description);
+                }
+            }
+            return builder.build();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /// Executes a LangChain4j tool execution request by delegating to the

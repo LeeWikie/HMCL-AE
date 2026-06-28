@@ -136,6 +136,28 @@ public final class LangChain4jModelFactory {
         return builder.build();
     }
 
+    /// Builds a LangChain4j Anthropic ChatModel from the given configuration.
+    public ChatModel buildAnthropicChatModel(LlmConfig config) {
+        return dev.langchain4j.model.anthropic.AnthropicChatModel.builder()
+                .apiKey(config.getApiKey())
+                .modelName(config.getModel())
+                .temperature(config.getTemperature())
+                .maxTokens(config.getMaxTokens())
+                .timeout(config.getTimeout())
+                .build();
+    }
+
+    /// Builds a LangChain4j Anthropic StreamingChatModel from the given configuration.
+    public StreamingChatModel buildAnthropicStreamingChatModel(LlmConfig config) {
+        return dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.builder()
+                .apiKey(config.getApiKey())
+                .modelName(config.getModel())
+                .temperature(config.getTemperature())
+                .maxTokens(config.getMaxTokens())
+                .timeout(config.getTimeout())
+                .build();
+    }
+
     /// Extracts the base URL from a full chat-completions endpoint.
     ///
     /// If the endpoint ends with `/chat/completions`, the suffix is stripped.

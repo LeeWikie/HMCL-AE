@@ -75,6 +75,12 @@ public final class AiProviderProfile {
     @SerializedName("enabled")
     private boolean enabled;
 
+    /// Rich per-model configuration. Supersedes [`cachedModels`]/[`modelAliases`],
+    /// which are migrated into this list on first access and then cleared.
+    @SerializedName("models")
+    @Nullable
+    private List<AiModelEntry> models;
+
     /// Creates a profile with a generated UUID.
     public AiProviderProfile() {
         this(UUID.randomUUID().toString(), "", AiProtocolFamily.OPENAI_COMPLETIONS.getId(),
@@ -161,40 +167,101 @@ public final class AiProviderProfile {
         this.defaultModelId = defaultModelId;
     }
 
-    /// Returns the cached list of discovered model ids (defensive copy).
+    /// Lazily migrates the legacy `cachedModels`/`modelAliases` data into the rich
+    /// {@link #models} list (once), then returns the live list.
+    private List<AiModelEntry> models() {
+        if (models == null) {
+            models = new ArrayList<>();
+        }
+        if (models.isEmpty() && cachedModels != null && !cachedModels.isEmpty()) {
+            for (String id : cachedModels) {
+                AiModelEntry entry = new AiModelEntry(id);
+                if (modelAliases != null) {
+                    String alias = modelAliases.get(id);
+                    if (alias != null && !alias.isEmpty()) entry.setAlias(alias);
+                }
+                models.add(entry);
+            }
+            // Drop the legacy fields so they are not re-serialized as stale data.
+            cachedModels = new ArrayList<>();
+            modelAliases = null;
+        }
+        return models;
+    }
+
+    /// Returns the rich per-model entries (unmodifiable snapshot).
+    public List<AiModelEntry> getModels() {
+        return Collections.unmodifiableList(new ArrayList<>(models()));
+    }
+
+    /// Returns the entry for the given model id, or `null`.
+    @Nullable
+    public AiModelEntry getModel(String modelId) {
+        for (AiModelEntry entry : models()) {
+            if (entry.getId().equals(modelId)) return entry;
+        }
+        return null;
+    }
+
+    /// Adds or replaces a model entry (matched by id).
+    public void putModel(AiModelEntry entry) {
+        List<AiModelEntry> list = models();
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).getId().equals(entry.getId())) {
+                list.set(i, entry);
+                return;
+            }
+        }
+        list.add(entry);
+    }
+
+    /// Removes the model entry with the given id.
+    public void removeModel(String modelId) {
+        models().removeIf(e -> e.getId().equals(modelId));
+    }
+
+    /// Returns the model ids (defensive copy), derived from the rich entries.
     public List<String> getCachedModels() {
-        return Collections.unmodifiableList(cachedModels);
+        List<String> ids = new ArrayList<>();
+        for (AiModelEntry entry : models()) {
+            ids.add(entry.getId());
+        }
+        return Collections.unmodifiableList(ids);
     }
 
-    /// Replaces the cached discovered models with a defensive copy of the
-    /// supplied list.
-    public void setCachedModels(List<String> cachedModels) {
-        this.cachedModels = new ArrayList<>(cachedModels);
+    /// Syncs the model entries to the given id list: adds new ids (preserving the
+    /// config of ids that already exist) and drops ids no longer present.
+    public void setCachedModels(List<String> modelIds) {
+        List<AiModelEntry> list = models();
+        List<AiModelEntry> result = new ArrayList<>();
+        for (String id : modelIds) {
+            AiModelEntry existing = null;
+            for (AiModelEntry entry : list) {
+                if (entry.getId().equals(id)) {
+                    existing = entry;
+                    break;
+                }
+            }
+            result.add(existing != null ? existing : new AiModelEntry(id));
+        }
+        list.clear();
+        list.addAll(result);
     }
 
-    /// Returns the model aliases map (lazy-init defensive copy).
-    public Map<String, String> getModelAliases() {
-        if (modelAliases == null) modelAliases = new java.util.LinkedHashMap<>();
-        return modelAliases;
-    }
-
-    /// Sets a model alias.
+    /// Sets a model alias on the matching entry (creating the entry if needed).
     public void setModelAlias(String modelId, String alias) {
-        if (modelAliases == null) modelAliases = new java.util.LinkedHashMap<>();
-        if (alias != null && !alias.isEmpty()) {
-            modelAliases.put(modelId, alias);
-        } else {
-            modelAliases.remove(modelId);
+        AiModelEntry entry = getModel(modelId);
+        if (entry == null) {
+            entry = new AiModelEntry(modelId);
+            models().add(entry);
         }
+        entry.setAlias(alias);
     }
 
-    /// Returns the alias for a model, or the model ID if no alias is set.
+    /// Returns the alias for a model, or the model id if no alias is set.
     public String getModelAliasOrId(String modelId) {
-        if (modelAliases != null) {
-            String alias = modelAliases.get(modelId);
-            if (alias != null && !alias.isEmpty()) return alias;
-        }
-        return modelId;
+        AiModelEntry entry = getModel(modelId);
+        return entry != null ? entry.getDisplayName() : modelId;
     }
 
     /// Returns whether this profile is enabled.
@@ -214,8 +281,9 @@ public final class AiProviderProfile {
         if (defaultModelId != null && !defaultModelId.isEmpty()) {
             return defaultModelId;
         }
-        if (!cachedModels.isEmpty()) {
-            return cachedModels.get(0);
+        List<AiModelEntry> list = models();
+        if (!list.isEmpty()) {
+            return list.get(0).getId();
         }
         return null;
     }

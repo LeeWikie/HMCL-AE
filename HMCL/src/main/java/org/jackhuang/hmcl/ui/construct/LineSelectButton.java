@@ -27,6 +27,7 @@ import javafx.css.PseudoClass;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.input.*;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -72,6 +73,11 @@ public class LineSelectButton<T extends @UnknownNullability Object> extends Line
                 event.consume();
             }
         });
+    }
+
+    @Override
+    protected OverrunStyle getTrailingTextOverrun() {
+        return OverrunStyle.ELLIPSIS;
     }
 
     @Override

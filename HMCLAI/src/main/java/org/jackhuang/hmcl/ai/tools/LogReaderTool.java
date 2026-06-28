@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 /// @see Tool
 /// @see ToolResult
 @NotNullByDefault
-public final class LogReaderTool implements Tool {
+public final class LogReaderTool implements ToolSpec {
 
     /// Default maximum number of lines to return.
     static final int DEFAULT_MAX_LINES = 500;
@@ -87,6 +87,16 @@ public final class LogReaderTool implements Tool {
                 + "Returns the last N lines (default 500) from minecraft logs "
                 + "(logs/latest.log) and/or the most recent HMCL launcher log. "
                 + "Parameters: lines (int, optional), source (string: 'minecraft', 'hmcl', or 'both', default 'both').";
+    }
+
+    @Override
+    public ToolPermission getPermission() {
+        return ToolPermission.READ_ONLY;
+    }
+
+    @Override
+    public ToolSource getSource() {
+        return ToolSource.FILESYSTEM;
     }
 
     /// Executes the log-reading operation.

@@ -189,9 +189,34 @@ public final class AiSessionStore {
     /// @param sessionId the session identifier to remove
     /// @return `true` if a session was removed, `false` if not found
     public synchronized boolean deleteSession(String sessionId) {
+        boolean wasCurrent = sessionId.equals(currentSessionId);
+
+        // Resolve the sequential neighbour in the displayed (most-recently-updated)
+        // order BEFORE removal, so deleting the current session advances to the next
+        // item in the visible list — or the previous one when deleting the last item —
+        // instead of an arbitrary insertion-order entry.
+        String nextId = null;
+        if (wasCurrent) {
+            List<AiSession> ordered = listSessions();
+            int idx = -1;
+            for (int i = 0; i < ordered.size(); i++) {
+                if (ordered.get(i).getId().equals(sessionId)) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx >= 0) {
+                if (idx + 1 < ordered.size()) {
+                    nextId = ordered.get(idx + 1).getId();
+                } else if (idx - 1 >= 0) {
+                    nextId = ordered.get(idx - 1).getId();
+                }
+            }
+        }
+
         boolean removed = sessions.remove(sessionId) != null;
-        if (removed && sessionId.equals(currentSessionId)) {
-            currentSessionId = sessions.isEmpty() ? null : sessions.keySet().iterator().next();
+        if (removed && wasCurrent) {
+            currentSessionId = nextId;
         }
         return removed;
     }

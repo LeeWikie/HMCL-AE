@@ -249,6 +249,33 @@ public final class FXUtils {
         builtinImageCache.clear();
     }
 
+    private static volatile boolean bundledEmojiFontLoaded = false;
+
+    /// Registers the bundled monochrome emoji font so JavaFX/Prism can use it as a per-glyph
+    /// fallback for emoji code points the system font lacks (filling the gaps in native
+    /// black-and-white emoji). Only the emoji font is loaded — no symbol font — so it cannot
+    /// affect arrows/box-drawing/other glyphs used elsewhere in the launcher UI. Colour emoji
+    /// is a separate, opt-in, chat-only feature. Safe to call repeatedly.
+    public static void loadBundledEmojiFont() {
+        if (bundledEmojiFontLoaded)
+            return;
+        bundledEmojiFontLoaded = true;
+        String resource = "/assets/font/NotoEmoji-Regular.ttf";
+        try (java.io.InputStream in = FXUtils.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                LOG.warning("Bundled emoji font not found: " + resource);
+                return;
+            }
+            javafx.scene.text.Font font = javafx.scene.text.Font.loadFont(in, 12.0);
+            if (font != null)
+                LOG.info("Loaded bundled emoji font: " + font.getFamily());
+            else
+                LOG.warning("Failed to load bundled emoji font: " + resource);
+        } catch (IOException e) {
+            LOG.warning("Failed to load bundled emoji font: " + resource, e);
+        }
+    }
+
     public static void runInFX(Runnable runnable) {
         if (Platform.isFxApplicationThread()) {
             runnable.run();
@@ -429,6 +456,11 @@ public final class FXUtils {
     public static void smoothScrolling(ScrollPane scrollPane) {
         if (AnimationUtils.isAnimationEnabled())
             ScrollUtils.addSmoothScrolling(scrollPane);
+    }
+
+    public static void smoothScrolling(ScrollPane scrollPane, double speed) {
+        if (AnimationUtils.isAnimationEnabled())
+            ScrollUtils.addSmoothScrolling(scrollPane, speed);
     }
 
     public static void smoothScrolling(VirtualFlow<?> virtualFlow) {
