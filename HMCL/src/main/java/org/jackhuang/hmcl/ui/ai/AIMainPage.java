@@ -433,8 +433,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallModpackTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchWorldsTool());
         // Instance lifecycle (rename/duplicate are reversible; delete is confirm-gated).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RenameInstanceTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DuplicateInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.EditInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
@@ -1798,6 +1797,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         scrollToBottom();
     }
 
+    /// Trims a tool argument/result string for a single log line.
+    private static String abbreviateLog(String s) {
+        if (s == null) return "";
+        String oneLine = s.replace('\n', ' ').replace('\r', ' ');
+        return oneLine.length() > 500 ? oneLine.substring(0, 500) + "…" : oneLine;
+    }
+
     /// Returns true when the message content appears to be a tool execution
     /// result stored by the ChatAgent.
     private static boolean isToolMessage(String content) {
@@ -1975,6 +1981,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolActivity(String toolName, String arguments) {
+                org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool call: " + toolName
+                        + " args=" + abbreviateLog(arguments));
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
@@ -1993,6 +2001,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolResult(String toolName, boolean success, String resultSummary) {
+                org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool result: " + toolName + " -> "
+                        + (success ? "ok" : "FAILED") + " | " + abbreviateLog(resultSummary));
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session

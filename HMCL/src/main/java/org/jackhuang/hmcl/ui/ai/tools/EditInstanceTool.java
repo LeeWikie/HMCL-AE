@@ -24,29 +24,51 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.util.Map;
 
-/// Renames a Minecraft instance (version) of the currently selected profile.
+/// Consolidated tool for non-destructive edits to a Minecraft instance of the selected
+/// profile. Chosen via the {@code action} parameter; designed to grow as more native
+/// instance operations are migrated in.
 ///
-/// Reuses the exact repository call performed by the native rename action in
-/// {@code Versions.renameVersion}: {@link HMCLGameRepository#renameVersion(String, String)}.
+/// - {@code rename}: reuses {@link HMCLGameRepository#renameVersion(String, String)}.
+/// - Game settings (memory, JVM args, Java, window) are edited through the {@code config-hmcl}
+///   skill, which writes the instance config files directly (HMCL's GameSettings system uses
+///   per-instance override flags and is rewritten on exit, so direct mutation is avoided here).
+/// - Deletion is intentionally NOT here — it is the separate, dangerous, confirm-gated
+///   {@code delete_instance} tool.
 @NotNullByDefault
-public final class RenameInstanceTool implements Tool {
+public final class EditInstanceTool implements Tool {
 
     @Override
     public String getName() {
-        return "rename_instance";
+        return "edit_instance";
     }
 
     @Override
     public String getDescription() {
-        return "Rename an existing Minecraft instance (version) in the currently selected profile. "
-                + "Parameters: instance (current instance name; falls back to 'query'), "
-                + "newName (the new instance name). "
-                + "The new name must be a valid version id and must not already be used by another instance. "
-                + "Returns the old and new name on success.";
+        return "Edit a Minecraft instance in the selected profile. Parameter 'action' selects the "
+                + "operation:\n"
+                + "- 'rename' — rename the instance. Params: instance (current name; falls back to 'query'), "
+                + "newName (the new name).\n"
+                + "For game settings (memory / JVM args / Java path / window size) use the 'config-hmcl' skill "
+                + "to edit the instance config files. To DELETE an instance use the separate 'delete_instance' "
+                + "tool (dangerous, requires confirmation).";
     }
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
+        String action = InstanceToolSupport.string(parameters, "action");
+        if (action == null) {
+            action = "rename"; // default + currently the only supported action
+        }
+        switch (action.toLowerCase()) {
+            case "rename":
+                return rename(parameters);
+            default:
+                return ToolResult.failure("Unknown action '" + action + "'. Supported: rename. "
+                        + "For game settings use the config-hmcl skill; to delete an instance use delete_instance.");
+        }
+    }
+
+    private ToolResult rename(Map<String, Object> parameters) {
         String instance = InstanceToolSupport.instanceName(parameters);
         String newName = InstanceToolSupport.string(parameters, "newName");
 
@@ -58,7 +80,6 @@ public final class RenameInstanceTool implements Tool {
         }
 
         HMCLGameRepository repository = InstanceToolSupport.repository();
-
         if (!repository.isLoaded()) {
             return ToolResult.failure("The game repository is not loaded yet; please try again in a moment.");
         }
