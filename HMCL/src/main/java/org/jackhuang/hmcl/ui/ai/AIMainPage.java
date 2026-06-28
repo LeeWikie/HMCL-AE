@@ -1761,12 +1761,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         streamingBubble = null;
         pendingToolCards.clear();
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
+        int index = 0;
         for (LlmMessage msg : session.getMessages()) {
             String role = msg.getRole();
             if ("user".equals(role)) {
                 addUserBubble(msg.getContent(), true);
+                attachMessageMenu(msg.getContent(), role, index);
             } else if ("assistant".equals(role)) {
                 createAiBubble(msg.getContent(), msg.getUsage());
+                attachMessageMenu(msg.getContent(), role, index);
             } else if (isToolMessage(msg.getContent())) {
                 if (aiSettings.isToolCallDisplayEnabled()) {
                     addToolMessage(msg.getContent());
@@ -1774,6 +1777,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             } else {
                 addSystemMessage(msg.getContent());
             }
+            index++;
         }
         updateToolActivityVisibility();
         updateEmptyState();
@@ -1784,6 +1788,75 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// result stored by the ChatAgent.
     private static boolean isToolMessage(String content) {
         return content.startsWith("Tool result for ");
+    }
+
+    /// Attaches a right-click menu (copy / branch / edit / resend) to the message bubble most
+    /// recently added to {@link #messageList}, bound to {@code index} in the session history.
+    private void attachMessageMenu(String content, String role, int index) {
+        var children = messageList.getChildren();
+        if (children.isEmpty()) {
+            return;
+        }
+        Node node = children.get(children.size() - 1);
+        javafx.scene.control.ContextMenu menu = new javafx.scene.control.ContextMenu();
+
+        javafx.scene.control.MenuItem copy = new javafx.scene.control.MenuItem(i18n("ai.msg.copy"));
+        copy.setOnAction(e -> {
+            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+            cc.putString(content == null ? "" : content);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+        });
+        javafx.scene.control.MenuItem branch = new javafx.scene.control.MenuItem(i18n("ai.msg.branch"));
+        branch.setOnAction(e -> branchFrom(index));
+        menu.getItems().addAll(copy, branch);
+
+        if ("user".equals(role)) {
+            javafx.scene.control.MenuItem edit = new javafx.scene.control.MenuItem(i18n("ai.msg.edit"));
+            edit.setOnAction(e -> editUserMessage(index, content));
+            javafx.scene.control.MenuItem resend = new javafx.scene.control.MenuItem(i18n("ai.msg.resend"));
+            resend.setOnAction(e -> resendUserMessage(index, content));
+            menu.getItems().addAll(edit, resend);
+        }
+        node.setOnContextMenuRequested(ev -> menu.show(node, ev.getScreenX(), ev.getScreenY()));
+    }
+
+    /// Forks the conversation into a new session containing everything up to {@code index}.
+    private void branchFrom(int index) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + " ✦");
+        persistStore();
+        refreshSessionList();
+        loadSessionMessages(branch);
+    }
+
+    /// Edit a user message: drop it and everything after, then load its text into the input
+    /// box so the user can revise and resend (the agent rebuilds context from the session).
+    private void editUserMessage(int index, String content) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        cur.truncateFrom(index);
+        persistStore();
+        loadSessionMessages(cur);
+        inputField.setText(content == null ? "" : content);
+        inputField.requestFocus();
+    }
+
+    /// Regenerate from a user message: drop it and everything after, then resend it as-is.
+    private void resendUserMessage(int index, String content) {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        cur.truncateFrom(index);
+        persistStore();
+        loadSessionMessages(cur);
+        inputField.setText(content == null ? "" : content);
+        sendMessage();
     }
 
     private void sendMessage() {

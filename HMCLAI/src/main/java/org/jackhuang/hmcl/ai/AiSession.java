@@ -131,6 +131,21 @@ public final class AiSession {
         this.updatedAt = Instant.now();
     }
 
+    /// Removes the message at {@code index} and every message after it. Used by the UI when
+    /// the user edits or regenerates from a point in the conversation. No-op if out of range.
+    public synchronized void truncateFrom(int index) {
+        if (index < 0 || index >= messages.size()) {
+            return;
+        }
+        messages.subList(index, messages.size()).clear();
+        this.updatedAt = Instant.now();
+    }
+
+    /// Returns the number of messages currently in the session.
+    public synchronized int size() {
+        return messages.size();
+    }
+
     /// Clears all messages from the session and bumps the updated-at timestamp.
     ///
     /// Call this when the user invokes the "new conversation" action.

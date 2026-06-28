@@ -163,6 +163,22 @@ public final class AiSessionStore {
         return session;
     }
 
+    /// Forks a new session containing {@code source}'s messages from index 0 up to and
+    /// including {@code includeUpToIndex}, marks it current, and returns it. The original
+    /// session is left untouched. The caller should {@link #save()} afterwards.
+    public synchronized AiSession createBranch(AiSession source, int includeUpToIndex, String title) {
+        List<org.jackhuang.hmcl.ai.llm.LlmMessage> src = source.getMessages();
+        List<org.jackhuang.hmcl.ai.llm.LlmMessage> copied = new ArrayList<>();
+        for (int i = 0; i <= includeUpToIndex && i < src.size(); i++) {
+            copied.add(src.get(i));
+        }
+        AiSession branch = new AiSession(java.util.UUID.randomUUID().toString(), title,
+                Instant.now(), Instant.now(), copied);
+        sessions.put(branch.getId(), branch);
+        currentSessionId = branch.getId();
+        return branch;
+    }
+
     /// Lists all sessions ordered by most-recently-updated first.
     ///
     /// @return an unmodifiable list of sessions
