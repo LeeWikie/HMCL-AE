@@ -75,8 +75,13 @@ public final class EntryPoint {
     }
 
     private static void setupJavaFXVMOptions() {
-        if ("true".equalsIgnoreCase(System.getenv("HMCL_FORCE_GPU"))) {
-            LOG.info("HMCL_FORCE_GPU: true");
+        // Opt-in toggle to force the hardware-accelerated Prism pipeline.
+        // Read from the system property first (so -Dhmcl.forceGPU=true works), falling
+        // back to the existing HMCL_FORCE_GPU environment variable. Default is off, which
+        // keeps Prism's safe auto-selection (hardware pipeline with software fallback).
+        String forceGPU = System.getProperty("hmcl.forceGPU", System.getenv("HMCL_FORCE_GPU"));
+        if ("true".equalsIgnoreCase(forceGPU)) {
+            LOG.info("Force GPU rendering: true");
             System.getProperties().putIfAbsent("prism.forceGPU", "true");
         }
 
