@@ -55,6 +55,14 @@ public final class ChatAgent {
 
     private final AiChatClient client;
     private final AiSession session;
+    /// Shared daemon pool for ancillary, session-read-only model calls (e.g. title suggestion) so
+    /// they never occupy the per-agent single-thread executor that serves the user's actual turns.
+    private static final ExecutorService ANCILLARY = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "chat-agent-ancillary");
+        t.setDaemon(true);
+        return t;
+    });
+
     private final ExecutorService executor;
     private final AiSettings settings;
     private final AiPromptBuilder promptBuilder;
@@ -243,7 +251,7 @@ public final class ChatAgent {
             } catch (RuntimeException e) {
                 return "";
             }
-        }, executor);
+        }, ANCILLARY); // off the per-agent executor: titling must not delay the user's next turn
     }
 
     public CompletableFuture<String> send(String userInput) {

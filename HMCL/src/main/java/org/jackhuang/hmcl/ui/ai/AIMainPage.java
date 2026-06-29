@@ -386,6 +386,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             Platform.runLater(this::showAiRiskNotice);
         }
 
+        // Warm the model library off the FX thread so the first model-dialog lookup (which auto-fills
+        // context/pricing/modalities) doesn't stall the UI parsing the bundled JSON on the FX thread.
+        Thread modelLibPreload = new Thread(() -> {
+            try {
+                org.jackhuang.hmcl.ai.ModelLibrary.getInstance();
+            } catch (Throwable ignored) {
+            }
+        }, "model-library-preload");
+        modelLibPreload.setDaemon(true);
+        modelLibPreload.start();
+
         this.sessionStore = new AiSessionStore(SettingsManager.localConfigDirectory());
         try {
             sessionStore.load();
