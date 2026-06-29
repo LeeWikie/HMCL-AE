@@ -444,6 +444,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AddOfflineAccountTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SelectAccountTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.MicrosoftLoginTool());
+        // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
+        // Global memory (hermes-style file-based store; remember/recall across conversations).
+        org.jackhuang.hmcl.ai.remember.RememberStore rememberStore =
+                new org.jackhuang.hmcl.ai.remember.RememberStore(
+                        SettingsManager.localConfigDirectory().resolve("ai-memory"));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
