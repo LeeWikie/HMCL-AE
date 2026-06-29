@@ -94,7 +94,9 @@ public final class SkillLoader {
     /// Names of skills bundled with the app under classpath `/assets/skills/&lt;name&gt;/SKILL.md`.
     /// They are extracted into the user skills directory so they appear as real, readable,
     /// listable skills and stay up to date with the app.
-    private static final List<String> BUILTIN_SKILLS = List.of("config-hmcl-ae", "config-hmcl");
+    private static final List<String> BUILTIN_SKILLS = List.of(
+            "config-hmcl-ae", "config-hmcl",
+            "diagnose-crash", "optimize-performance", "manage-accounts", "install-and-mod");
 
     /// Copies bundled built-in skills into the skills directory, overwriting the managed
     /// copy so it tracks the app version. User-created skills are left untouched.
