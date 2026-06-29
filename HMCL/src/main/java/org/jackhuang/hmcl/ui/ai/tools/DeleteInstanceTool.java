@@ -22,18 +22,35 @@ import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
-/// DANGEROUS / IRREVERSIBLE: permanently deletes a Minecraft instance (version) from disk.
+/// DANGEROUS: deletes a Minecraft instance (version) from disk.
 ///
-/// Reuses the exact repository call performed by the native delete action in
-/// {@code Versions.deleteVersion}: {@link HMCLGameRepository#removeVersionFromDisk(String)}.
+/// Honours the recycle-bin preference (mirroring {@link DeleteWorldTool}):
+/// - When {@code toRecycleBin} is true and the platform supports a recycle bin / trash, the
+///   version directory ({@link HMCLGameRepository#getVersionRoot(String)}) is moved to the
+///   recycle bin via {@link FileTrash#delete(Path, boolean)} (recoverable), then the repository
+///   is refreshed ({@link HMCLGameRepository#refreshVersions()}) so it forgets the version.
+/// - Otherwise (preference off, or no trash support, or the version directory cannot be located)
+///   it falls back to the exact repository call performed by the native delete action in
+///   {@code Versions.deleteVersion}: {@link HMCLGameRepository#removeVersionFromDisk(String)}.
 ///
 /// As a safety net (until a real UI confirmation dialog is wired in), this tool requires
 /// an explicit {@code confirm=true} parameter. Without it, nothing is deleted and the tool
 /// returns a failure explaining what would be deleted and how to confirm.
 @NotNullByDefault
 public final class DeleteInstanceTool implements Tool {
+
+    private final java.util.function.BooleanSupplier toRecycleBin;
+
+    /// @param toRecycleBin whether to route deletions to the OS recycle bin (recoverable) instead
+    ///                     of permanently deleting; read live on each call. Typically
+    ///                     `aiSettings::isDeleteToRecycleBin`.
+    public DeleteInstanceTool(java.util.function.BooleanSupplier toRecycleBin) {
+        this.toRecycleBin = toRecycleBin;
+    }
 
     @Override
     public String getName() {
@@ -42,8 +59,9 @@ public final class DeleteInstanceTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "DANGEROUS / IRREVERSIBLE: permanently DELETE a Minecraft instance (version) from disk. "
-                + "This cannot be undone. "
+        return "DANGEROUS: DELETE a Minecraft instance (version) from disk. "
+                + "Depending on the user's preference this either moves the instance to the system recycle bin "
+                + "(recoverable) or permanently removes it (cannot be undone). "
                 + "Parameters: instance (instance name to delete; falls back to 'query'), "
                 + "confirm (REQUIRED boolean). "
                 + "If confirm is not exactly true, NOTHING is deleted and the tool reports what would be removed; "
@@ -70,11 +88,41 @@ public final class DeleteInstanceTool implements Tool {
 
         // Confirm-gate: do NOT delete unless confirm is exactly true.
         if (!InstanceToolSupport.bool(parameters, "confirm")) {
-            return ToolResult.failure("Not confirmed: this will PERMANENTLY DELETE the instance '" + instance
-                    + "' and all of its files from disk. This action is IRREVERSIBLE. "
+            return ToolResult.failure("Not confirmed: this will DELETE the instance '" + instance
+                    + "' and all of its files from disk. If the recycle-bin preference is off this is IRREVERSIBLE. "
                     + "Re-invoke delete_instance with confirm=true to proceed.");
         }
 
+        // Recoverable path: move the version's on-disk directory to the recycle bin, then let the
+        // repository rebuild its version list from disk so it forgets the now-removed version.
+        if (toRecycleBin.getAsBoolean() && FileTrash.trashSupported()) {
+            Path versionDir;
+            try {
+                versionDir = repository.getVersionRoot(instance);
+            } catch (Throwable e) {
+                versionDir = null;
+            }
+
+            if (versionDir != null && Files.isDirectory(versionDir)) {
+                try {
+                    boolean trashed = FileTrash.delete(versionDir, true);
+                    repository.refreshVersions();
+                    if (trashed) {
+                        return ToolResult.success("Moved instance '" + instance
+                                + "' to the system recycle bin (recoverable).\nPath: " + versionDir);
+                    }
+                    // FileTrash fell back to a permanent delete (the OS rejected the move-to-trash).
+                    return ToolResult.success("Permanently deleted instance '" + instance
+                            + "' from disk: the OS rejected the recycle-bin move, so it was removed permanently.\nPath: "
+                            + versionDir);
+                } catch (Throwable e) {
+                    // Could not move/delete the directory directly; fall back to the native path below.
+                }
+            }
+            // versionDir could not be located on disk: fall back to the native path below.
+        }
+
+        // Permanent / native path: reuses the exact repository call from Versions.deleteVersion.
         boolean ok = repository.removeVersionFromDisk(instance);
         if (!ok) {
             return ToolResult.failure("Failed to delete instance '" + instance

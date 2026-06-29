@@ -467,7 +467,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchWorldsTool());
         // Instance lifecycle (rename/duplicate are reversible; delete is confirm-gated).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.EditInstanceTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool(aiSettings::isDeleteToRecycleBin));
         // Accounts (reuse HMCL's account system — never shell out / hand-edit for login).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListAccountsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AddOfflineAccountTool());

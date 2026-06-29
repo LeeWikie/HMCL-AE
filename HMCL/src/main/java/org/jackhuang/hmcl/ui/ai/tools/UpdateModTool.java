@@ -33,7 +33,6 @@ import org.jackhuang.hmcl.task.FileDownloadTask;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -261,12 +260,21 @@ public final class UpdateModTool implements ToolSpec {
         // never remove the old jar before the replacement is safely on disk.
         boolean alreadyPresent = Files.exists(dest);
         if (!alreadyPresent) {
-            List<URI> uris = provider.injectURLWithCandidates(remoteFile.url());
-            FileDownloadTask download = new FileDownloadTask(uris, dest, remoteFile.getIntegrityCheck());
-            download.setName(newVersion.name());
+            // Download through the shared helper, which retries with backoff and switches the
+            // download source (configured provider → official → BMCLAPI mirror) on failure, and
+            // cancels the task on timeout. The factory rebuilds the task for each candidate
+            // provider so a retry genuinely switches mirror.
             try {
-                ContentToolSupport.runTaskBlocking(download, DOWNLOAD_TIMEOUT_SECONDS, "Download");
+                ContentToolSupport.runDownloadWithFallback(p -> {
+                    FileDownloadTask download = new FileDownloadTask(
+                            p.injectURLWithCandidates(remoteFile.url()), dest, remoteFile.getIntegrityCheck());
+                    download.setName(newVersion.name());
+                    return download;
+                }, DOWNLOAD_TIMEOUT_SECONDS, "Download");
             } catch (Exception e) {
+                if (ContentToolSupport.isNetworkError(e)) {
+                    return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+                }
                 return ToolResult.failure("Download failed for the newer version '" + describe(newVersion)
                         + "' of '" + mod.getFileName() + "': " + AbstractContentSearchTool.messageOf(e));
             }

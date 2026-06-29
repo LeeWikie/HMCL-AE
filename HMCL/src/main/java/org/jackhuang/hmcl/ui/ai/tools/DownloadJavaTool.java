@@ -19,12 +19,9 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
-import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.game.GameJavaVersion;
 import org.jackhuang.hmcl.java.JavaManager;
 import org.jackhuang.hmcl.java.JavaRuntime;
-import org.jackhuang.hmcl.setting.DownloadProviders;
-import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.util.platform.Platform;
 import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -40,8 +37,9 @@ import java.util.Map;
 ///   to map a Minecraft version or Java major to the right runtime component,
 /// - [`GameJavaVersion#getSupportedVersions(Platform)`] to check platform availability,
 /// - [`JavaManager#getDownloadJavaTask(DownloadProvider, Platform, GameJavaVersion)`]
-///   (with [`DownloadProviders#getDownloadProvider()`]) to download + register it,
-/// - [`ContentToolSupport#runTaskBlocking`] to honor the synchronous tool contract.
+///   to build the download-and-register task,
+/// - [`ContentToolSupport#runDownloadWithFallback`] to honor the synchronous tool contract,
+///   retrying with backoff and switching download source on failure.
 ///
 /// If a matching runtime is already installed it is reported and no download happens.
 /// If the Java version cannot be determined or is not offered for this platform, the
@@ -133,17 +131,18 @@ public final class DownloadJavaTool implements Tool {
             // If enumeration fails, fall through and attempt the download anyway.
         }
 
-        DownloadProvider provider;
+        // Download + register the runtime through the shared helper, which retries with backoff
+        // and switches the download source (configured provider → official → BMCLAPI mirror) on
+        // failure, and cancels the task on timeout. The factory rebuilds the task for each
+        // candidate provider so a retry genuinely switches mirror.
         try {
-            provider = DownloadProviders.getDownloadProvider();
+            ContentToolSupport.runDownloadWithFallback(
+                    provider -> JavaManager.getDownloadJavaTask(provider, platform, target),
+                    TIMEOUT_SECONDS, "Java " + target.majorVersion() + " download");
         } catch (Throwable e) {
-            return ToolResult.failure("Failed to resolve the download provider: " + e.getMessage());
-        }
-
-        try {
-            Task<JavaRuntime> task = JavaManager.getDownloadJavaTask(provider, platform, target);
-            ContentToolSupport.runTaskBlocking(task, TIMEOUT_SECONDS, "Java " + target.majorVersion() + " download");
-        } catch (Throwable e) {
+            if (ContentToolSupport.isNetworkError(e)) {
+                return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+            }
             return ToolResult.failure("Failed to download Java " + target.majorVersion() + " for "
                     + requestedDescription + ": " + e.getMessage());
         }

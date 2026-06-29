@@ -37,6 +37,23 @@ public final class UpdateChecker {
     private UpdateChecker() {
     }
 
+    /**
+     * Fork safety switch for the in-app updater.
+     *
+     * <p>The built-in update endpoint ({@link Metadata#HMCL_UPDATE_URL}) defaults to upstream
+     * HMCL's official update server, which serves official HMCL builds. If this fork checked that
+     * server, an "update available" prompt would download the official HMCL jar and overwrite this
+     * fork (including its AI features) on the next launch. To prevent that, the update check is
+     * disabled here: {@link #requestCheckUpdate} becomes a no-op, so {@code latestVersion} is never
+     * populated, {@code outdated} stays {@code false}, no update prompt is shown, and no jar is
+     * downloaded — neither on automatic startup checks nor via the manual "check for updates" button.
+     *
+     * <p>TODO: when a dedicated fork update channel exists (e.g. GitHub Releases of the fork repo,
+     * LeeWikie/HMCL-AE), point the updater at that channel instead of upstream and flip this flag
+     * back to {@code false}.
+     */
+    private static final boolean FORK_UPDATE_CHECK_DISABLED = true;
+
     private static final ObjectProperty<RemoteVersion> latestVersion = new SimpleObjectProperty<>();
     private static final BooleanBinding outdated = Bindings.createBooleanBinding(
             () -> {
@@ -102,6 +119,12 @@ public final class UpdateChecker {
     }
 
     public static void requestCheckUpdate(UpdateChannel channel, boolean preview) {
+        if (FORK_UPDATE_CHECK_DISABLED) {
+            // Fork safety: do not contact the update server, so this fork can never be
+            // auto-replaced by an upstream build. See FORK_UPDATE_CHECK_DISABLED above.
+            LOG.info("In-app update check is disabled for this build; skipping update check.");
+            return;
+        }
         Platform.runLater(() -> {
             if (isCheckingUpdate())
                 return;

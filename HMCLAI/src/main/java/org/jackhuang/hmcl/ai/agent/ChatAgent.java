@@ -2,6 +2,7 @@ package org.jackhuang.hmcl.ai.agent;
 
 import org.jackhuang.hmcl.ai.AiSession;
 import org.jackhuang.hmcl.ai.AiSettings;
+import org.jackhuang.hmcl.ai.ModelLibrary;
 import org.jackhuang.hmcl.ai.langchain4j.AiChatClient;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
@@ -42,11 +43,28 @@ public final class ChatAgent {
             + "game launching issues, and log/crash analysis. "
             + "Use the provided tools when appropriate.";
 
+    /// Fraction of the active model's context window at which the running conversation is
+    /// auto-compacted before the NEXT turn, so long tool-heavy chats never hard-overflow.
+    private static final double AUTO_COMPACT_RATIO = 0.9;
+
+    /// Context window (tokens) used when neither the model library nor the user settings know it.
+    private static final int DEFAULT_CONTEXT_WINDOW = 128_000;
+
+    /// Rough chars-per-token heuristic for the local context-size estimate (matches AiSession).
+    private static final int CHARS_PER_TOKEN = 4;
+
     private final AiChatClient client;
     private final AiSession session;
     private final ExecutorService executor;
     private final AiSettings settings;
     private final AiPromptBuilder promptBuilder;
+
+    /// Provider-reported prompt (input) token count of the FIRST model call of the most recent
+    /// streaming turn — i.e. the size of the persisted context (system + history + user) before
+    /// any in-turn tool churn, which is the best proxy for what carries into the next turn.
+    /// Written on the adapter's streaming callback thread, read on the agent executor;
+    /// {@code volatile} for cross-thread visibility. Reset to {@code 0} after a compaction.
+    private volatile int lastPromptTokens = 0;
 
     public ChatAgent(AiChatClient client, AiSession session, AiSettings settings,
                      AiPromptBuilder promptBuilder) {
@@ -85,12 +103,19 @@ public final class ChatAgent {
     /// untouched and the future completes with an empty string.
     public CompletableFuture<String> compact() {
         return CompletableFuture.supplyAsync(() -> {
-            try { return doCompact(); }
-            catch (LlmException e) { throw new RuntimeException(e); }
+            try {
+                String summary = doCompact("【上下文已压缩】");
+                lastPromptTokens = 0; // history was just replaced; don't let a stale size trigger an immediate auto-compact
+                return summary;
+            } catch (LlmException e) { throw new RuntimeException(e); }
         }, executor);
     }
 
-    private String doCompact() throws LlmException {
+    /// Runs the single summarisation call and replaces the session history with the summary,
+    /// prefixed by {@code header} (the manual /compact path and the automatic path use different
+    /// headers so the user can tell which happened). Returns the raw summary text, or an empty
+    /// string when the history is empty or the model returns nothing (session left untouched).
+    private String doCompact(String header) throws LlmException {
         List<LlmMessage> history = session.getMessages();
         if (history.isEmpty()) {
             return "";
@@ -106,8 +131,71 @@ public final class ChatAgent {
         }
         summary = summary.strip();
         session.clear();
-        session.addMessage(new LlmMessage("assistant", "【上下文已压缩】\n" + summary));
+        session.addMessage(new LlmMessage("assistant", header + "\n" + summary));
         return summary;
+    }
+
+    /// If auto-compaction is enabled and the running conversation has reached
+    /// {@link #AUTO_COMPACT_RATIO} of the active model's context window, compresses the session
+    /// into a continuation-style summary BEFORE the next turn is built, so long tool-heavy chats
+    /// never hard-overflow the window.
+    ///
+    /// ## Threading / no-deadlock
+    ///
+    /// This runs INLINE on the agent's single-thread executor (the caller — {@link #doSend} /
+    /// {@link #doSendStreaming} — is already executing on it), reusing the same synchronous
+    /// {@link #doCompact(String)} the manual /compact path uses. It must NOT call the async
+    /// {@link #compact()} (which submits to the same single-thread executor and would self-
+    /// deadlock). {@link #doCompact} delegates the one summarisation call to the chat client,
+    /// which runs it on ITS OWN executor, so the {@code join()} inside is safe from here.
+    ///
+    /// A compaction failure is swallowed: it must never abort the user's actual message.
+    private void maybeAutoCompact() {
+        if (!settings.isAutoCompactEnabled()) {
+            return;
+        }
+        int threshold = (int) (resolveContextWindow() * AUTO_COMPACT_RATIO);
+        if (estimateContextTokens() < threshold) {
+            return;
+        }
+        try {
+            String summary = doCompact("【上下文已自动压缩】");
+            if (!summary.isEmpty()) {
+                // Next turn repopulates lastPromptTokens from fresh provider usage; reset so a
+                // turn that reports no usage can't immediately re-trigger on the stale figure.
+                lastPromptTokens = 0;
+            }
+        } catch (LlmException | RuntimeException e) {
+            // Best-effort: proceed with the user's turn even if summarisation failed.
+        }
+    }
+
+    /// Resolves the active model's context window in tokens. The {@link ModelLibrary} entry for
+    /// the configured model wins (authoritative per-model value), then the user-configured
+    /// {@link AiSettings#getContextWindow()}, then a {@value #DEFAULT_CONTEXT_WINDOW}-token fallback.
+    private int resolveContextWindow() {
+        ModelLibrary.ModelInfo info = ModelLibrary.find(settings.getModel());
+        if (info != null && info.getContextWindow() > 0) {
+            return info.getContextWindow();
+        }
+        int configured = settings.getContextWindow();
+        return configured > 0 ? configured : DEFAULT_CONTEXT_WINDOW;
+    }
+
+    /// Estimates the token size of the prompt the NEXT turn would send: the system prompt plus
+    /// the stored conversation. Uses the larger of a char-count heuristic and the last provider-
+    /// reported prompt-token count, so it stays robust whether or not the provider reports usage
+    /// (the non-streaming path reports none, so the heuristic carries it there).
+    private int estimateContextTokens() {
+        String prompt = promptBuilder != null ? promptBuilder.build() : FALLBACK_SYSTEM_PROMPT;
+        int chars = prompt.length();
+        for (LlmMessage m : session.getMessages()) {
+            String c = m.getContent();
+            if (c != null) {
+                chars += c.length();
+            }
+        }
+        return Math.max(chars / CHARS_PER_TOKEN, lastPromptTokens);
     }
 
     /// System instruction used to derive a short conversation title from the opening exchange.
@@ -174,6 +262,9 @@ public final class ChatAgent {
     }
 
     private String doSend(String userInput) throws LlmException {
+        // Auto-compact (if near the context limit) BEFORE the new user message is added, so the
+        // message just typed is never folded into the summary and lost as a distinct turn.
+        maybeAutoCompact();
         session.addMessage(new LlmMessage("user", userInput));
         String response = client.sendMessage(buildMessages()).join();
         session.addMessage(new LlmMessage("assistant", response));
@@ -181,12 +272,25 @@ public final class ChatAgent {
     }
 
     private void doSendStreaming(String userInput, LlmStreamCallback callback) throws LlmException {
+        // See doSend: compact before adding the user message so it isn't summarised away.
+        maybeAutoCompact();
         session.addMessage(new LlmMessage("user", userInput));
         client.sendMessageStreaming(buildMessages(), new LlmStreamCallback() {
             private final StringBuilder full = new StringBuilder();
             @Nullable private LlmUsage usage;
+            private boolean firstUsageCaptured = false;
             @Override public void onToken(String t) { full.append(t); callback.onToken(t); }
-            @Override public void onUsage(LlmUsage u) { this.usage = u; callback.onUsage(u); }
+            @Override public void onUsage(LlmUsage u) {
+                // The first model call of a turn reports the input-token count of the persisted
+                // context (system + history + this user message), before any in-turn tool churn —
+                // record it as the running context size driving the next turn's compaction check.
+                if (!firstUsageCaptured && u.getPromptTokens() > 0) {
+                    lastPromptTokens = u.getPromptTokens();
+                    firstUsageCaptured = true;
+                }
+                this.usage = u;
+                callback.onUsage(u);
+            }
             @Override public void onToolActivity(String name, String args) { callback.onToolActivity(name, args); }
             @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
             @Override public void onComplete(String c) {

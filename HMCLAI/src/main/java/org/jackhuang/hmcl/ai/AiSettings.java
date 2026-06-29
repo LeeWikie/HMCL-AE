@@ -215,6 +215,9 @@ public final class AiSettings {
 
         @SerializedName("autoBackupBeforeNbtEdit")
         private boolean autoBackupBeforeNbtEdit = DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT;
+
+        @SerializedName("autoCompactEnabled")
+        private boolean autoCompactEnabled = DEFAULT_AUTO_COMPACT_ENABLED;
     }
 
     private static final Gson GSON = new GsonBuilder()
@@ -273,6 +276,9 @@ public final class AiSettings {
     // World backup engine
     private final IntegerProperty worldBackupRetention;
     private final BooleanProperty autoBackupBeforeNbtEdit;
+
+    // Context management
+    private final BooleanProperty autoCompactEnabled;
 
     // Complex values (list-based, no JavaFX property)
     private volatile List<String> stopSequences = Collections.emptyList();
@@ -369,6 +375,10 @@ public final class AiSettings {
     /// opt-in that future NBT writes can consult; it is not a hard dependency yet.
     public static final boolean DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT = true;
 
+    /// Default for auto-compacting the conversation as it nears the active model's context
+    /// window, so long tool-heavy chats never hard-overflow (on by default; the user can opt out).
+    public static final boolean DEFAULT_AUTO_COMPACT_ENABLED = true;
+
     /// Creates an instance bound to the given config directory.
     ///
     /// @param configDir the `.hmcl/` directory path; the settings file will be
@@ -418,6 +428,7 @@ public final class AiSettings {
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
         this.worldBackupRetention = new SimpleIntegerProperty(this, "worldBackupRetention", DEFAULT_WORLD_BACKUP_RETENTION);
         this.autoBackupBeforeNbtEdit = new SimpleBooleanProperty(this, "autoBackupBeforeNbtEdit", DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT);
+        this.autoCompactEnabled = new SimpleBooleanProperty(this, "autoCompactEnabled", DEFAULT_AUTO_COMPACT_ENABLED);
     }
 
     // ---- Property accessors (for UI binding) ---------------------------------------
@@ -625,6 +636,11 @@ public final class AiSettings {
     /// Returns the auto-backup-before-NBT-edit flag property.
     public BooleanProperty autoBackupBeforeNbtEditProperty() {
         return autoBackupBeforeNbtEdit;
+    }
+
+    /// Returns the auto-compact-near-context-limit flag property.
+    public BooleanProperty autoCompactEnabledProperty() {
+        return autoCompactEnabled;
     }
 
     // ---- Convenience value accessors -----------------------------------------------
@@ -846,6 +862,12 @@ public final class AiSettings {
     /// Returns whether a world is auto-backed-up before high-risk NBT edits.
     public boolean isAutoBackupBeforeNbtEdit() {
         return autoBackupBeforeNbtEdit.get();
+    }
+
+    /// Returns whether the conversation is auto-compacted as it approaches the model's
+    /// context window (see {@link org.jackhuang.hmcl.ai.agent.ChatAgent}).
+    public boolean isAutoCompactEnabled() {
+        return autoCompactEnabled.get();
     }
 
     /// Returns the current stop sequences list (unmodifiable snapshot).
@@ -1102,6 +1124,7 @@ public final class AiSettings {
         data.autoRecallMemory = autoRecallMemory.get();
         data.worldBackupRetention = worldBackupRetention.get();
         data.autoBackupBeforeNbtEdit = autoBackupBeforeNbtEdit.get();
+        data.autoCompactEnabled = autoCompactEnabled.get();
 
         synchronized (profiles) {
             if (!profiles.isEmpty()) {
@@ -1270,6 +1293,7 @@ public final class AiSettings {
         autoRecallMemory.set(data.autoRecallMemory);
         worldBackupRetention.set(data.worldBackupRetention > 0 ? data.worldBackupRetention : DEFAULT_WORLD_BACKUP_RETENTION);
         autoBackupBeforeNbtEdit.set(data.autoBackupBeforeNbtEdit);
+        autoCompactEnabled.set(data.autoCompactEnabled);
     }
 
     private void syncStopSequencesFromData(PersistedData data) {

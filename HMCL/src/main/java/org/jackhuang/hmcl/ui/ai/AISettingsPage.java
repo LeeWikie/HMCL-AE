@@ -1711,6 +1711,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 buildApprovalModeRow(),
                 toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
                         aiSettings.criticalConfirmEnabledProperty()),
+                toggleRow("上下文接近上限自动压缩", "对话接近模型上下文窗口 90% 时自动压缩历史，防止溢出报错",
+                        aiSettings.autoCompactEnabledProperty()),
                 sliderRow("工具调用轮数上限", "单次回复内最多连续调用工具的次数（防失控）",
                         aiSettings.maxToolCyclesProperty(), 1, 50, ""),
                 sliderRow("上下文消息条数上限", "只把最近 N 条发给模型，0=不限（始终保留系统提示）",
