@@ -258,7 +258,10 @@ public final class UpdateModTool implements ToolSpec {
 
         // Download the new file (unless it is already present). Downloading first guarantees we
         // never remove the old jar before the replacement is safely on disk.
-        boolean alreadyPresent = Files.exists(dest);
+        // When the new version has the SAME filename, dest == the old jar, so it always "exists" —
+        // but that is the file we must overwrite, not skip. Only treat a DIFFERENT filename that is
+        // already on disk as already-present.
+        boolean alreadyPresent = !sameTarget && Files.exists(dest);
         if (!alreadyPresent) {
             // Download through the shared helper, which retries with backoff and switches the
             // download source (configured provider → official → BMCLAPI mirror) on failure, and

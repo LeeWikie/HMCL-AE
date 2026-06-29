@@ -110,10 +110,19 @@ public final class DeleteWorldTool implements Tool {
         }
 
         Path worldDir;
+        Path savesDir;
         try {
-            worldDir = repository.getRunDirectory(instance).resolve("saves").resolve(world);
+            savesDir = repository.getRunDirectory(instance).resolve("saves").normalize();
+            worldDir = savesDir.resolve(world).normalize();
         } catch (Throwable e) {
             return ToolResult.failure("Failed to resolve the run directory of '" + instance + "': " + e.getMessage());
+        }
+
+        // Path confinement: a malicious/garbled name like "../.." or an absolute path must never
+        // escape the saves directory — otherwise delete_world could remove arbitrary folders.
+        if (!worldDir.startsWith(savesDir) || worldDir.equals(savesDir)) {
+            return ToolResult.failure("Refused to delete '" + world + "': it resolves outside the saves directory. "
+                    + "Pass a single world folder name only.");
         }
 
         if (!Files.isDirectory(worldDir)) {

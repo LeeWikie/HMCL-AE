@@ -1059,6 +1059,11 @@ public final class AiSettings {
         }
 
         PersistedData data = GSON.fromJson(json, PersistedData.class);
+        // An empty / whitespace / literal "null" file deserializes to null — keep current defaults
+        // instead of NPE-ing (which previously bubbled up and silently wiped all AI config).
+        if (data == null) {
+            return;
+        }
 
         if (data.profiles != null && !data.profiles.isEmpty()) {
             synchronized (profiles) {

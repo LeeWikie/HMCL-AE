@@ -121,7 +121,7 @@ public final class ModelLibrary {
     /// strict match (the caller should then apply its own defaults).
     @Nullable
     public ModelInfo lookup(String modelId) {
-        if (modelId.isEmpty()) {
+        if (modelId == null || modelId.isEmpty()) {
             return null;
         }
         return models.get(modelId);

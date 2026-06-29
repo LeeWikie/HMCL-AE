@@ -2525,7 +2525,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         switch (job.getStatus()) {
             case SUCCEEDED: status = "已完成"; break;
             case FAILED: status = "失败"; break;
-            case CANCELLED: status = "已取消"; break;
+            case CANCELLED: return; // the user cancelled it — don't spend a turn auto-continuing
             default: return; // not terminal — ignore
         }
         org.jackhuang.hmcl.ai.tools.ToolResult result = job.getResult();
@@ -2548,9 +2548,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         jobsPane.getChildren().clear();
+        AiSession current = sessionStore.getCurrentSession();
+        java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> jobList = current != null
+                ? org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().listBySession(current.getId())
+                : java.util.Collections.emptyList();
         int running = 0;
-        for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job
-                : org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().list()) {
+        for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job : jobList) {
             if (job.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING) {
                 continue;
             }
