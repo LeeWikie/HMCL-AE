@@ -188,6 +188,9 @@ public final class AiSettings {
         @SerializedName("memoryEnabled")
         private boolean memoryEnabled = DEFAULT_MEMORY_ENABLED;
 
+        @SerializedName("nbtToolsEnabled")
+        private boolean nbtToolsEnabled = DEFAULT_NBT_TOOLS_ENABLED;
+
         @SerializedName("customInstructions")
         @Nullable
         private String customInstructions = "";
@@ -244,6 +247,7 @@ public final class AiSettings {
     private final BooleanProperty sendOnEnter;
     private final BooleanProperty criticalConfirmEnabled;
     private final BooleanProperty memoryEnabled;
+    private final BooleanProperty nbtToolsEnabled;
     private final StringProperty customInstructions;
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
@@ -312,6 +316,9 @@ public final class AiSettings {
     /// Default for the global memory feature (remember/recall) being enabled.
     public static final boolean DEFAULT_MEMORY_ENABLED = true;
 
+    /// Default for the (high-risk) save-NBT editing tool suite being enabled.
+    public static final boolean DEFAULT_NBT_TOOLS_ENABLED = true;
+
     /// Default reply-language mode (`"auto"` = follow the user's language).
     /// Other accepted values: `"zh"` (always 简体中文), `"en"` (always English).
     public static final String DEFAULT_RESPONSE_LANGUAGE = "auto";
@@ -359,6 +366,7 @@ public final class AiSettings {
         this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
         this.criticalConfirmEnabled = new SimpleBooleanProperty(this, "criticalConfirmEnabled", DEFAULT_CRITICAL_CONFIRM_ENABLED);
         this.memoryEnabled = new SimpleBooleanProperty(this, "memoryEnabled", DEFAULT_MEMORY_ENABLED);
+        this.nbtToolsEnabled = new SimpleBooleanProperty(this, "nbtToolsEnabled", DEFAULT_NBT_TOOLS_ENABLED);
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
@@ -523,6 +531,10 @@ public final class AiSettings {
 
     public BooleanProperty criticalConfirmEnabledProperty() {
         return criticalConfirmEnabled;
+    }
+
+    public BooleanProperty nbtToolsEnabledProperty() {
+        return nbtToolsEnabled;
     }
 
     public BooleanProperty memoryEnabledProperty() {
@@ -709,6 +721,10 @@ public final class AiSettings {
 
     public boolean isCriticalConfirmEnabled() {
         return criticalConfirmEnabled.get();
+    }
+
+    public boolean isNbtToolsEnabled() {
+        return nbtToolsEnabled.get();
     }
 
     public boolean isMemoryEnabled() {
@@ -975,6 +991,7 @@ public final class AiSettings {
         data.sendOnEnter = sendOnEnter.get();
         data.criticalConfirmEnabled = criticalConfirmEnabled.get();
         data.memoryEnabled = memoryEnabled.get();
+        data.nbtToolsEnabled = nbtToolsEnabled.get();
         data.customInstructions = customInstructions.get();
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
@@ -1136,6 +1153,7 @@ public final class AiSettings {
         sendOnEnter.set(data.sendOnEnter);
         criticalConfirmEnabled.set(data.criticalConfirmEnabled);
         memoryEnabled.set(data.memoryEnabled);
+        nbtToolsEnabled.set(data.nbtToolsEnabled);
         customInstructions.set(data.customInstructions != null ? data.customInstructions : "");
         responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);

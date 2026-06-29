@@ -1709,7 +1709,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
                         aiSettings.criticalConfirmEnabledProperty()),
                 toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
-                        aiSettings.memoryEnabledProperty()));
+                        aiSettings.memoryEnabledProperty()),
+                toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
+                        aiSettings.nbtToolsEnabledProperty()));
         ComponentList safetyCard = new ComponentList();
         safetyCard.getContent().add(safetySub);
 

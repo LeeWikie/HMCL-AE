@@ -521,13 +521,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
         // Save NBT editing (flagship: NBTExplorer-grade automation; writes are backup-gated +
         // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
+        if (aiSettings.isNbtToolsEnabled()) {
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
+        }
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
