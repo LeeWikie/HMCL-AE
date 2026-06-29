@@ -185,20 +185,52 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     @Override
     public void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback) {
         List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
-        streamTurn(conversation, callback, 0);
+        streamTurn(conversation, callback, 0, new java.util.HashMap<>());
+    }
+
+    /// After this many identical (tool, arguments) calls in one turn, stop actually running
+    /// the tool and feed back a BLOCKED notice instead — breaks the model out of a loop
+    /// where it keeps re-issuing the same failing call until the cycle cap is hit.
+    private static final int DUP_CALL_LIMIT = 3;
+
+    /// Executes a tool request unless it has already been issued (identical name+arguments)
+    /// {@link #DUP_CALL_LIMIT} times this turn, in which case a synthetic BLOCKED result is
+    /// returned so the conversation still has one result per tool-use (API requirement) while
+    /// telling the model to stop repeating itself.
+    private ToolExecutionResultMessage executeWithLoopGuard(ToolExecutionRequest req,
+                                                            java.util.Map<String, Integer> callCounts) {
+        String fingerprint = req.name() + "|" + (req.arguments() == null ? "" : req.arguments());
+        int count = callCounts.merge(fingerprint, 1, Integer::sum);
+        if (count >= DUP_CALL_LIMIT) {
+            return ToolExecutionResultMessage.from(req,
+                    "BLOCKED: you have already called '" + req.name() + "' with identical arguments "
+                    + (count - 1) + " times and the result did not change. Do NOT call it again — use a"
+                    + " different approach, a different tool, or answer with the information you already have.");
+        }
+        return truncateToolResult(req, toolAdapter.execute(req));
     }
 
     /// One turn of the streaming agent loop: stream the model's response (with tools
     /// attached); if it asks for tool calls, execute them, append the results, and recurse;
     /// otherwise finish. Mirrors Pi's loop — keep going until the model stops calling tools.
-    private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle) {
+    ///
+    /// `callCounts` tracks how often each identical (tool, arguments) pair has been issued
+    /// this turn, so we can break the model out of a loop where it keeps re-issuing the same
+    /// failing call (see {@link #DUP_CALL_LIMIT}).
+    private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
+                            java.util.Map<String, Integer> callCounts) {
         if (cycle >= maxToolCycles) {
             callback.onComplete("");
             return;
         }
 
         ChatRequest.Builder requestBuilder = ChatRequest.builder().messages(conversation);
-        if (toolAdapter != null && !toolAdapter.buildToolSpecifications().isEmpty()) {
+        // On the final allowed cycle, drop the tools so the model is forced to produce a
+        // text answer summarising progress instead of requesting yet another tool call
+        // (which would otherwise be silently dropped as an empty reply).
+        boolean allowTools = toolAdapter != null && !toolAdapter.buildToolSpecifications().isEmpty()
+                && cycle < maxToolCycles - 1;
+        if (allowTools) {
             requestBuilder.toolSpecifications(toolAdapter.buildToolSpecifications());
         }
 
@@ -232,18 +264,18 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     conversation.add(aiMessage);
                     for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
                         callback.onToolActivity(req.name(), req.arguments());
-                        ToolExecutionResultMessage result = truncateToolResult(req, toolAdapter.execute(req));
+                        ToolExecutionResultMessage result = executeWithLoopGuard(req, callCounts);
                         if (result != null) {
                             conversation.add(result);
                             String resultText = result.text() != null ? result.text() : "";
-                            boolean success = !resultText.startsWith("Error:");
+                            boolean success = !resultText.startsWith("Error:") && !resultText.startsWith("BLOCKED:");
                             String summary = resultText.length() > 300
                                     ? resultText.substring(0, 300) + "…"
                                     : resultText;
                             callback.onToolResult(req.name(), success, summary);
                         }
                     }
-                    streamTurn(conversation, callback, cycle + 1);
+                    streamTurn(conversation, callback, cycle + 1, callCounts);
                     return;
                 }
 
@@ -266,12 +298,15 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// @return the assistant's text response
     private String doChat(List<LlmMessage> messages) {
         List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
+        java.util.Map<String, Integer> callCounts = new java.util.HashMap<>();
 
         for (int cycle = 0; cycle < maxToolCycles; cycle++) {
             ChatRequest.Builder requestBuilder = ChatRequest.builder()
                     .messages(conversation);
 
-            if (toolAdapter != null && !toolAdapter.buildToolSpecifications().isEmpty()) {
+            // Final allowed cycle: drop tools so the model must answer in text.
+            if (toolAdapter != null && !toolAdapter.buildToolSpecifications().isEmpty()
+                    && cycle < maxToolCycles - 1) {
                 requestBuilder.toolSpecifications(toolAdapter.buildToolSpecifications());
             }
 
@@ -294,7 +329,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             // OpenAI/Anthropic APIs — even when a tool fails (the failure is
             // returned to the model as an "Error: ..." result so it can retry).
             for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
-                conversation.add(truncateToolResult(req, toolAdapter.execute(req)));
+                conversation.add(executeWithLoopGuard(req, callCounts));
             }
         }
 
