@@ -559,6 +559,7 @@ public final class AiCli {
         Platform.runLater(() -> {
             try {
                 SettingsManager.init();
+                safeInit("CacheRepository", AiCli::initCacheRepository);
                 safeInit("DownloadProviders", DownloadProviders::init);
                 safeInit("ProxyManager", ProxyManager::init);
                 safeInit("Accounts", Accounts::init);
@@ -577,6 +578,15 @@ public final class AiCli {
             throw new IllegalStateException("HMCL backend init failed", err.get());
         }
         log("INIT", "HMCL backend ready (config=" + SettingsManager.localConfigDirectory() + ")");
+    }
+
+    /// Headless equivalent of Launcher's cache-repo wiring (Launcher.java:166). Without this,
+    /// CacheRepository.getInstance().index stays null and any download / version-list refresh
+    /// NPEs with "this.index is null" — which is exactly what list_game_versions hit in the CLI.
+    private static void initCacheRepository() {
+        org.jackhuang.hmcl.util.CacheRepository.setInstance(org.jackhuang.hmcl.game.HMCLCacheRepository.REPOSITORY);
+        String commonDir = org.jackhuang.hmcl.setting.LauncherSettings.getDefaultCommonDirectory();
+        org.jackhuang.hmcl.game.HMCLCacheRepository.REPOSITORY.changeDirectory(java.nio.file.Paths.get(commonDir));
     }
 
     private void safeInit(String name, Runnable init) {
