@@ -409,6 +409,33 @@ tasks.register<JavaExec>("run") {
     }
 }
 
+// Headless AI agent CLI for automated testing (no UI/TUI). Runs against the project's
+// compiled classes + resources so HMCL's full backend (Profiles/repository/JavaManager/
+// Accounts/downloads) is available; streams tokens/tool-calls/results to stdout.
+// Usage: ./gradlew :HMCL:runAiCli --args="--prompt '列出我的实例'"
+tasks.register<JavaExec>("runAiCli") {
+    group = "application"
+    description = "Run the headless AI agent CLI (org.jackhuang.hmcl.ui.ai.cli.AiCli)."
+
+    mainClass.set("org.jackhuang.hmcl.ui.ai.cli.AiCli")
+    // JavaFX is compileOnly for the app (loaded at runtime via the OpenJFX bootstrap), but the
+    // testImplementation config pulls the platform JavaFX jars — reuse them so the headless CLI
+    // has javafx.* on the classpath without the app's custom boot classloader.
+    classpath = sourceSets["main"].runtimeClasspath + configurations["testRuntimeClasspath"]
+    workingDir = rootProject.rootDir
+    // Force the software pipeline so the FX toolkit starts reliably in a background process.
+    systemProperty("prism.order", "sw")
+    systemProperty("hmcl.offline.auth.restricted", "false")
+    // Emit UTF-8 so streamed Chinese text and the →/✓/✗ log markers render correctly.
+    systemProperty("file.encoding", "UTF-8")
+    systemProperty("sun.stdout.encoding", "UTF-8")
+    systemProperty("sun.stderr.encoding", "UTF-8")
+    // Stream the agent's stdout live instead of buffering until exit.
+    standardOutput = System.out
+    errorOutput = System.err
+    // jvmArgs (--add-opens) are applied by the tasks.withType<JavaExec> block above.
+}
+
 // terracotta
 
 val upgradeTerracottaConfig = tasks.register<TerracottaConfigUpgradeTask>("upgradeTerracottaConfig") {
