@@ -62,6 +62,8 @@ run_one() {
   echo "  $result"
   local ok=1
   printf '%s\n' "$out" | grep -q "\[RESULT\]" || { ok=0; echo "  ✗ no RESULT (hang/crash?)"; }
+  # A turn that TIMED OUT or FAILED is not a pass, even if it called the right tool.
+  if printf '%s\n' "$out" | grep -qE '\[RESULT\] (TIMEOUT|FAILED)'; then ok=0; echo "  ✗ RESULT was TIMEOUT/FAILED"; fi
   if printf '%s\n' "$out" | grep -qE '\[TOOL→\] shell'; then ok=0; echo "  ✗ used shell (should not)"; fi
   if [ "$expect" != "-" ]; then
     printf '%s\n' "$out" | grep -q "\[TOOL→\] $expect" || { ok=0; echo "  ✗ expected tool '$expect' not called"; }

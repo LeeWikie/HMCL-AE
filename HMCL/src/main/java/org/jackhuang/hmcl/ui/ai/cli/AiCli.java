@@ -577,6 +577,11 @@ public final class AiCli {
         if (err.get() != null) {
             throw new IllegalStateException("HMCL backend init failed", err.get());
         }
+        // JavaManager.initialize() runs the one-time Java scan and counts down the latch that
+        // getAllJava()/list_java block on. Without it, list_java hangs forever in the CLI
+        // (and any prompt that leads the agent to call it would time out). Run it off the FX
+        // thread (plain static disk scan) so the toolkit isn't blocked.
+        safeInit("JavaManager", org.jackhuang.hmcl.java.JavaManager::initialize);
         log("INIT", "HMCL backend ready (config=" + SettingsManager.localConfigDirectory() + ")");
     }
 
