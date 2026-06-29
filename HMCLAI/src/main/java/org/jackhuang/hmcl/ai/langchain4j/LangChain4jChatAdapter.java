@@ -120,11 +120,71 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
     /// Maximum tool-call cycles before giving up, as a runaway backstop (Pi loops until
     /// done; we keep a generous cap so a misbehaving model can't loop forever).
-    private static final int MAX_TOOL_CYCLES = 25;
+    /// Configurable via {@link #setAgentLimits(int, int, int)}.
+    private volatile int maxToolCycles = 25;
+
+    /// Maximum number of recent conversation messages sent to the model
+    /// (`0` = unlimited). Leading system messages are always kept.
+    private volatile int maxContextMessages = 0;
+
+    /// Maximum characters of a single tool result fed back to the model
+    /// (`0` = unlimited).
+    private volatile int toolResultMaxChars = 0;
+
+    /// Applies the agent-loop limits from settings. Non-positive cycle counts
+    /// fall back to the default backstop; non-positive context/result limits
+    /// mean "unlimited".
+    public void setAgentLimits(int maxToolCycles, int maxContextMessages, int toolResultMaxChars) {
+        this.maxToolCycles = maxToolCycles > 0 ? maxToolCycles : 25;
+        this.maxContextMessages = Math.max(0, maxContextMessages);
+        this.toolResultMaxChars = Math.max(0, toolResultMaxChars);
+    }
+
+    /// Trims the conversation to the most recent {@link #maxContextMessages} entries,
+    /// always preserving leading system messages and never starting the kept window
+    /// with an orphaned tool-result message (whose originating assistant message would
+    /// otherwise be dropped, which the OpenAI/Anthropic APIs reject).
+    private List<ChatMessage> applyContextLimit(List<ChatMessage> conversation) {
+        int limit = maxContextMessages;
+        if (limit <= 0 || conversation.size() <= limit) {
+            return conversation;
+        }
+        List<ChatMessage> systems = new ArrayList<>();
+        for (ChatMessage m : conversation) {
+            if (m instanceof SystemMessage) systems.add(m);
+            else break;
+        }
+        int start = Math.max(systems.size(), conversation.size() - limit);
+        List<ChatMessage> tail = new ArrayList<>(conversation.subList(start, conversation.size()));
+        while (!tail.isEmpty() && tail.get(0) instanceof ToolExecutionResultMessage) {
+            tail.remove(0);
+        }
+        List<ChatMessage> trimmed = new ArrayList<>(systems.size() + tail.size());
+        trimmed.addAll(systems);
+        trimmed.addAll(tail);
+        return trimmed;
+    }
+
+    /// Truncates a tool result fed back to the model when it exceeds
+    /// {@link #toolResultMaxChars}. Returns the original message when within budget.
+    private ToolExecutionResultMessage truncateToolResult(ToolExecutionRequest req,
+                                                          ToolExecutionResultMessage result) {
+        int limit = toolResultMaxChars;
+        if (limit <= 0 || result == null) {
+            return result;
+        }
+        String text = result.text();
+        if (text == null || text.length() <= limit) {
+            return result;
+        }
+        String truncated = text.substring(0, limit)
+                + "\n…[truncated " + (text.length() - limit) + " chars by tool-result limit]";
+        return ToolExecutionResultMessage.from(req, truncated);
+    }
 
     @Override
     public void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback) {
-        List<ChatMessage> conversation = new ArrayList<>(convertMessages(messages));
+        List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
         streamTurn(conversation, callback, 0);
     }
 
@@ -132,7 +192,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// attached); if it asks for tool calls, execute them, append the results, and recurse;
     /// otherwise finish. Mirrors Pi's loop — keep going until the model stops calling tools.
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle) {
-        if (cycle >= MAX_TOOL_CYCLES) {
+        if (cycle >= maxToolCycles) {
             callback.onComplete("");
             return;
         }
@@ -172,7 +232,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     conversation.add(aiMessage);
                     for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
                         callback.onToolActivity(req.name(), req.arguments());
-                        ToolExecutionResultMessage result = toolAdapter.execute(req);
+                        ToolExecutionResultMessage result = truncateToolResult(req, toolAdapter.execute(req));
                         if (result != null) {
                             conversation.add(result);
                             String resultText = result.text() != null ? result.text() : "";
@@ -205,9 +265,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// @param messages the HMCL conversation history
     /// @return the assistant's text response
     private String doChat(List<LlmMessage> messages) {
-        List<ChatMessage> conversation = new ArrayList<>(convertMessages(messages));
+        List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
 
-        for (int cycle = 0; cycle < MAX_TOOL_CYCLES; cycle++) {
+        for (int cycle = 0; cycle < maxToolCycles; cycle++) {
             ChatRequest.Builder requestBuilder = ChatRequest.builder()
                     .messages(conversation);
 
@@ -234,7 +294,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             // OpenAI/Anthropic APIs — even when a tool fails (the failure is
             // returned to the model as an "Error: ..." result so it can retry).
             for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
-                conversation.add(toolAdapter.execute(req));
+                conversation.add(truncateToolResult(req, toolAdapter.execute(req)));
             }
         }
 

@@ -122,6 +122,12 @@ public final class ChatAgentFactory {
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
                         settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled());
         AiChatClient client = resolveClient(config, tools, policy, confirmHandler);
+        // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
+        // truncation) to the LangChain4j adapter when that is the active backend.
+        if (client instanceof org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter adapter) {
+            adapter.setAgentLimits(settings.getMaxToolCycles(),
+                    settings.getMaxContextMessages(), settings.getToolResultMaxChars());
+        }
         ChatAgent agent = new ChatAgent(client, session, settings, promptBuilder);
         session.setContextBudget(settings.getContextWindow());
         return agent;
@@ -257,7 +263,9 @@ public final class ChatAgentFactory {
                 settings.getProvider(),
                 settings.getMaxTokens(),
                 settings.getTemperature(),
-                LlmConfig.DEFAULT_TIMEOUT,
+                java.time.Duration.ofSeconds(settings.getRequestTimeoutSeconds() > 0
+                        ? settings.getRequestTimeoutSeconds()
+                        : LlmConfig.DEFAULT_TIMEOUT.getSeconds()),
                 settings.getContextWindow(),
                 settings.getMaxOutputTokens(),
                 settings.getTopP(),

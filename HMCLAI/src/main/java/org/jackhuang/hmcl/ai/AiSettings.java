@@ -149,6 +149,38 @@ public final class AiSettings {
 
         @SerializedName("dangerousActionConfirmationEnabled")
         private boolean dangerousActionConfirmationEnabled = DEFAULT_DANGEROUS_ACTION_CONFIRMATION_ENABLED;
+
+        // ---- Extended global options (agent behaviour / safety / UI) ----
+
+        @SerializedName("maxToolCycles")
+        private int maxToolCycles = DEFAULT_MAX_TOOL_CYCLES;
+
+        @SerializedName("maxContextMessages")
+        private int maxContextMessages = DEFAULT_MAX_CONTEXT_MESSAGES;
+
+        @SerializedName("toolResultMaxChars")
+        private int toolResultMaxChars = DEFAULT_TOOL_RESULT_MAX_CHARS;
+
+        @SerializedName("requestTimeoutSeconds")
+        private int requestTimeoutSeconds = DEFAULT_REQUEST_TIMEOUT_SECONDS;
+
+        @SerializedName("toolCallLoggingEnabled")
+        private boolean toolCallLoggingEnabled = DEFAULT_TOOL_CALL_LOGGING_ENABLED;
+
+        @SerializedName("shellToolEnabled")
+        private boolean shellToolEnabled = DEFAULT_SHELL_TOOL_ENABLED;
+
+        @SerializedName("webAccessEnabled")
+        private boolean webAccessEnabled = DEFAULT_WEB_ACCESS_ENABLED;
+
+        @SerializedName("fileWriteConfirmEnabled")
+        private boolean fileWriteConfirmEnabled = DEFAULT_FILE_WRITE_CONFIRM_ENABLED;
+
+        @SerializedName("autoScrollEnabled")
+        private boolean autoScrollEnabled = DEFAULT_AUTO_SCROLL_ENABLED;
+
+        @SerializedName("sendOnEnter")
+        private boolean sendOnEnter = DEFAULT_SEND_ON_ENTER;
     }
 
     private static final Gson GSON = new GsonBuilder()
@@ -183,6 +215,18 @@ public final class AiSettings {
     private final StringProperty approvalMode;
     private final BooleanProperty dangerousActionConfirmationEnabled;
 
+    // Extended global options
+    private final IntegerProperty maxToolCycles;
+    private final IntegerProperty maxContextMessages;
+    private final IntegerProperty toolResultMaxChars;
+    private final IntegerProperty requestTimeoutSeconds;
+    private final BooleanProperty toolCallLoggingEnabled;
+    private final BooleanProperty shellToolEnabled;
+    private final BooleanProperty webAccessEnabled;
+    private final BooleanProperty fileWriteConfirmEnabled;
+    private final BooleanProperty autoScrollEnabled;
+    private final BooleanProperty sendOnEnter;
+
     // Complex values (list-based, no JavaFX property)
     private volatile List<String> stopSequences = Collections.emptyList();
 
@@ -208,6 +252,38 @@ public final class AiSettings {
 
     /// Default value for the dangerous-action confirmation enabled flag.
     static final boolean DEFAULT_DANGEROUS_ACTION_CONFIRMATION_ENABLED = true;
+
+    /// Default maximum tool-call cycles per turn (runaway backstop).
+    public static final int DEFAULT_MAX_TOOL_CYCLES = 25;
+
+    /// Default maximum number of recent conversation messages sent to the model
+    /// (`0` = unlimited; the leading system message is always kept).
+    public static final int DEFAULT_MAX_CONTEXT_MESSAGES = 0;
+
+    /// Default maximum characters of a single tool result fed back to the model
+    /// (`0` = unlimited).
+    public static final int DEFAULT_TOOL_RESULT_MAX_CHARS = 0;
+
+    /// Default per-request timeout in seconds.
+    public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
+
+    /// Default value for the tool-call logging flag.
+    public static final boolean DEFAULT_TOOL_CALL_LOGGING_ENABLED = true;
+
+    /// Default value for the shell-tool enabled flag.
+    public static final boolean DEFAULT_SHELL_TOOL_ENABLED = true;
+
+    /// Default value for the web-access (search/fetch) tools enabled flag.
+    public static final boolean DEFAULT_WEB_ACCESS_ENABLED = true;
+
+    /// Default value for the file-write confirmation flag (off by default).
+    public static final boolean DEFAULT_FILE_WRITE_CONFIRM_ENABLED = false;
+
+    /// Default value for the auto-scroll-to-bottom flag.
+    public static final boolean DEFAULT_AUTO_SCROLL_ENABLED = true;
+
+    /// Default value for the send-on-Enter flag (Enter sends; off → Ctrl+Enter sends).
+    public static final boolean DEFAULT_SEND_ON_ENTER = true;
 
     /// Creates an instance bound to the given config directory.
     ///
@@ -237,6 +313,16 @@ public final class AiSettings {
         this.toolCallDisplayEnabled = new SimpleBooleanProperty(this, "toolCallDisplayEnabled", DEFAULT_TOOL_CALL_DISPLAY_ENABLED);
         this.approvalMode = new SimpleStringProperty(this, "approvalMode", DEFAULT_APPROVAL_MODE);
         this.dangerousActionConfirmationEnabled = new SimpleBooleanProperty(this, "dangerousActionConfirmationEnabled", DEFAULT_DANGEROUS_ACTION_CONFIRMATION_ENABLED);
+        this.maxToolCycles = new SimpleIntegerProperty(this, "maxToolCycles", DEFAULT_MAX_TOOL_CYCLES);
+        this.maxContextMessages = new SimpleIntegerProperty(this, "maxContextMessages", DEFAULT_MAX_CONTEXT_MESSAGES);
+        this.toolResultMaxChars = new SimpleIntegerProperty(this, "toolResultMaxChars", DEFAULT_TOOL_RESULT_MAX_CHARS);
+        this.requestTimeoutSeconds = new SimpleIntegerProperty(this, "requestTimeoutSeconds", DEFAULT_REQUEST_TIMEOUT_SECONDS);
+        this.toolCallLoggingEnabled = new SimpleBooleanProperty(this, "toolCallLoggingEnabled", DEFAULT_TOOL_CALL_LOGGING_ENABLED);
+        this.shellToolEnabled = new SimpleBooleanProperty(this, "shellToolEnabled", DEFAULT_SHELL_TOOL_ENABLED);
+        this.webAccessEnabled = new SimpleBooleanProperty(this, "webAccessEnabled", DEFAULT_WEB_ACCESS_ENABLED);
+        this.fileWriteConfirmEnabled = new SimpleBooleanProperty(this, "fileWriteConfirmEnabled", DEFAULT_FILE_WRITE_CONFIRM_ENABLED);
+        this.autoScrollEnabled = new SimpleBooleanProperty(this, "autoScrollEnabled", DEFAULT_AUTO_SCROLL_ENABLED);
+        this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
     }
 
     // ---- Property accessors (for UI binding) ---------------------------------------
@@ -344,6 +430,56 @@ public final class AiSettings {
     /// Returns the dangerous-action confirmation enabled flag property.
     public BooleanProperty dangerousActionConfirmationEnabledProperty() {
         return dangerousActionConfirmationEnabled;
+    }
+
+    /// Returns the maximum tool-call cycles property.
+    public IntegerProperty maxToolCyclesProperty() {
+        return maxToolCycles;
+    }
+
+    /// Returns the maximum context-messages property (`0` = unlimited).
+    public IntegerProperty maxContextMessagesProperty() {
+        return maxContextMessages;
+    }
+
+    /// Returns the tool-result max-chars property (`0` = unlimited).
+    public IntegerProperty toolResultMaxCharsProperty() {
+        return toolResultMaxChars;
+    }
+
+    /// Returns the per-request timeout (seconds) property.
+    public IntegerProperty requestTimeoutSecondsProperty() {
+        return requestTimeoutSeconds;
+    }
+
+    /// Returns the tool-call logging enabled flag property.
+    public BooleanProperty toolCallLoggingEnabledProperty() {
+        return toolCallLoggingEnabled;
+    }
+
+    /// Returns the shell-tool enabled flag property.
+    public BooleanProperty shellToolEnabledProperty() {
+        return shellToolEnabled;
+    }
+
+    /// Returns the web-access tools enabled flag property.
+    public BooleanProperty webAccessEnabledProperty() {
+        return webAccessEnabled;
+    }
+
+    /// Returns the file-write confirmation enabled flag property.
+    public BooleanProperty fileWriteConfirmEnabledProperty() {
+        return fileWriteConfirmEnabled;
+    }
+
+    /// Returns the auto-scroll enabled flag property.
+    public BooleanProperty autoScrollEnabledProperty() {
+        return autoScrollEnabled;
+    }
+
+    /// Returns the send-on-Enter flag property.
+    public BooleanProperty sendOnEnterProperty() {
+        return sendOnEnter;
     }
 
     // ---- Convenience value accessors -----------------------------------------------
@@ -457,6 +593,56 @@ public final class AiSettings {
     /// Returns whether dangerous-action confirmation is enabled.
     public boolean isDangerousActionConfirmationEnabled() {
         return dangerousActionConfirmationEnabled.get();
+    }
+
+    /// Returns the maximum tool-call cycles per turn.
+    public int getMaxToolCycles() {
+        return maxToolCycles.get();
+    }
+
+    /// Returns the maximum recent context messages sent to the model (`0` = unlimited).
+    public int getMaxContextMessages() {
+        return maxContextMessages.get();
+    }
+
+    /// Returns the maximum characters of a single tool result fed back (`0` = unlimited).
+    public int getToolResultMaxChars() {
+        return toolResultMaxChars.get();
+    }
+
+    /// Returns the per-request timeout in seconds.
+    public int getRequestTimeoutSeconds() {
+        return requestTimeoutSeconds.get();
+    }
+
+    /// Returns whether tool-call logging is enabled.
+    public boolean isToolCallLoggingEnabled() {
+        return toolCallLoggingEnabled.get();
+    }
+
+    /// Returns whether the shell tool is enabled.
+    public boolean isShellToolEnabled() {
+        return shellToolEnabled.get();
+    }
+
+    /// Returns whether web-access tools (search/fetch) are enabled.
+    public boolean isWebAccessEnabled() {
+        return webAccessEnabled.get();
+    }
+
+    /// Returns whether file-write confirmation is enabled.
+    public boolean isFileWriteConfirmEnabled() {
+        return fileWriteConfirmEnabled.get();
+    }
+
+    /// Returns whether auto-scroll-to-bottom is enabled.
+    public boolean isAutoScrollEnabled() {
+        return autoScrollEnabled.get();
+    }
+
+    /// Returns whether Enter sends the message (off → Ctrl+Enter sends).
+    public boolean isSendOnEnter() {
+        return sendOnEnter.get();
     }
 
     /// Returns the current stop sequences list (unmodifiable snapshot).
@@ -692,6 +878,16 @@ public final class AiSettings {
         data.toolCallDisplayEnabled = toolCallDisplayEnabled.get();
         data.approvalMode = approvalMode.get();
         data.dangerousActionConfirmationEnabled = dangerousActionConfirmationEnabled.get();
+        data.maxToolCycles = maxToolCycles.get();
+        data.maxContextMessages = maxContextMessages.get();
+        data.toolResultMaxChars = toolResultMaxChars.get();
+        data.requestTimeoutSeconds = requestTimeoutSeconds.get();
+        data.toolCallLoggingEnabled = toolCallLoggingEnabled.get();
+        data.shellToolEnabled = shellToolEnabled.get();
+        data.webAccessEnabled = webAccessEnabled.get();
+        data.fileWriteConfirmEnabled = fileWriteConfirmEnabled.get();
+        data.autoScrollEnabled = autoScrollEnabled.get();
+        data.sendOnEnter = sendOnEnter.get();
 
         synchronized (profiles) {
             if (!profiles.isEmpty()) {
@@ -836,6 +1032,18 @@ public final class AiSettings {
         toolCallDisplayEnabled.set(data.toolCallDisplayEnabled);
         approvalMode.set(data.approvalMode != null ? data.approvalMode : DEFAULT_APPROVAL_MODE);
         dangerousActionConfirmationEnabled.set(data.dangerousActionConfirmationEnabled);
+        // Absent fields keep their PersistedData initializer defaults (Gson does not
+        // null/zero them), so these can be applied directly.
+        maxToolCycles.set(data.maxToolCycles > 0 ? data.maxToolCycles : DEFAULT_MAX_TOOL_CYCLES);
+        maxContextMessages.set(Math.max(0, data.maxContextMessages));
+        toolResultMaxChars.set(Math.max(0, data.toolResultMaxChars));
+        requestTimeoutSeconds.set(data.requestTimeoutSeconds > 0 ? data.requestTimeoutSeconds : DEFAULT_REQUEST_TIMEOUT_SECONDS);
+        toolCallLoggingEnabled.set(data.toolCallLoggingEnabled);
+        shellToolEnabled.set(data.shellToolEnabled);
+        webAccessEnabled.set(data.webAccessEnabled);
+        fileWriteConfirmEnabled.set(data.fileWriteConfirmEnabled);
+        autoScrollEnabled.set(data.autoScrollEnabled);
+        sendOnEnter.set(data.sendOnEnter);
     }
 
     private void syncStopSequencesFromData(PersistedData data) {
