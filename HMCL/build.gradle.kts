@@ -436,6 +436,58 @@ tasks.register<JavaExec>("runAiCli") {
     // jvmArgs (--add-opens) are applied by the tasks.withType<JavaExec> block above.
 }
 
+// Export everything an external script needs to launch AiCli with a plain `java -cp ...`,
+// BYPASSING Gradle. `:HMCL:runAiCli` is a JavaExec that holds the Gradle project lock for the
+// whole run, so launching several `gradlew` invocations is effectively serial (they queue on
+// the lock). scripts/ai-cli-smoke.sh reads these files to spawn many AiCli JVMs in parallel.
+//
+// Writes four files into the build dir (so the smoke script doesn't have to re-derive any of
+// the runAiCli wiring — keep this in sync with the runAiCli task above):
+//   aicli-classpath.txt : the full runtime classpath (main runtime + testRuntime for JavaFX),
+//                         File.pathSeparator-joined (';' on Windows).
+//   aicli-jvmargs.txt   : the --add-opens flags (same list the JavaExec block applies) plus the
+//                         -D system properties runAiCli sets, space-separated on one line.
+//   aicli-java.txt      : the exact java executable of the JDK Gradle is running on, so the
+//                         script uses the same JDK (not whatever 'java' is on PATH).
+//   aicli-main.txt      : the AiCli main class name.
+val printAiCliRun by tasks.registering {
+    group = "application"
+    description = "Export AiCli classpath + JVM args to build/aicli-*.txt for parallel external launching."
+
+    val runtimeClasspath = sourceSets["main"].runtimeClasspath + configurations["testRuntimeClasspath"]
+    // Declaring the classpath as an input wires up the implicit dependency on compileJava/
+    // processResources so the classes/resources exist before we write the file.
+    inputs.files(runtimeClasspath)
+
+    val cpFile = layout.buildDirectory.file("aicli-classpath.txt")
+    val argsFile = layout.buildDirectory.file("aicli-jvmargs.txt")
+    val javaFile = layout.buildDirectory.file("aicli-java.txt")
+    val mainFile = layout.buildDirectory.file("aicli-main.txt")
+    outputs.files(cpFile, argsFile, javaFile, mainFile)
+
+    // Capture config-time values for the configuration-cache-friendly doLast below.
+    val addOpensArgs = addOpens.map { "--add-opens=$it=ALL-UNNAMED" }
+    val javaExe = "${System.getProperty("java.home")}/bin/java"
+
+    doLast {
+        val cp = runtimeClasspath.files.joinToString(File.pathSeparator) { it.absolutePath }
+
+        // Mirror runAiCli's systemProperty(...) calls exactly.
+        val jvmArgs = addOpensArgs + listOf(
+            "-Dprism.order=sw",
+            "-Dhmcl.offline.auth.restricted=false",
+            "-Dfile.encoding=UTF-8",
+            "-Dsun.stdout.encoding=UTF-8",
+            "-Dsun.stderr.encoding=UTF-8",
+        )
+
+        cpFile.get().asFile.apply { parentFile.mkdirs() }.writeText(cp)
+        argsFile.get().asFile.writeText(jvmArgs.joinToString(" "))
+        javaFile.get().asFile.writeText(javaExe)
+        mainFile.get().asFile.writeText("org.jackhuang.hmcl.ui.ai.cli.AiCli")
+    }
+}
+
 // terracotta
 
 val upgradeTerracottaConfig = tasks.register<TerracottaConfigUpgradeTask>("upgradeTerracottaConfig") {

@@ -590,8 +590,17 @@ public final class AiCli {
     /// NPEs with "this.index is null" — which is exactly what list_game_versions hit in the CLI.
     private static void initCacheRepository() {
         org.jackhuang.hmcl.util.CacheRepository.setInstance(org.jackhuang.hmcl.game.HMCLCacheRepository.REPOSITORY);
-        String commonDir = org.jackhuang.hmcl.setting.LauncherSettings.getDefaultCommonDirectory();
-        org.jackhuang.hmcl.game.HMCLCacheRepository.REPOSITORY.changeDirectory(java.nio.file.Paths.get(commonDir));
+        // Use a PER-PROCESS temp cache dir, not the shared common dir. Several CLI runs execute
+        // in parallel (smoke suite); pointing them all at the same dir would race on etag.json
+        // (the download cache index). A private dir per run trades cache reuse for isolation.
+        java.nio.file.Path cacheDir;
+        try {
+            cacheDir = Files.createTempDirectory("hmcl-aicli-cache-");
+            cacheDir.toFile().deleteOnExit();
+        } catch (java.io.IOException e) {
+            cacheDir = java.nio.file.Paths.get(org.jackhuang.hmcl.setting.LauncherSettings.getDefaultCommonDirectory());
+        }
+        org.jackhuang.hmcl.game.HMCLCacheRepository.REPOSITORY.changeDirectory(cacheDir);
     }
 
     private void safeInit(String name, Runnable init) {
