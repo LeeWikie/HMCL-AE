@@ -53,7 +53,8 @@ public final class CriticalOperations {
             "add_nbt",
             "set_world_info",
             "copy_player_data",
-            "transfer_inventory");
+            "transfer_inventory",
+            "restore_world_backup");
 
     /// A shell delete verb (rm / del / rmdir / Remove-Item / unlink / rd).
     private static final Pattern DELETE_VERB = Pattern.compile(
@@ -85,6 +86,7 @@ public final class CriticalOperations {
                 case "set_world_info" -> "将修改世界核心数据（难度/玩家数据等）。";
                 case "copy_player_data" -> "将覆盖目标玩家数据文件（playerdata），原数据会被替换。";
                 case "transfer_inventory" -> "将覆盖目标玩家的物品栏数据。";
+                case "restore_world_backup" -> "将用历史备份覆盖当前世界存档（当前存档会被替换，已自动先备份一次）。";
                 default -> "这是一项可能不可逆的高危操作。";
             };
         }

@@ -1728,10 +1728,24 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList uiCard = new ComponentList();
         uiCard.getContent().add(uiSub);
 
+        // ---- 世界备份（折叠）----
+        ComponentSublist backupSub = new ComponentSublist();
+        backupSub.setTitle("世界备份");
+        backupSub.setHasSubtitle(true);
+        backupSub.setDescription("AI 世界备份引擎：版本化时间戳全量备份 + 保留 N 份（暂非增量/git）");
+        backupSub.getContent().setAll(
+                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
+                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
+                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
+                        aiSettings.autoBackupBeforeNbtEditProperty()));
+        ComponentList backupCard = new ComponentList();
+        backupCard.getContent().add(backupSub);
+
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.global")), list,
                 ComponentList.createComponentListTitle("Agent 行为"), agentCard,
                 ComponentList.createComponentListTitle("安全"), safetyCard,
+                ComponentList.createComponentListTitle("世界备份"), backupCard,
                 ComponentList.createComponentListTitle("界面与交互"), uiCard);
         return wrapScroll(root);
     }

@@ -200,6 +200,12 @@ public final class AiSettings {
 
         @SerializedName("autoRecallMemory")
         private boolean autoRecallMemory = DEFAULT_AUTO_RECALL_MEMORY;
+
+        @SerializedName("worldBackupRetention")
+        private int worldBackupRetention = DEFAULT_WORLD_BACKUP_RETENTION;
+
+        @SerializedName("autoBackupBeforeNbtEdit")
+        private boolean autoBackupBeforeNbtEdit = DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT;
     }
 
     private static final Gson GSON = new GsonBuilder()
@@ -251,6 +257,10 @@ public final class AiSettings {
     private final StringProperty customInstructions;
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
+
+    // World backup engine
+    private final IntegerProperty worldBackupRetention;
+    private final BooleanProperty autoBackupBeforeNbtEdit;
 
     // Complex values (list-based, no JavaFX property)
     private volatile List<String> stopSequences = Collections.emptyList();
@@ -326,6 +336,17 @@ public final class AiSettings {
     /// Default value for the auto-recall-memory flag (off by default).
     public static final boolean DEFAULT_AUTO_RECALL_MEMORY = false;
 
+    /// Default number of newest world-backup snapshots to retain (older ones are pruned).
+    public static final int DEFAULT_WORLD_BACKUP_RETENTION = 10;
+
+    /// Default for auto-backing-up a world before high-risk NBT edits.
+    ///
+    /// NOTE (current scope): this flag is honored by the world-backup engine and
+    /// is reserved for the save NBT-edit tools to call before writing. The current
+    /// NBT tools already perform their own per-file backup, so this is a global
+    /// opt-in that future NBT writes can consult; it is not a hard dependency yet.
+    public static final boolean DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT = true;
+
     /// Creates an instance bound to the given config directory.
     ///
     /// @param configDir the `.hmcl/` directory path; the settings file will be
@@ -370,6 +391,8 @@ public final class AiSettings {
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
+        this.worldBackupRetention = new SimpleIntegerProperty(this, "worldBackupRetention", DEFAULT_WORLD_BACKUP_RETENTION);
+        this.autoBackupBeforeNbtEdit = new SimpleBooleanProperty(this, "autoBackupBeforeNbtEdit", DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT);
     }
 
     // ---- Property accessors (for UI binding) ---------------------------------------
@@ -554,6 +577,16 @@ public final class AiSettings {
     /// Returns the auto-recall-memory flag property.
     public BooleanProperty autoRecallMemoryProperty() {
         return autoRecallMemory;
+    }
+
+    /// Returns the world-backup retention count property (newest snapshots to keep).
+    public IntegerProperty worldBackupRetentionProperty() {
+        return worldBackupRetention;
+    }
+
+    /// Returns the auto-backup-before-NBT-edit flag property.
+    public BooleanProperty autoBackupBeforeNbtEditProperty() {
+        return autoBackupBeforeNbtEdit;
     }
 
     // ---- Convenience value accessors -----------------------------------------------
@@ -744,6 +777,16 @@ public final class AiSettings {
     /// Returns whether auto-recall-memory injection is enabled.
     public boolean isAutoRecallMemory() {
         return autoRecallMemory.get();
+    }
+
+    /// Returns the number of newest world-backup snapshots to retain.
+    public int getWorldBackupRetention() {
+        return worldBackupRetention.get();
+    }
+
+    /// Returns whether a world is auto-backed-up before high-risk NBT edits.
+    public boolean isAutoBackupBeforeNbtEdit() {
+        return autoBackupBeforeNbtEdit.get();
     }
 
     /// Returns the current stop sequences list (unmodifiable snapshot).
@@ -995,6 +1038,8 @@ public final class AiSettings {
         data.customInstructions = customInstructions.get();
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
+        data.worldBackupRetention = worldBackupRetention.get();
+        data.autoBackupBeforeNbtEdit = autoBackupBeforeNbtEdit.get();
 
         synchronized (profiles) {
             if (!profiles.isEmpty()) {
@@ -1158,6 +1203,8 @@ public final class AiSettings {
         responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);
         autoRecallMemory.set(data.autoRecallMemory);
+        worldBackupRetention.set(data.worldBackupRetention > 0 ? data.worldBackupRetention : DEFAULT_WORLD_BACKUP_RETENTION);
+        autoBackupBeforeNbtEdit.set(data.autoBackupBeforeNbtEdit);
     }
 
     private void syncStopSequencesFromData(PersistedData data) {
