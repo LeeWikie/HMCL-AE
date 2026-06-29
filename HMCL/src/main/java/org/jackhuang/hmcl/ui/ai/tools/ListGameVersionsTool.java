@@ -19,11 +19,12 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
-import org.jackhuang.hmcl.download.DefaultDependencyManager;
+import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.download.RemoteVersion;
 import org.jackhuang.hmcl.download.VersionList;
-import org.jackhuang.hmcl.setting.Profile;
-import org.jackhuang.hmcl.setting.Profiles;
+import org.jackhuang.hmcl.setting.DownloadProviders;
+import org.jackhuang.hmcl.task.Task;
+import org.jackhuang.hmcl.task.TaskExecutor;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,11 +45,17 @@ import java.util.concurrent.TimeoutException;
 /// A read-only AI tool that returns the REAL, live list of Minecraft game versions
 /// from HMCL's own version list, instead of relying on the model's (stale) training data.
 ///
-/// The tool reuses the exact pipeline the launcher's install/version picker uses:
-/// {@link Profiles#getSelectedProfile()} → {@link Profile#getDependency()} →
-/// {@link DefaultDependencyManager#getVersionList(String)} with id {@code "game"},
-/// then {@link VersionList#refreshAsync()} to fetch the full game manifest and
-/// {@link VersionList#getVersions(String)} (with the empty game-version key) to read them all.
+/// The tool reuses the exact pipeline the launcher's install/version picker uses
+/// (see {@code MainPage#launchNoGame()}): {@link DownloadProviders#getDownloadProvider()} →
+/// {@link DownloadProvider#getVersionListById(String)} with id {@code "game"}, then
+/// {@link VersionList#refreshAsync(String)} (with the empty game-version key) to fetch the
+/// full game manifest and {@link VersionList#getVersions(String)} to read them all. Going
+/// through the active download provider means the configured mirror (e.g. BMCLAPI),
+/// source fallback and proxy settings are all reused.
+///
+/// The refresh task is run through a {@link TaskExecutor} (not {@link Task#run()}): the
+/// active provider returns a multi-source version list whose mirror-fallback logic only
+/// runs under a real executor, and whose no-arg {@code refreshAsync()} is unsupported.
 ///
 /// The result is summarized for an LLM: the latest release, the latest snapshot,
 /// and the most recent versions (newest first), capped to keep the payload small.
@@ -72,7 +79,7 @@ public final class ListGameVersionsTool implements Tool {
     private static final int MAX_COUNT = 50;
 
     /// Maximum time to wait for the remote version list to load before giving up.
-    private static final long TIMEOUT_SECONDS = 120L;
+    private static final long TIMEOUT_SECONDS = 30L;
 
     /// Formats release timestamps as a plain UTC date (yyyy-MM-dd).
     private static final DateTimeFormatter DATE_FORMAT =
@@ -100,25 +107,25 @@ public final class ListGameVersionsTool implements Tool {
         int count = clampCount(parseInt(parameters.get("count"), DEFAULT_COUNT));
         boolean includeSnapshots = parseBoolean(parameters.get("includeSnapshots"), false);
 
-        // Resolve the dependency manager exactly like the install/version UI does.
-        DefaultDependencyManager dependencyManager;
-        try {
-            Profile profile = Profiles.getSelectedProfile();
-            dependencyManager = profile.getDependency();
-        } catch (Exception e) {
-            return ToolResult.failure("No game profile is available to query versions: " + describe(e));
-        }
-
+        // Resolve the version list through HMCL's active download source, exactly like the
+        // launcher's "install new version" picker (MainPage#launchNoGame). This reuses the
+        // configured mirror (e.g. BMCLAPI), the source fallback and the proxy settings.
         VersionList<?> versionList;
         try {
-            versionList = dependencyManager.getVersionList("game");
+            DownloadProvider downloadProvider = DownloadProviders.getDownloadProvider();
+            versionList = downloadProvider.getVersionListById("game");
         } catch (Exception e) {
             return ToolResult.failure("Failed to obtain the game version list: " + describe(e));
         }
 
         // Load the full game manifest on a daemon worker, bounded by a timeout.
-        // For the GAME list the no-arg refreshAsync() loads ALL versions and
-        // getVersions("") (empty game-version key) returns every one of them.
+        // Use refreshAsync("") (empty game-version key) — the no-arg refreshAsync() is
+        // unsupported by the active multi-source version list and would always throw.
+        // Drive it through a TaskExecutor (not Task#run()) so the built-in mirror/source
+        // fallback actually kicks in when the first source fails.
+        Task<?> refreshTask = versionList.refreshAsync("");
+        TaskExecutor executor = refreshTask.executor();
+
         List<RemoteVersion> versions;
         ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "ai-list-game-versions");
@@ -126,22 +133,28 @@ public final class ListGameVersionsTool implements Tool {
             return thread;
         });
         try {
-            Future<List<RemoteVersion>> future = worker.submit(() -> {
-                versionList.refreshAsync().run();
-                return new ArrayList<RemoteVersion>(versionList.getVersions(""));
-            });
-            versions = future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            return ToolResult.failure("Timed out after " + TIMEOUT_SECONDS
-                    + "s while loading the Minecraft version list. Check your network connection and try again.");
+            Future<Boolean> future = worker.submit(executor::test);
+            boolean succeeded;
+            try {
+                succeeded = future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                executor.cancel();
+                return ToolResult.failure("Timed out after " + TIMEOUT_SECONDS
+                        + "s while loading the Minecraft version list. "
+                        + "Check your network connection (or download-source/proxy settings) and try again.");
+            }
+            if (!succeeded) {
+                return ToolResult.failure(classifyFailure(executor.getException()));
+            }
+            versions = new ArrayList<>(versionList.getVersions(""));
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return ToolResult.failure("Failed to load the Minecraft version list (network error?): " + describe(cause));
+            return ToolResult.failure(classifyFailure(cause));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return ToolResult.failure("Interrupted while loading the Minecraft version list.");
         } catch (Exception e) {
-            return ToolResult.failure("Failed to load the Minecraft version list: " + describe(e));
+            return ToolResult.failure(classifyFailure(e));
         } finally {
             worker.shutdownNow();
         }
@@ -272,6 +285,35 @@ public final class ListGameVersionsTool implements Tool {
             return Boolean.parseBoolean(value.toString().trim());
         }
         return fallback;
+    }
+
+    /// Turns a load failure into a clear, model-readable message, distinguishing a
+    /// connection timeout, a "no network" failure and a parse failure from one another.
+    private static String classifyFailure(@Nullable Throwable cause) {
+        if (cause == null) {
+            return "Failed to load the Minecraft version list (unknown error). Try again later.";
+        }
+        // Walk the whole cause chain — the real reason is usually a wrapped cause.
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            String className = t.getClass().getName();
+            if (t instanceof java.net.SocketTimeoutException || className.endsWith("SocketTimeoutException")) {
+                return "Timed out talking to the download source while loading the Minecraft version list. "
+                        + "Check your network connection (or download-source/proxy settings) and try again.";
+            }
+            if (t instanceof java.net.UnknownHostException
+                    || t instanceof java.net.ConnectException
+                    || t instanceof java.net.NoRouteToHostException
+                    || t instanceof javax.net.ssl.SSLException) {
+                return "No network access to the download source while loading the Minecraft version list: "
+                        + describe(t) + ". Check your network connection (or download-source/proxy settings) and try again.";
+            }
+            if (className.contains("Json") || className.contains("Syntax")
+                    || className.contains("Parse") || className.contains("Malformed")) {
+                return "Failed to parse the Minecraft version list returned by the download source: "
+                        + describe(t) + ". The source may be temporarily broken; try again later.";
+            }
+        }
+        return "Failed to load the Minecraft version list (network error?): " + describe(cause);
     }
 
     /// Produces a short, non-null description of a throwable for error messages.

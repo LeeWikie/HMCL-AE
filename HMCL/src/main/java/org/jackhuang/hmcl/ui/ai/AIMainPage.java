@@ -452,6 +452,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
+        // Mod management (reuse repository mods dir; toggle by renaming, not shell).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListModsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ToggleModTool());
+        // World/options/folder utilities (reuse repository run dir + native FXUtils.openFolder).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.BackupWorldTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadGameOptionsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetGameOptionTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OpenGameFolderTool());
+        // Diagnostics (reuse HMCL SystemInfo hardware detection; screenshots listing).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
