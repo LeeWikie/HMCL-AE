@@ -1709,7 +1709,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
                         aiSettings.criticalConfirmEnabledProperty()),
                 toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
-                        aiSettings.memoryEnabledProperty()));
+                        aiSettings.memoryEnabledProperty()),
+                toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
+                        aiSettings.nbtToolsEnabledProperty()));
         ComponentList safetyCard = new ComponentList();
         safetyCard.getContent().add(safetySub);
 
@@ -1726,10 +1728,24 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList uiCard = new ComponentList();
         uiCard.getContent().add(uiSub);
 
+        // ---- 世界备份（折叠）----
+        ComponentSublist backupSub = new ComponentSublist();
+        backupSub.setTitle("世界备份");
+        backupSub.setHasSubtitle(true);
+        backupSub.setDescription("AI 世界备份引擎：版本化时间戳全量备份 + 保留 N 份（暂非增量/git）");
+        backupSub.getContent().setAll(
+                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
+                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
+                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
+                        aiSettings.autoBackupBeforeNbtEditProperty()));
+        ComponentList backupCard = new ComponentList();
+        backupCard.getContent().add(backupSub);
+
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.global")), list,
                 ComponentList.createComponentListTitle("Agent 行为"), agentCard,
                 ComponentList.createComponentListTitle("安全"), safetyCard,
+                ComponentList.createComponentListTitle("世界备份"), backupCard,
                 ComponentList.createComponentListTitle("界面与交互"), uiCard);
         return wrapScroll(root);
     }
