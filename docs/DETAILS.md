@@ -72,5 +72,5 @@ HMCL-AE
 
 ## 贡献者
 
-- opencode — 初始架构和 UI 框架
-- Neryc (LeeWikie) — 后续完善和维护
+- HMCL（HMCL-dev）— 上游启动器基础
+- Neryc (LeeWikie) — AI 增强分支开发与维护
