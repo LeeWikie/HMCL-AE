@@ -335,6 +335,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     @Nullable
     private VBox fileChipArea;
+    /// Live "background tasks" panel above the composer (running jobs + cancel buttons).
+    @Nullable
+    private VBox jobsPane;
     @Nullable
     private Label fileChip;
     @Nullable
@@ -1272,7 +1275,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         askPanel.getStyleClass().add("ai-ask-panel");
         askPanel.setVisible(false);
         askPanel.setManaged(false);
-        VBox composerInner = new VBox(4, askPanel, fileChipArea, inputField);
+        // Live background-tasks panel (running jobs + cancel), shown above the composer only when busy.
+        jobsPane = new VBox(4);
+        jobsPane.getStyleClass().add("ai-jobs-pane");
+        jobsPane.setVisible(false);
+        jobsPane.setManaged(false);
+        org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
+                .addChangeListener(() -> Platform.runLater(this::refreshJobsPane));
+        refreshJobsPane();
+
+        VBox composerInner = new VBox(4, jobsPane, askPanel, fileChipArea, inputField);
         composerInner.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(inputField, Priority.NEVER);
 
@@ -2492,6 +2504,37 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private boolean isStreaming() {
         return currentResponse != null;
+    }
+
+    /// Rebuilds the live background-tasks panel above the composer: one row per RUNNING job with its
+    /// label + a cancel button. Hidden when nothing is running. Always called on the FX thread.
+    private void refreshJobsPane() {
+        if (jobsPane == null) {
+            return;
+        }
+        jobsPane.getChildren().clear();
+        int running = 0;
+        for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job
+                : org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().list()) {
+            if (job.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING) {
+                continue;
+            }
+            running++;
+            Label label = new Label("⏳ " + job.getLabel());
+            label.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(label, Priority.ALWAYS);
+            JFXButton cancelBtn = new JFXButton("取消");
+            cancelBtn.getStyleClass().add("ai-job-cancel-btn");
+            String id = job.getId();
+            cancelBtn.setOnAction(e -> org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().cancel(id));
+            HBox row = new HBox(8, label, cancelBtn);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.getStyleClass().add("ai-job-row");
+            jobsPane.getChildren().add(row);
+        }
+        boolean any = running > 0;
+        jobsPane.setVisible(any);
+        jobsPane.setManaged(any);
     }
 
     /// Entry point for other parts of the launcher (e.g. the game crash window) to hand the AI a

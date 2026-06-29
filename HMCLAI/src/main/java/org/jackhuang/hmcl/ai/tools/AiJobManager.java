@@ -169,6 +169,9 @@ public final class AiJobManager {
     private final AtomicInteger idGenerator = new AtomicInteger(1);
     private final ConcurrentHashMap<String, Job> jobs = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<Consumer<Job>> listeners = new CopyOnWriteArrayList<>();
+    /// Fired (off the FX thread) whenever the job list changes — a job is submitted OR reaches a
+    /// terminal state — so a UI can keep a live "running tasks" view in sync. UI must marshal to FX.
+    private final CopyOnWriteArrayList<Runnable> changeListeners = new CopyOnWriteArrayList<>();
 
     /// Bounded pool that runs the submitted work. Daemon threads only.
     private final ExecutorService workers =
@@ -206,6 +209,7 @@ public final class AiJobManager {
         String id = Integer.toString(seq);
         Job job = new Job(id, seq, toolName, effectiveLabel, sessionId, work);
         jobs.put(id, job);
+        fireChange();
 
         try {
             Future<?> future = workers.submit(() -> runJob(job));
@@ -253,6 +257,7 @@ public final class AiJobManager {
         }
         notifier.execute(() -> fireCompletion(job));
         pruneFinished();
+        fireChange();
         return true;
     }
 
@@ -322,6 +327,32 @@ public final class AiJobManager {
     public void removeCompletionListener(Consumer<Job> listener) {
         if (listener != null) {
             listeners.remove(listener);
+        }
+    }
+
+    /// Registers a listener fired (off the FX thread) whenever the job list changes (submit or
+    /// terminal). The listener must marshal any UI work to the FX thread itself.
+    public void addChangeListener(Runnable listener) {
+        if (listener != null) {
+            changeListeners.addIfAbsent(listener);
+        }
+    }
+
+    /// Removes a previously registered change listener.
+    public void removeChangeListener(Runnable listener) {
+        if (listener != null) {
+            changeListeners.remove(listener);
+        }
+    }
+
+    /// Invokes every change listener, swallowing any exception they throw.
+    private void fireChange() {
+        for (Runnable listener : changeListeners) {
+            try {
+                listener.run();
+            } catch (Throwable ignored) {
+                // One broken listener must never break the manager or other listeners.
+            }
         }
     }
 
