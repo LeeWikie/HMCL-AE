@@ -82,8 +82,11 @@ public final class ShellTool implements ToolSpec {
                 + " Operating system: " + osLabel + ". Shell: " + shellName
                 + ". Emit commands in the syntax of this shell (e.g. PowerShell on Windows 10/11,"
                 + " or bash/fish/zsh on Linux/macOS)."
-                + " Pass the full command line as 'query'. Commands run with a "
-                + TIMEOUT_SECONDS + "s timeout. Avoid interactive or long-running commands.";
+                + " Pass the full command line as 'command'. Commands run with a "
+                + TIMEOUT_SECONDS + "s timeout. Avoid interactive or long-running commands."
+                + " ALWAYS also pass 'description': one short plain-language sentence (in the user's"
+                + " language) saying what this command does and why — it is shown to the user in the"
+                + " confirmation dialog, who likely cannot read the raw command.";
     }
 
     @Override
@@ -101,9 +104,13 @@ public final class ShellTool implements ToolSpec {
                    "command": {
                      "type": "string",
                      "description": "The full shell command line to run, in the host shell's syntax."
+                   },
+                   "description": {
+                     "type": "string",
+                     "description": "One short plain-language sentence (in the user's language) explaining what this command does and why. Shown to the user in the confirmation dialog."
                    }
                  },
-                 "required": ["command"]
+                 "required": ["command", "description"]
                }
                """;
     }

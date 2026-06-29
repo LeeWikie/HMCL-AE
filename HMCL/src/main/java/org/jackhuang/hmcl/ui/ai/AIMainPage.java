@@ -508,6 +508,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
+        // Save NBT editing (flagship: NBTExplorer-grade automation; writes are backup-gated +
+        // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
@@ -1949,7 +1958,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                             skillRegistry,
                             searchConfig, this::isPlanMode, rememberStore);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
-                            this::confirmDangerousOperation);
+                            this::confirmDangerousOperation, this::confirmCriticalOperation);
                 });
     }
 
@@ -1971,6 +1980,31 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         try {
             return future.get(120, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /// Second-tier CRITICAL confirmation (red) for catastrophic operations — deleting a
+    /// world/instance, editing save/NBT data, deleting backups, or removing files under
+    /// saves/playerdata/.minecraft. Shown IN ADDITION to (and after) the normal confirm,
+    /// right before execution, even in YOLO mode. Denies on timeout/error so nothing hangs.
+    private boolean confirmCriticalOperation(String toolName, String summary) {
+        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                Controllers.confirm(
+                        "⛔ 高危操作，可能不可恢复！请仔细确认：\n\n" + summary
+                                + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
+                        "⛔ 高危操作 · 二次确认",
+                        () -> future.complete(true),
+                        () -> future.complete(false));
+            } catch (Throwable t) {
+                future.complete(false);
+            }
+        });
+        try {
+            return future.get(180, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Throwable t) {
             return false;
         }

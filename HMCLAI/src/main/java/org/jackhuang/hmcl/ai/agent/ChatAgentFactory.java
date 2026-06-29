@@ -117,12 +117,21 @@ public final class ChatAgentFactory {
     public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
                                    AiPromptBuilder promptBuilder,
                                    @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler) {
+        return build(settings, session, tools, promptBuilder, confirmHandler, null);
+    }
+
+    /// Same as above, plus a separate {@code criticalConfirmHandler} for the red second-tier
+    /// confirmation of catastrophic operations (see {@link org.jackhuang.hmcl.ai.tools.CriticalOperations}).
+    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
+                                   AiPromptBuilder promptBuilder,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler) {
         LlmConfig config = buildConfig(settings);
         org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
                         settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
                         settings.isFileWriteConfirmEnabled());
-        AiChatClient client = resolveClient(config, tools, policy, confirmHandler);
+        AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler);
         // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
         // truncation) to the LangChain4j adapter when that is the active backend.
         if (client instanceof org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter adapter) {
@@ -296,17 +305,18 @@ public final class ChatAgentFactory {
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools) {
         // Connection-test / non-interactive paths: no safety enforcement needed.
         return resolveClient(config, tools, new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
-                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null);
+                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null, null);
     }
 
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools,
                                               org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy,
-                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler) {
+                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
+                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler) {
         String provider = config.getProvider();
         AiProtocolFamily family = provider != null ? AiProtocolFamily.fromId(provider) : null;
 
         LangChain4jToolAdapter toolAdapter = tools != null
-                ? new LangChain4jToolAdapter(tools, policy, confirmHandler)
+                ? new LangChain4jToolAdapter(tools, policy, confirmHandler, criticalConfirmHandler)
                 : null;
 
         if (family != null) {

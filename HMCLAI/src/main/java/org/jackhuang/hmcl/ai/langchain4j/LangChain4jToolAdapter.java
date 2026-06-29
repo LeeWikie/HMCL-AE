@@ -22,6 +22,7 @@ import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import org.jackhuang.hmcl.ai.tools.AiExecutionPolicy;
+import org.jackhuang.hmcl.ai.tools.CriticalOperations;
 import org.jackhuang.hmcl.ai.tools.DangerousCommands;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolConfirmHandler;
@@ -54,6 +55,10 @@ public final class LangChain4jToolAdapter {
     private final AiExecutionPolicy policy;
     @Nullable
     private final ToolConfirmHandler confirmHandler;
+    /// Second, distinct gate for CRITICAL ops (red confirmation), evaluated right before
+    /// execution, in ADDITION to (and after) the normal confirm — see {@link CriticalOperations}.
+    @Nullable
+    private final ToolConfirmHandler criticalConfirmHandler;
 
     /// Creates an adapter with no safety enforcement (allow-all). Used by tests and
     /// callers that gate elsewhere.
@@ -65,9 +70,18 @@ public final class LangChain4jToolAdapter {
     /// confirm any operation the policy marks ASK (e.g. dangerous shell commands in safe mode).
     public LangChain4jToolAdapter(ToolRegistry registry, AiExecutionPolicy policy,
                                   @Nullable ToolConfirmHandler confirmHandler) {
+        this(registry, policy, confirmHandler, null);
+    }
+
+    /// Full constructor: adds a separate {@code criticalConfirmHandler} for the red
+    /// second-tier confirmation of catastrophic operations.
+    public LangChain4jToolAdapter(ToolRegistry registry, AiExecutionPolicy policy,
+                                  @Nullable ToolConfirmHandler confirmHandler,
+                                  @Nullable ToolConfirmHandler criticalConfirmHandler) {
         this.registry = registry;
         this.policy = policy;
         this.confirmHandler = confirmHandler;
+        this.criticalConfirmHandler = criticalConfirmHandler;
     }
 
     /// Builds LangChain4j [`ToolSpecification`] instances for all non-disabled
@@ -190,6 +204,19 @@ public final class LangChain4jToolAdapter {
                 }
             }
 
+            // Second, distinct gate: CRITICAL/catastrophic ops (delete world/instance, NBT/save
+            // writes, deleting files under saves/playerdata/backups) get a RED confirmation right
+            // before execution — IN ADDITION to the normal one above, and even in YOLO mode.
+            String criticalReason = CriticalOperations.criticalReason(tool.getName(), request.arguments());
+            if (criticalReason != null && criticalConfirmHandler != null) {
+                String summary = criticalReason + "\n\n" + summarizeForConfirm(tool.getName(), parameters);
+                if (!criticalConfirmHandler.confirm(tool.getName(), summary)) {
+                    return ToolExecutionResultMessage.from(request,
+                            "Error: the user declined this CRITICAL operation at the safety prompt. "
+                                    + "Do NOT retry it; explain the risk and ask how they want to proceed.");
+                }
+            }
+
             ToolResult result = tool.execute(parameters);
             if (result == null) {
                 text = "Error: tool '" + request.name()
@@ -227,6 +254,12 @@ public final class LangChain4jToolAdapter {
         String detail = cmd != null ? cmd.toString() : params.toString();
         if (detail.length() > 300) {
             detail = detail.substring(0, 300) + "…";
+        }
+        // Show the model's plain-language description FIRST (the user likely can't read the raw
+        // command); the technical detail follows as secondary context.
+        Object desc = params.get("description");
+        if (desc != null && !desc.toString().isBlank()) {
+            return desc + "\n\n（" + toolName + "：" + detail + "）";
         }
         return toolName + ": " + detail;
     }
