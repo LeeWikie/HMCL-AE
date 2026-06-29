@@ -200,6 +200,9 @@ public final class AiSettings {
         @SerializedName("deleteToRecycleBin")
         private boolean deleteToRecycleBin = DEFAULT_DELETE_TO_RECYCLE_BIN;
 
+        @SerializedName("aiRiskNoticeAccepted")
+        private boolean aiRiskNoticeAccepted = DEFAULT_AI_RISK_NOTICE_ACCEPTED;
+
         @SerializedName("customInstructions")
         @Nullable
         private String customInstructions = "";
@@ -269,6 +272,7 @@ public final class AiSettings {
     private final BooleanProperty nbtToolsEnabled;
     private final BooleanProperty autoTitleEnabled;
     private final BooleanProperty deleteToRecycleBin;
+    private final BooleanProperty aiRiskNoticeAccepted;
     private final StringProperty customInstructions;
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
@@ -357,6 +361,9 @@ public final class AiSettings {
     /// Default for routing AI deletions (worlds etc.) to the OS recycle bin instead of permanent delete.
     public static final boolean DEFAULT_DELETE_TO_RECYCLE_BIN = true;
 
+    /// Whether the user has acknowledged the one-time AI test-phase risk notice (shown on first use).
+    public static final boolean DEFAULT_AI_RISK_NOTICE_ACCEPTED = false;
+
     /// Default reply-language mode (`"auto"` = follow the user's language).
     /// Other accepted values: `"zh"` (always 简体中文), `"en"` (always English).
     public static final String DEFAULT_RESPONSE_LANGUAGE = "auto";
@@ -423,6 +430,7 @@ public final class AiSettings {
         this.nbtToolsEnabled = new SimpleBooleanProperty(this, "nbtToolsEnabled", DEFAULT_NBT_TOOLS_ENABLED);
         this.autoTitleEnabled = new SimpleBooleanProperty(this, "autoTitleEnabled", DEFAULT_AUTO_TITLE_ENABLED);
         this.deleteToRecycleBin = new SimpleBooleanProperty(this, "deleteToRecycleBin", DEFAULT_DELETE_TO_RECYCLE_BIN);
+        this.aiRiskNoticeAccepted = new SimpleBooleanProperty(this, "aiRiskNoticeAccepted", DEFAULT_AI_RISK_NOTICE_ACCEPTED);
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
@@ -598,6 +606,10 @@ public final class AiSettings {
 
     public BooleanProperty deleteToRecycleBinProperty() {
         return deleteToRecycleBin;
+    }
+
+    public BooleanProperty aiRiskNoticeAcceptedProperty() {
+        return aiRiskNoticeAccepted;
     }
 
     public BooleanProperty nbtToolsEnabledProperty() {
@@ -824,6 +836,14 @@ public final class AiSettings {
 
     public boolean isDeleteToRecycleBin() {
         return deleteToRecycleBin.get();
+    }
+
+    public boolean isAiRiskNoticeAccepted() {
+        return aiRiskNoticeAccepted.get();
+    }
+
+    public void setAiRiskNoticeAccepted(boolean v) {
+        aiRiskNoticeAccepted.set(v);
     }
 
     public boolean isNbtToolsEnabled() {
@@ -1119,6 +1139,7 @@ public final class AiSettings {
         data.nbtToolsEnabled = nbtToolsEnabled.get();
         data.autoTitleEnabled = autoTitleEnabled.get();
         data.deleteToRecycleBin = deleteToRecycleBin.get();
+        data.aiRiskNoticeAccepted = aiRiskNoticeAccepted.get();
         data.customInstructions = customInstructions.get();
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
@@ -1287,6 +1308,7 @@ public final class AiSettings {
         nbtToolsEnabled.set(data.nbtToolsEnabled);
         autoTitleEnabled.set(data.autoTitleEnabled);
         deleteToRecycleBin.set(data.deleteToRecycleBin);
+        aiRiskNoticeAccepted.set(data.aiRiskNoticeAccepted);
         customInstructions.set(data.customInstructions != null ? data.customInstructions : "");
         responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);

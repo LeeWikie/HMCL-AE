@@ -367,6 +367,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         } catch (Exception ignored) {
         }
 
+        // First-use test-phase risk notice (one-time, must be acknowledged). Deferred so the page is shown.
+        if (!aiSettings.isAiRiskNoticeAccepted()) {
+            Platform.runLater(this::showAiRiskNotice);
+        }
+
         this.sessionStore = new AiSessionStore(SettingsManager.localConfigDirectory());
         try {
             sessionStore.load();
@@ -2487,6 +2492,28 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private boolean isStreaming() {
         return currentResponse != null;
+    }
+
+    /// Shows the one-time test-phase risk notice (forced 5s countdown). On acknowledgement the
+    /// preference is persisted so it never shows again. No external project names in the copy.
+    private void showAiRiskNotice() {
+        if (aiSettings.isAiRiskNoticeAccepted()) {
+            return;
+        }
+        String text = "HMCL-AE 的 AI 助手目前处于测试阶段。\n\n"
+                + "它可以代你执行下载、安装、修改与删除文件、编辑甚至删除存档等操作。"
+                + "请务必对重要数据（尤其是存档）先做好备份，并在每次确认弹窗里看清要执行的操作再放行。\n\n"
+                + "测试阶段可能出现错误或意外结果，请自行评估并承担风险。";
+        Controllers.confirmWithCountdown(text, "AI 助手 · 测试阶段须知", 5,
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.WARNING,
+                () -> {
+                    aiSettings.setAiRiskNoticeAccepted(true);
+                    try {
+                        aiSettings.save();
+                    } catch (Exception ignored) {
+                    }
+                },
+                null);
     }
 
     /// After the first user+assistant exchange, asks the model for a concise title (one cheap
