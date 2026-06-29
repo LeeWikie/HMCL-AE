@@ -188,6 +188,9 @@ public final class AiSettings {
         @SerializedName("memoryEnabled")
         private boolean memoryEnabled = DEFAULT_MEMORY_ENABLED;
 
+        @SerializedName("dangerouslySkipPermissions")
+        private boolean dangerouslySkipPermissions = DEFAULT_DANGEROUSLY_SKIP_PERMISSIONS;
+
         @SerializedName("nbtToolsEnabled")
         private boolean nbtToolsEnabled = DEFAULT_NBT_TOOLS_ENABLED;
 
@@ -256,6 +259,7 @@ public final class AiSettings {
     private final BooleanProperty sendOnEnter;
     private final BooleanProperty criticalConfirmEnabled;
     private final BooleanProperty memoryEnabled;
+    private final BooleanProperty dangerouslySkipPermissions;
     private final BooleanProperty nbtToolsEnabled;
     private final BooleanProperty autoTitleEnabled;
     private final StringProperty customInstructions;
@@ -330,6 +334,10 @@ public final class AiSettings {
     /// Default for the global memory feature (remember/recall) being enabled.
     public static final boolean DEFAULT_MEMORY_ENABLED = true;
 
+    /// Default for the developer-only bypass that skips ALL permission confirmations
+    /// (dangerous + red critical). Off by default; only the 开发者选项 toggle turns it on.
+    public static final boolean DEFAULT_DANGEROUSLY_SKIP_PERMISSIONS = false;
+
     /// Default for the (high-risk) save-NBT editing tool suite being enabled.
     public static final boolean DEFAULT_NBT_TOOLS_ENABLED = true;
 
@@ -394,6 +402,7 @@ public final class AiSettings {
         this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
         this.criticalConfirmEnabled = new SimpleBooleanProperty(this, "criticalConfirmEnabled", DEFAULT_CRITICAL_CONFIRM_ENABLED);
         this.memoryEnabled = new SimpleBooleanProperty(this, "memoryEnabled", DEFAULT_MEMORY_ENABLED);
+        this.dangerouslySkipPermissions = new SimpleBooleanProperty(this, "dangerouslySkipPermissions", DEFAULT_DANGEROUSLY_SKIP_PERMISSIONS);
         this.nbtToolsEnabled = new SimpleBooleanProperty(this, "nbtToolsEnabled", DEFAULT_NBT_TOOLS_ENABLED);
         this.autoTitleEnabled = new SimpleBooleanProperty(this, "autoTitleEnabled", DEFAULT_AUTO_TITLE_ENABLED);
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
@@ -576,6 +585,11 @@ public final class AiSettings {
         return memoryEnabled;
     }
 
+    /// Returns the developer-only "skip all permission confirmations" flag property.
+    public BooleanProperty dangerouslySkipPermissionsProperty() {
+        return dangerouslySkipPermissions;
+    }
+
     /// Returns the user custom-instructions property (appended to the system prompt).
     public StringProperty customInstructionsProperty() {
         return customInstructions;
@@ -704,8 +718,16 @@ public final class AiSettings {
         return approvalMode.get();
     }
 
-    /// Returns the approval mode as an {@link AiApprovalMode} enum value.
+    /// Returns the *effective* approval mode as an {@link AiApprovalMode} enum value.
+    ///
+    /// When the developer-only {@link #isDangerouslySkipPermissions()} bypass is on, this
+    /// reports {@link AiApprovalMode#YOLO} so the execution policy auto-allows every tool
+    /// call. The *stored* approval mode ({@link #getApprovalMode()}) is left untouched — the
+    /// bypass only overrides the derived/effective value consulted by the policy layer.
     public AiApprovalMode getApprovalModeEnum() {
+        if (dangerouslySkipPermissions.get()) {
+            return AiApprovalMode.YOLO;
+        }
         return AiApprovalMode.fromId(approvalMode.get());
     }
 
@@ -778,6 +800,11 @@ public final class AiSettings {
 
     public boolean isMemoryEnabled() {
         return memoryEnabled.get();
+    }
+
+    /// Returns whether ALL permission confirmations are bypassed (developer-only).
+    public boolean isDangerouslySkipPermissions() {
+        return dangerouslySkipPermissions.get();
     }
 
     /// Returns the user custom-instructions text (may be empty).
@@ -1050,6 +1077,7 @@ public final class AiSettings {
         data.sendOnEnter = sendOnEnter.get();
         data.criticalConfirmEnabled = criticalConfirmEnabled.get();
         data.memoryEnabled = memoryEnabled.get();
+        data.dangerouslySkipPermissions = dangerouslySkipPermissions.get();
         data.nbtToolsEnabled = nbtToolsEnabled.get();
         data.autoTitleEnabled = autoTitleEnabled.get();
         data.customInstructions = customInstructions.get();
@@ -1215,6 +1243,7 @@ public final class AiSettings {
         sendOnEnter.set(data.sendOnEnter);
         criticalConfirmEnabled.set(data.criticalConfirmEnabled);
         memoryEnabled.set(data.memoryEnabled);
+        dangerouslySkipPermissions.set(data.dangerouslySkipPermissions);
         nbtToolsEnabled.set(data.nbtToolsEnabled);
         autoTitleEnabled.set(data.autoTitleEnabled);
         customInstructions.set(data.customInstructions != null ? data.customInstructions : "");

@@ -85,6 +85,7 @@ import org.jackhuang.hmcl.ui.construct.ComponentSublist;
 import org.jackhuang.hmcl.ui.construct.LineButton;
 import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.jackhuang.hmcl.ui.construct.LineToggleButton;
+import org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType;
 import org.jackhuang.hmcl.ui.construct.PageAware;
 import org.jackhuang.hmcl.ui.construct.PromptDialogPane;
 import org.jackhuang.hmcl.ui.construct.RadioChoiceList;
@@ -1675,12 +1676,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }, aiSettings.getCustomInstructions()));
         list.getContent().add(customInstructions);
 
-        // ---- Agent 行为（折叠）----
-        ComponentSublist agentSub = new ComponentSublist();
-        agentSub.setTitle("Agent 行为");
-        agentSub.setHasSubtitle(true);
-        agentSub.setDescription("工具循环、上下文与超时等执行参数");
-        agentSub.getContent().setAll(
+        // ---- 高级选项（折叠，默认收起）：审批模式 + 高危确认 + 执行参数调优 ----
+        ComponentSublist advancedSub = new ComponentSublist();
+        advancedSub.setTitle("高级选项");
+        advancedSub.setHasSubtitle(true);
+        advancedSub.setDescription("审批模式、危险确认与工具循环/上下文/超时等执行参数（进阶用户）");
+        advancedSub.getContent().setAll(
+                buildApprovalModeRow(),
+                toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
+                        aiSettings.criticalConfirmEnabledProperty()),
                 sliderRow("工具调用轮数上限", "单次回复内最多连续调用工具的次数（防失控）",
                         aiSettings.maxToolCyclesProperty(), 1, 50, ""),
                 sliderRow("上下文消息条数上限", "只把最近 N 条发给模型，0=不限（始终保留系统提示）",
@@ -1689,31 +1693,39 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
                 sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
                         aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"));
-        ComponentList agentCard = new ComponentList();
-        agentCard.getContent().add(agentSub);
+        ComponentList advancedCard = new ComponentList();
+        advancedCard.getContent().add(advancedSub);
 
-        // ---- 安全（折叠）----
+        // ---- 安全（折叠）：工具开关与写入确认（审批模式/高危确认已移到「高级选项」）----
         ComponentSublist safetySub = new ComponentSublist();
         safetySub.setTitle("安全");
         safetySub.setHasSubtitle(true);
-        safetySub.setDescription("工具开关、日志与写入确认");
+        safetySub.setDescription("工具开关与写入确认");
         safetySub.getContent().setAll(
-                toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
-                        aiSettings.toolCallLoggingEnabledProperty()),
                 toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",
                         aiSettings.shellToolEnabledProperty()),
                 toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
                         aiSettings.webAccessEnabledProperty()),
                 toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
                         aiSettings.fileWriteConfirmEnabledProperty()),
-                toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
-                        aiSettings.criticalConfirmEnabledProperty()),
                 toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
                         aiSettings.memoryEnabledProperty()),
                 toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
                         aiSettings.nbtToolsEnabledProperty()));
         ComponentList safetyCard = new ComponentList();
         safetyCard.getContent().add(safetySub);
+
+        // ---- 开发者选项（折叠，默认收起）：核弹级开关，带强警告副标题 ----
+        ComponentSublist developerSub = new ComponentSublist();
+        developerSub.setTitle("开发者选项");
+        developerSub.setHasSubtitle(true);
+        developerSub.setDescription("⚠ 高风险：仅供开发者测试，可能造成不可恢复的数据损坏");
+        developerSub.getContent().setAll(
+                buildDangerouslySkipRow(),
+                toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
+                        aiSettings.toolCallLoggingEnabledProperty()));
+        ComponentList developerCard = new ComponentList();
+        developerCard.getContent().add(developerSub);
 
         // ---- 界面与交互（折叠）----
         ComponentSublist uiSub = new ComponentSublist();
@@ -1745,11 +1757,73 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.global")), list,
-                ComponentList.createComponentListTitle("Agent 行为"), agentCard,
                 ComponentList.createComponentListTitle("安全"), safetyCard,
+                ComponentList.createComponentListTitle("高级选项"), advancedCard,
                 ComponentList.createComponentListTitle("世界备份"), backupCard,
-                ComponentList.createComponentListTitle("界面与交互"), uiCard);
+                ComponentList.createComponentListTitle("界面与交互"), uiCard,
+                ComponentList.createComponentListTitle("开发者选项"), developerCard);
         return wrapScroll(root);
+    }
+
+    /// Builds the 审批模式 selector (SAFE / ASK / YOLO) for the 高级选项 card, bound to the
+    /// stored {@code approvalMode} string. Selecting YOLO pops a warning; cancelling reverts.
+    private LineSelectButton<AiApprovalMode> buildApprovalModeRow() {
+        LineSelectButton<AiApprovalMode> approval = new LineSelectButton<>();
+        approval.setTitle("审批模式");
+        approval.setSubtitle("工具调用放行策略：安全=仅放行只读/安全操作，询问=写操作需确认，放行=全部自动放行");
+        approval.setItems(List.of(AiApprovalMode.SAFE, AiApprovalMode.ASK, AiApprovalMode.YOLO));
+        approval.setNullSafeConverter(mode -> switch (mode) {
+            case SAFE -> "安全 (SAFE)";
+            case ASK -> "询问 (ASK)";
+            case YOLO -> "放行 (YOLO)";
+        });
+        // Show the STORED mode (not the effective getApprovalModeEnum, which the developer
+        // bypass forces to YOLO), so this selector reflects the user's actual choice.
+        approval.setValue(AiApprovalMode.fromId(aiSettings.getApprovalMode()));
+        approval.valueProperty().addListener((obs, old, mode) -> {
+            if (mode == null) return;
+            if (mode == AiApprovalMode.YOLO) {
+                Controllers.confirm(
+                        "YOLO 会自动放行危险操作。当前为测试阶段,请自负风险。",
+                        "启用 YOLO 模式",
+                        MessageType.WARNING,
+                        () -> {
+                            aiSettings.approvalModeProperty().set(mode.getId());
+                            saveAiSettings();
+                        },
+                        () -> approval.setValue(old)); // cancel → revert the selection
+                return;
+            }
+            aiSettings.approvalModeProperty().set(mode.getId());
+            saveAiSettings();
+        });
+        return approval;
+    }
+
+    /// Builds the 开发者选项 "skip all permission confirmations" toggle. Turning it ON pops a
+    /// strong red warning; cancelling reverts the toggle to off.
+    private LineToggleButton buildDangerouslySkipRow() {
+        LineToggleButton t = new LineToggleButton();
+        t.setTitle("危险：跳过所有权限确认（--dangerously-skip）");
+        t.setSubtitle("开启后所有工具调用都不再弹任何确认（含删存档/删实例的红色确认）。仅供开发者测试，重启后生效");
+        t.setSelected(aiSettings.isDangerouslySkipPermissions());
+        t.selectedProperty().addListener((obs, oldV, newV) -> {
+            if (newV) {
+                Controllers.confirm(
+                        "这将跳过所有确认,包括删存档/删实例等灾难操作的红色确认。仅供开发者测试。确定开启?",
+                        "⛔ 危险：跳过所有权限确认",
+                        MessageType.ERROR,
+                        () -> {
+                            aiSettings.dangerouslySkipPermissionsProperty().set(true);
+                            saveAiSettings();
+                        },
+                        () -> t.setSelected(false)); // cancel → revert to off
+            } else {
+                aiSettings.dangerouslySkipPermissionsProperty().set(false);
+                saveAiSettings();
+            }
+        });
+        return t;
     }
 
     private static String responseLanguageDisplay(String mode) {

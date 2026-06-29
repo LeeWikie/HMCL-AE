@@ -31,25 +31,38 @@ public final class AiExecutionPolicy {
     private final AiApprovalMode mode;
     private final boolean dangerousConfirmationEnabled;
     private final boolean fileWriteConfirmEnabled;
+    /// Developer-only bypass: when true, {@link #check} allow-alls every permission,
+    /// regardless of mode/confirmation flags. See {@code AiSettings.dangerouslySkipPermissions}.
+    private final boolean dangerouslySkipPermissions;
 
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
-                             boolean fileWriteConfirmEnabled) {
+                             boolean fileWriteConfirmEnabled, boolean dangerouslySkipPermissions) {
         this.mode = mode;
         this.dangerousConfirmationEnabled = dangerousConfirmationEnabled;
         this.fileWriteConfirmEnabled = fileWriteConfirmEnabled;
+        this.dangerouslySkipPermissions = dangerouslySkipPermissions;
+    }
+
+    public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
+                             boolean fileWriteConfirmEnabled) {
+        this(mode, dangerousConfirmationEnabled, fileWriteConfirmEnabled, false);
     }
 
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled) {
-        this(mode, dangerousConfirmationEnabled, false);
+        this(mode, dangerousConfirmationEnabled, false, false);
     }
 
     public AiExecutionPolicy() {
-        this(AiApprovalMode.SAFE, true, false);
+        this(AiApprovalMode.SAFE, true, false, false);
     }
 
     /// Evaluates whether a tool with the given permission is allowed under
     /// the current approval mode.
     public Decision check(ToolPermission permission) {
+        // Developer-only bypass: skip every gate (dangerous + critical) outright.
+        if (dangerouslySkipPermissions) {
+            return Decision.ALLOW;
+        }
         switch (mode) {
             case YOLO:
                 return Decision.ALLOW;
@@ -86,5 +99,9 @@ public final class AiExecutionPolicy {
 
     public boolean isFileWriteConfirmEnabled() {
         return fileWriteConfirmEnabled;
+    }
+
+    public boolean isDangerouslySkipPermissions() {
+        return dangerouslySkipPermissions;
     }
 }

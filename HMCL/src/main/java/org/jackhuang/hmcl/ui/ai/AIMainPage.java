@@ -1975,9 +1975,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
                             searchConfig, this::isPlanMode, rememberStore);
+                    // 开发者选项 · --dangerously-skip: when on, pass NO confirm handlers (neither the
+                    // dangerous nor the red critical gate) so nothing ever prompts. The effective
+                    // approval mode is also forced to YOLO via AiSettings.getApprovalModeEnum(), so the
+                    // policy auto-allows every tool call (otherwise a null handler on an ASK decision
+                    // would BLOCK instead of skip).
+                    boolean skipAll = aiSettings.isDangerouslySkipPermissions();
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
-                            this::confirmDangerousOperation,
-                            aiSettings.isCriticalConfirmEnabled() ? this::confirmCriticalOperation : null);
+                            skipAll ? null : this::confirmDangerousOperation,
+                            (skipAll || !aiSettings.isCriticalConfirmEnabled()) ? null : this::confirmCriticalOperation);
                 });
     }
 
