@@ -27,8 +27,6 @@ import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jackhuang.hmcl.task.FileDownloadTask;
-import org.jackhuang.hmcl.task.Task;
-import org.jackhuang.hmcl.task.TaskExecutor;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,11 +34,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 /// A controlled-write tool that downloads a mod from Modrinth (or CurseForge)
 /// into the selected instance's `mods` directory.
@@ -61,8 +57,8 @@ import java.util.concurrent.atomic.AtomicReference;
 @NotNullByDefault
 public final class InstallModTool implements Tool {
 
-    /// Maximum time to wait for a download to finish, in milliseconds.
-    private static final long DOWNLOAD_TIMEOUT_MILLIS = 180_000L;
+    /// Maximum time to wait for a download to finish, in seconds.
+    private static final int DOWNLOAD_TIMEOUT_SECONDS = 180;
 
     /// The game/run directory of the target instance. Its `mods` subfolder is
     /// the default download destination.
@@ -125,29 +121,14 @@ public final class InstallModTool implements Tool {
 
         DownloadProvider downloadProvider = DownloadProviders.getDownloadProvider();
 
-        // Resolve the mod and its versions.
-        RemoteAddon addon;
-        List<RemoteAddon.Version> versions;
+        // Resolve the addon and pick the best matching version through the shared,
+        // timeout-guarded helper (it wraps getModById + loadVersions each in a 60s
+        // timeout and applies the standard game-version / version-id selection).
+        RemoteAddon.Version selected;
         try {
-            addon = repository.getModById(downloadProvider, id);
-            versions = addon.data().loadVersions(repository, downloadProvider).toList();
-        } catch (IOException e) {
-            return ToolResult.failure("Failed to resolve mod '" + id + "': " + e.getMessage());
-        } catch (Throwable e) {
-            return ToolResult.failure("Failed to resolve mod '" + id + "': " + e);
-        }
-
-        if (versions.isEmpty()) {
-            return ToolResult.failure("Mod '" + id + "' has no downloadable versions.");
-        }
-
-        // Select the best matching version.
-        RemoteAddon.Version selected = selectVersion(versions, versionName, gameVersion, loader);
-        if (selected == null) {
-            return ToolResult.failure("No version of '" + id + "' matches the requested filters"
-                    + (versionName != null ? " version=" + versionName : "")
-                    + (gameVersion != null ? " gameVersion=" + gameVersion : "")
-                    + (loaderStr != null ? " loader=" + loaderStr : "") + ".");
+            selected = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionName);
+        } catch (Exception e) {
+            return ToolResult.failure("Failed to resolve mod '" + id + "': " + AbstractContentSearchTool.messageOf(e));
         }
 
         RemoteAddon.File file = selected.file();
@@ -186,75 +167,22 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Failed to create mods directory " + modsDir + ": " + e.getMessage());
         }
 
-        // Build and run the download task, blocking with a timeout.
+        // Build the download task and run it through the shared helper, which cancels
+        // the task executor on timeout so a timed-out download cannot orphan-run.
         List<URI> uris = downloadProvider.injectURLWithCandidates(file.url());
         FileDownloadTask task = new FileDownloadTask(uris, dest, file.getIntegrityCheck());
         task.setName(selected.name());
 
-        String downloadError = runBlocking(task);
-        if (downloadError != null) {
-            return ToolResult.failure("Download failed for '" + addon.title() + "' version '"
-                    + selected.name() + "': " + downloadError);
+        try {
+            ContentToolSupport.runTaskBlocking(task, DOWNLOAD_TIMEOUT_SECONDS, "Download");
+        } catch (Exception e) {
+            return ToolResult.failure("Download failed for '" + id + "' version '"
+                    + selected.name() + "': " + AbstractContentSearchTool.messageOf(e));
         }
 
-        return ToolResult.success("Installed mod '" + addon.title() + "' version '" + selected.name() + "'"
+        return ToolResult.success("Installed mod '" + id + "' version '" + selected.name() + "'"
                 + (selected.version() != null ? " (" + selected.version() + ")" : "")
                 + " into:\n  " + dest);
-    }
-
-    /// Selects the version to install. If `versionName` is given it must match
-    /// (by name or version string). Otherwise filters by game version and loader
-    /// when provided and returns the newest by publish date.
-    @Nullable
-    private static RemoteAddon.Version selectVersion(List<RemoteAddon.Version> versions,
-                                                     @Nullable String versionName,
-                                                     @Nullable String gameVersion,
-                                                     @Nullable ModLoaderType loader) {
-        return versions.stream()
-                .filter(v -> versionName == null
-                        || versionName.equalsIgnoreCase(v.name())
-                        || versionName.equalsIgnoreCase(v.version()))
-                .filter(v -> gameVersion == null
-                        || (v.gameVersions() != null && v.gameVersions().contains(gameVersion)))
-                .filter(v -> loader == null
-                        || (v.loaders() != null && v.loaders().contains(loader)))
-                .max(Comparator.comparing(RemoteAddon.Version::datePublished,
-                        Comparator.nullsFirst(Comparator.naturalOrder())))
-                .orElse(null);
-    }
-
-    /// Runs the given task synchronously on a worker thread and blocks until it
-    /// finishes or the timeout elapses.
-    ///
-    /// @return `null` on success, otherwise a human-readable error message
-    @Nullable
-    private static String runBlocking(Task<?> task) {
-        AtomicReference<String> error = new AtomicReference<>();
-        Thread worker = new Thread(() -> {
-            try {
-                TaskExecutor executor = task.executor();
-                boolean ok = executor.test();
-                if (!ok) {
-                    Exception exception = executor.getException();
-                    error.set(exception != null ? exception.getMessage() : "task did not complete successfully");
-                }
-            } catch (Throwable e) {
-                error.set(String.valueOf(e));
-            }
-        }, "ai-install-mod");
-        worker.setDaemon(true);
-        worker.start();
-        try {
-            worker.join(DOWNLOAD_TIMEOUT_MILLIS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return "interrupted while downloading";
-        }
-        if (worker.isAlive()) {
-            worker.interrupt();
-            return "timed out after " + (DOWNLOAD_TIMEOUT_MILLIS / 1000) + "s";
-        }
-        return error.get();
     }
 
     @Nullable

@@ -87,17 +87,22 @@ public final class SearchModsTool implements Tool {
 
         DownloadProvider downloadProvider = DownloadProviders.getDownloadProvider();
 
+        final String effectiveGameVersion = gameVersion == null ? "" : gameVersion;
         List<RemoteAddon> results;
         try {
-            RemoteAddonRepository.SearchResult searchResult = repository.search(
-                    downloadProvider,
-                    gameVersion == null ? "" : gameVersion,
-                    null,
-                    0,
-                    MAX_RESULTS,
-                    query,
-                    RemoteAddonRepository.SortType.POPULARITY,
-                    RemoteAddonRepository.SortOrder.DESC);
+            // Run the search through the shared, timeout-guarded helper so this tool
+            // behaves like every other content-search tool (operation-level timeout).
+            RemoteAddonRepository.SearchResult searchResult = ContentToolSupport.callWithTimeout(
+                    () -> repository.search(
+                            downloadProvider,
+                            effectiveGameVersion,
+                            null,
+                            0,
+                            MAX_RESULTS,
+                            query,
+                            RemoteAddonRepository.SortType.POPULARITY,
+                            RemoteAddonRepository.SortOrder.DESC),
+                    60, "Search");
             results = searchResult.getResults().limit(MAX_RESULTS).toList();
         } catch (Throwable e) {
             return ToolResult.failure("Mod search failed: " + e.getMessage());
