@@ -181,6 +181,16 @@ public final class AiSettings {
 
         @SerializedName("sendOnEnter")
         private boolean sendOnEnter = DEFAULT_SEND_ON_ENTER;
+
+        @SerializedName("customInstructions")
+        @Nullable
+        private String customInstructions = "";
+
+        @SerializedName("responseLanguage")
+        private String responseLanguage = DEFAULT_RESPONSE_LANGUAGE;
+
+        @SerializedName("autoRecallMemory")
+        private boolean autoRecallMemory = DEFAULT_AUTO_RECALL_MEMORY;
     }
 
     private static final Gson GSON = new GsonBuilder()
@@ -226,6 +236,9 @@ public final class AiSettings {
     private final BooleanProperty fileWriteConfirmEnabled;
     private final BooleanProperty autoScrollEnabled;
     private final BooleanProperty sendOnEnter;
+    private final StringProperty customInstructions;
+    private final StringProperty responseLanguage;
+    private final BooleanProperty autoRecallMemory;
 
     // Complex values (list-based, no JavaFX property)
     private volatile List<String> stopSequences = Collections.emptyList();
@@ -285,6 +298,13 @@ public final class AiSettings {
     /// Default value for the send-on-Enter flag (Enter sends; off → Ctrl+Enter sends).
     public static final boolean DEFAULT_SEND_ON_ENTER = true;
 
+    /// Default reply-language mode (`"auto"` = follow the user's language).
+    /// Other accepted values: `"zh"` (always 简体中文), `"en"` (always English).
+    public static final String DEFAULT_RESPONSE_LANGUAGE = "auto";
+
+    /// Default value for the auto-recall-memory flag (off by default).
+    public static final boolean DEFAULT_AUTO_RECALL_MEMORY = false;
+
     /// Creates an instance bound to the given config directory.
     ///
     /// @param configDir the `.hmcl/` directory path; the settings file will be
@@ -323,6 +343,9 @@ public final class AiSettings {
         this.fileWriteConfirmEnabled = new SimpleBooleanProperty(this, "fileWriteConfirmEnabled", DEFAULT_FILE_WRITE_CONFIRM_ENABLED);
         this.autoScrollEnabled = new SimpleBooleanProperty(this, "autoScrollEnabled", DEFAULT_AUTO_SCROLL_ENABLED);
         this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
+        this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
+        this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
+        this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
     }
 
     // ---- Property accessors (for UI binding) ---------------------------------------
@@ -480,6 +503,21 @@ public final class AiSettings {
     /// Returns the send-on-Enter flag property.
     public BooleanProperty sendOnEnterProperty() {
         return sendOnEnter;
+    }
+
+    /// Returns the user custom-instructions property (appended to the system prompt).
+    public StringProperty customInstructionsProperty() {
+        return customInstructions;
+    }
+
+    /// Returns the reply-language mode property (`auto` / `zh` / `en`).
+    public StringProperty responseLanguageProperty() {
+        return responseLanguage;
+    }
+
+    /// Returns the auto-recall-memory flag property.
+    public BooleanProperty autoRecallMemoryProperty() {
+        return autoRecallMemory;
     }
 
     // ---- Convenience value accessors -----------------------------------------------
@@ -643,6 +681,21 @@ public final class AiSettings {
     /// Returns whether Enter sends the message (off → Ctrl+Enter sends).
     public boolean isSendOnEnter() {
         return sendOnEnter.get();
+    }
+
+    /// Returns the user custom-instructions text (may be empty).
+    public String getCustomInstructions() {
+        return customInstructions.get();
+    }
+
+    /// Returns the reply-language mode (`auto` / `zh` / `en`).
+    public String getResponseLanguage() {
+        return responseLanguage.get();
+    }
+
+    /// Returns whether auto-recall-memory injection is enabled.
+    public boolean isAutoRecallMemory() {
+        return autoRecallMemory.get();
     }
 
     /// Returns the current stop sequences list (unmodifiable snapshot).
@@ -888,6 +941,9 @@ public final class AiSettings {
         data.fileWriteConfirmEnabled = fileWriteConfirmEnabled.get();
         data.autoScrollEnabled = autoScrollEnabled.get();
         data.sendOnEnter = sendOnEnter.get();
+        data.customInstructions = customInstructions.get();
+        data.responseLanguage = responseLanguage.get();
+        data.autoRecallMemory = autoRecallMemory.get();
 
         synchronized (profiles) {
             if (!profiles.isEmpty()) {
@@ -1044,6 +1100,10 @@ public final class AiSettings {
         fileWriteConfirmEnabled.set(data.fileWriteConfirmEnabled);
         autoScrollEnabled.set(data.autoScrollEnabled);
         sendOnEnter.set(data.sendOnEnter);
+        customInstructions.set(data.customInstructions != null ? data.customInstructions : "");
+        responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
+                ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);
+        autoRecallMemory.set(data.autoRecallMemory);
     }
 
     private void syncStopSequencesFromData(PersistedData data) {

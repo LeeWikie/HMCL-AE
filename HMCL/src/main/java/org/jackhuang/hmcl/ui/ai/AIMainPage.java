@@ -293,8 +293,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             .create();
     private static final String CHAT_SETTINGS_FILE = "ai-chat-settings.json";
     private static final String SEARCH_CONFIG_FILE = "ai-search-settings.json";
+    private static final String OCR_CONFIG_FILE = org.jackhuang.hmcl.ai.ocr.AiOcrConfig.FILE_NAME;
     /// Web-search config, loaded from disk and shared by the web_search tool + the prompt.
     private final org.jackhuang.hmcl.ai.search.AiSearchConfig searchConfig;
+    /// OCR config, loaded from disk and shared by the ocr_image tool.
+    private final org.jackhuang.hmcl.ai.ocr.AiOcrConfig ocrConfig;
+    /// Global memory store (created in registerTools); shared with the prompt builder for auto-recall.
+    private org.jackhuang.hmcl.ai.remember.RememberStore rememberStore;
 
     @Nullable
     private VBox chatSettingsDrawer;
@@ -362,6 +367,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         this.chatSettings = loadChatSettings();
         this.searchConfig = loadSearchConfig();
+        this.ocrConfig = loadOcrConfig();
 
         if (sessionStore.getCurrentSession() == null) {
             sessionStore.createSession();
@@ -461,8 +467,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
         // Global memory (hermes-style file-based store; remember/recall across conversations).
-        org.jackhuang.hmcl.ai.remember.RememberStore rememberStore =
-                new org.jackhuang.hmcl.ai.remember.RememberStore(
+        rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
@@ -477,6 +482,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Diagnostics (reuse HMCL SystemInfo hardware detection; screenshots listing).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
+        // OCR a screenshot/image into text (crash/error shots) — backend chosen in AI 设置 > OCR.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
         // Convenience (clipboard for pasted crash logs / errors, conversation export, prompt presets).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadClipboardTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
@@ -487,6 +494,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListServersTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListResourcePacksTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstanceDetailsTool());
+        // World / datapack management (reuse repository run dir; delete is confirm-gated).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListDatapacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallDatapackTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ImportWorldTool());
+        // Mod info / updates / modpack export (reuse ModManager / RemoteAddonRepository / export task).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckModUpdatesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportModpackTool());
+        // Server / Java / instance runtime (SLP ping, JavaManager download, GameSettings memory, log cleanup).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PingServerTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
@@ -1926,7 +1947,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 id -> {
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
-                            searchConfig, this::isPlanMode);
+                            searchConfig, this::isPlanMode, rememberStore);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
                             this::confirmDangerousOperation);
                 });
@@ -3015,6 +3036,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
         } catch (IOException | JsonParseException e) {
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
+        }
+    }
+
+    /// Loads the OCR config from disk (defaults — disabled — if absent or corrupt).
+    private org.jackhuang.hmcl.ai.ocr.AiOcrConfig loadOcrConfig() {
+        Path filePath = SettingsManager.localConfigDirectory().resolve(OCR_CONFIG_FILE);
+        try {
+            String json = Files.readString(filePath, StandardCharsets.UTF_8);
+            org.jackhuang.hmcl.ai.ocr.AiOcrConfig loaded =
+                    CHAT_SETTINGS_GSON.fromJson(json, org.jackhuang.hmcl.ai.ocr.AiOcrConfig.class);
+            return loaded != null ? loaded : new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
+        } catch (NoSuchFileException e) {
+            return new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
+        } catch (IOException | JsonParseException e) {
+            return new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
         }
     }
 

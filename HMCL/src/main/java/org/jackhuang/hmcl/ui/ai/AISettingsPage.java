@@ -57,6 +57,8 @@ import org.jackhuang.hmcl.ai.AiSettings;
 import org.jackhuang.hmcl.ai.remember.RememberStore;
 import org.jackhuang.hmcl.ai.mcp.AiMcpServerConfig;
 import org.jackhuang.hmcl.ai.mcp.McpClientManager;
+import org.jackhuang.hmcl.ai.ocr.AiOcrConfig;
+import org.jackhuang.hmcl.ai.ocr.OcrProvider;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
 import org.jackhuang.hmcl.ai.search.SearchProvider;
 import org.jackhuang.hmcl.ai.search.SearchResponse;
@@ -109,6 +111,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final Path MCP_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
     private static final Path SEARCH_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
+    private static final Path OCR_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
     private static final Path TOOL_PERMISSION_FILE = SettingsManager.localConfigDirectory().resolve("ai-tool-permissions.json");
     private static final Path SKILLS_DIR = SettingsManager.localConfigDirectory().resolve("ai-skills");
 
@@ -123,12 +126,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private final AiToolPermissionStore toolPermissionStore = new AiToolPermissionStore(TOOL_PERMISSION_FILE);
     private final List<AiMcpServerConfig> mcpServers = new ArrayList<>();
     private AiSearchConfig searchConfig = new AiSearchConfig();
+    private AiOcrConfig ocrConfig = new AiOcrConfig();
 
     private final TransitionPane transitionPane = new TransitionPane();
     private final TabHeader.Tab<Node> providerTab = new TabHeader.Tab<>("aiProviderTab");
     private final TabHeader.Tab<Node> mcpTab = new TabHeader.Tab<>("aiMcpTab");
     private final TabHeader.Tab<Node> skillsTab = new TabHeader.Tab<>("aiSkillsTab");
     private final TabHeader.Tab<Node> searchTab = new TabHeader.Tab<>("aiSearchTab");
+    private final TabHeader.Tab<Node> ocrTab = new TabHeader.Tab<>("aiOcrTab");
     private final TabHeader.Tab<Node> generalTab = new TabHeader.Tab<>("aiGeneralTab");
     private final TabHeader.Tab<Node> memoryTab = new TabHeader.Tab<>("aiMemoryTab");
     private final TabHeader.Tab<Node> dataTab = new TabHeader.Tab<>("aiDataTab");
@@ -153,6 +158,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         skillRegistry.setSkillsDir(SKILLS_DIR);
         loadMcpServers();
         loadSearchConfig();
+        loadOcrConfig();
         loadToolPermissions();
         refreshSkills();
 
@@ -162,13 +168,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         mcpTab.setNodeSupplier(this::buildMcpTab);
         skillsTab.setNodeSupplier(this::buildSkillsTab);
         searchTab.setNodeSupplier(this::buildSearchTab);
+        ocrTab.setNodeSupplier(this::buildOcrTab);
         generalTab.setNodeSupplier(this::buildGeneralTab);
         memoryTab.setNodeSupplier(this::buildMemoryTab);
         dataTab.setNodeSupplier(this::buildDataTab);
         helpTab.setNodeSupplier(this::buildHelpTab);
         aboutTab.setNodeSupplier(this::buildAboutTab);
 
-        tab = new TabHeader(transitionPane, providerTab, mcpTab, skillsTab, searchTab, generalTab, memoryTab, dataTab, helpTab, aboutTab);
+        tab = new TabHeader(transitionPane, providerTab, mcpTab, skillsTab, searchTab, ocrTab, generalTab, memoryTab, dataTab, helpTab, aboutTab);
         tab.select(providerTab, false);
 
         AdvancedListBox sideBar = new AdvancedListBox()
@@ -179,6 +186,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 .addNavigationDrawerTab(tab, skillsTab, "技能与工具", SVG.SCRIPT)
                 .addNavigationDrawerTab(tab, mcpTab, "MCP服务器", SVG.SCHEMA, SVG.SCHEMA_FILL)
                 .addNavigationDrawerTab(tab, searchTab, "网络搜索", SVG.SEARCH)
+                .addNavigationDrawerTab(tab, ocrTab, "图片 OCR", SVG.LANDSCAPE)
                 .startCategory("数据")
                 .addNavigationDrawerTab(tab, dataTab, "数据设置", SVG.FOLDER_OPEN)
                 .addNavigationDrawerTab(tab, memoryTab, "全局记忆", SVG.PACKAGE)
@@ -1148,6 +1156,196 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return wrapScroll(root);
     }
 
+    private Node buildOcrTab() {
+        VBox root = createSettingsRoot();
+
+        // ---- OCR 服务（核心）----
+        ComponentList core = new ComponentList();
+
+        LineToggleButton enabled = new LineToggleButton();
+        enabled.setTitle("启用图片 OCR");
+        enabled.setSubtitle("把 ocr_image 工具暴露给 AI，用于识别截图里的文字（崩溃/报错截图）");
+        enabled.setSelected(ocrConfig.isEnabled());
+        enabled.selectedProperty().addListener((obs, old, val) -> {
+            ocrConfig.setEnabled(val);
+            saveOcrConfig();
+        });
+        core.getContent().add(enabled);
+
+        LineSelectButton<OcrProvider> provider = new LineSelectButton<>();
+        provider.setTitle("OCR 服务商");
+        provider.setSubtitle("选择 OCR 提供商（已接入的可直接用，其余为预置）");
+        provider.setItems(List.of(OcrProvider.values()));
+        provider.setNullSafeConverter(p -> p.getDisplayName() + (p.isImplemented() ? "" : "（待接入）"));
+        OcrProvider currentProvider = ocrConfig.resolveProvider();
+        provider.setValue(currentProvider);
+        core.getContent().add(provider);
+
+        // 提供商专属字段卡片，随选择动态重建
+        ComponentList providerFields = new ComponentList();
+        rebuildOcrProviderFields(providerFields, currentProvider);
+
+        provider.valueProperty().addListener((obs, old, val) -> {
+            if (val != null) {
+                ocrConfig.setProvider(val.name());
+                // 切换服务商时同步其默认 endpoint（端点在专属字段里仍可改）
+                ocrConfig.setEndpoint(val.getDefaultEndpoint());
+                saveOcrConfig();
+                rebuildOcrProviderFields(providerFields, val);
+            }
+        });
+
+        // ---- 测试 ----
+        ComponentList options = new ComponentList();
+        LineButton test = new LineButton();
+        test.setTitle("测试 OCR");
+        test.setSubtitle("用当前配置识别一张本地图片（在弹窗里填图片绝对路径）");
+        test.setTrailingIcon(SVG.LANDSCAPE);
+        test.setOnAction(e -> Controllers.prompt("要识别的图片绝对路径", (path, handler) -> {
+            String trimmed = path.trim();
+            java.nio.file.Path img = java.nio.file.Path.of(trimmed);
+            if (!Files.isRegularFile(img)) {
+                handler.reject("找不到图片：" + trimmed);
+                return;
+            }
+            OcrProvider p = ocrConfig.resolveProvider();
+            org.jackhuang.hmcl.ui.ai.tools.ocr.OcrClient client =
+                    org.jackhuang.hmcl.ui.ai.tools.ocr.OcrClientFactory.build(ocrConfig);
+            if (client == null) {
+                handler.reject("该提供商（" + p.getDisplayName() + "）暂未接入：" + p.getNote());
+                return;
+            }
+            Thread worker = new Thread(() -> {
+                try {
+                    byte[] data = Files.readAllBytes(img);
+                    String mime = mimeOf(trimmed);
+                    String text = client.recognize(data, mime);
+                    Platform.runLater(() -> {
+                        Controllers.showToast("OCR 成功：识别 " + (text == null ? 0 : text.length()) + " 字");
+                        handler.resolve();
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> handler.reject("OCR 失败：" + ex.getMessage()));
+                }
+            }, "ai-ocr-test");
+            worker.setDaemon(true);
+            worker.start();
+        }, ""));
+        options.getContent().add(test);
+
+        root.getChildren().addAll(
+                ComponentList.createComponentListTitle("OCR 服务"), core,
+                ComponentList.createComponentListTitle("服务商配置"), providerFields,
+                ComponentList.createComponentListTitle("测试"), options);
+        return wrapScroll(root);
+    }
+
+    /// Rebuilds the provider-specific credential rows (API Key / Secret Key / model /
+    /// language / endpoint) for the chosen OCR provider, plus a status note.
+    private void rebuildOcrProviderFields(ComponentList card, OcrProvider provider) {
+        card.getContent().clear();
+
+        LineButton noteRow = new LineButton();
+        noteRow.setTitle("说明");
+        noteRow.setSubtitle((provider.isImplemented() ? "已接入" : "仅预置") + " · " + provider.getNote());
+        card.getContent().add(noteRow);
+
+        if (provider.requiresApiKey()) {
+            LineButton apiKey = new LineButton();
+            apiKey.setTitle("API Key");
+            apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? "未设置" : "已设置");
+            apiKey.setTrailingIcon(SVG.EDIT);
+            apiKey.setOnAction(e -> Controllers.prompt("OCR API Key", (result, handler) -> {
+                ocrConfig.setApiKey(result.trim());
+                saveOcrConfig();
+                apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? "未设置" : "已设置");
+                handler.resolve();
+            }, ocrConfig.getApiKey()));
+            card.getContent().add(apiKey);
+        }
+
+        if (provider.requiresSecret()) {
+            LineButton secret = new LineButton();
+            secret.setTitle("Secret Key");
+            secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? "未设置" : "已设置");
+            secret.setTrailingIcon(SVG.EDIT);
+            secret.setOnAction(e -> Controllers.prompt("OCR Secret Key", (result, handler) -> {
+                ocrConfig.setSecretKey(result.trim());
+                saveOcrConfig();
+                secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? "未设置" : "已设置");
+                handler.resolve();
+            }, ocrConfig.getSecretKey()));
+            card.getContent().add(secret);
+        }
+
+        if (provider.requiresModel()) {
+            LineButton model = new LineButton();
+            model.setTitle("视觉模型");
+            model.setSubtitle(ocrConfig.getModel().isEmpty() ? "未设置（默认 gpt-4o-mini）" : ocrConfig.getModel());
+            model.setTrailingIcon(SVG.EDIT);
+            model.setOnAction(e -> Controllers.prompt("视觉模型 ID（如 gpt-4o-mini / qwen-vl-max）", (result, handler) -> {
+                ocrConfig.setModel(result.trim());
+                saveOcrConfig();
+                model.setSubtitle(ocrConfig.getModel().isEmpty() ? "未设置（默认 gpt-4o-mini）" : ocrConfig.getModel());
+                handler.resolve();
+            }, ocrConfig.getModel()));
+            card.getContent().add(model);
+        }
+
+        if (provider == OcrProvider.OCR_SPACE) {
+            LineButton language = new LineButton();
+            language.setTitle("识别语言");
+            language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? "未设置（默认 eng；中文填 chs）" : ocrConfig.getLanguage());
+            language.setTrailingIcon(SVG.EDIT);
+            language.setOnAction(e -> Controllers.prompt("OCR.space 语言代码（eng / chs / auto …）", (result, handler) -> {
+                ocrConfig.setLanguage(result.trim());
+                saveOcrConfig();
+                language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? "未设置（默认 eng；中文填 chs）" : ocrConfig.getLanguage());
+                handler.resolve();
+            }, ocrConfig.getLanguage()));
+            card.getContent().add(language);
+        }
+
+        LineButton endpoint = new LineButton();
+        endpoint.setTitle("接口地址");
+        endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? "（使用默认）" : ocrConfig.getEndpoint());
+        endpoint.setTrailingIcon(SVG.EDIT);
+        endpoint.setOnAction(e -> Controllers.prompt("OCR 接口地址（留空用默认）", (result, handler) -> {
+            ocrConfig.setEndpoint(result.trim());
+            saveOcrConfig();
+            endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? "（使用默认）" : ocrConfig.getEndpoint());
+            handler.resolve();
+        }, ocrConfig.getEndpoint()));
+        card.getContent().add(endpoint);
+    }
+
+    private static String mimeOf(String name) {
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+        if (n.endsWith(".gif")) return "image/gif";
+        if (n.endsWith(".bmp")) return "image/bmp";
+        if (n.endsWith(".webp")) return "image/webp";
+        if (n.endsWith(".pdf")) return "application/pdf";
+        return "image/png";
+    }
+
+    private void loadOcrConfig() {
+        try {
+            if (!Files.exists(OCR_CONFIG_FILE)) return;
+            String json = Files.readString(OCR_CONFIG_FILE, StandardCharsets.UTF_8);
+            AiOcrConfig loaded = GSON.fromJson(json, AiOcrConfig.class);
+            if (loaded != null) ocrConfig = loaded;
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void saveOcrConfig() {
+        try {
+            Files.writeString(OCR_CONFIG_FILE, GSON.toJson(ocrConfig), StandardCharsets.UTF_8);
+        } catch (IOException ignored) {
+        }
+    }
+
     private Node buildDataTab() {
         VBox root = createSettingsRoot();
         root.getChildren().addAll(
@@ -1402,6 +1600,61 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
         list.getContent().add(crashAnalysis);
 
+        // ---- 回复语言 ----
+        LineSelectButton<String> replyLang = new LineSelectButton<>();
+        replyLang.setTitle("回复语言");
+        replyLang.setSubtitle("auto=跟随用户语言；也可强制中文/英文");
+        replyLang.setItems(List.of("auto", "zh", "en"));
+        replyLang.setNullSafeConverter(AISettingsPage::responseLanguageDisplay);
+        replyLang.setValue(normalizeLang(aiSettings.getResponseLanguage()));
+        replyLang.valueProperty().addListener((obs, old, val) -> {
+            if (val != null) {
+                aiSettings.responseLanguageProperty().set(val);
+                saveAiSettings();
+            }
+        });
+        list.getContent().add(replyLang);
+
+        // ---- 流式输出 ----
+        list.getContent().add(toggleRow("流式输出",
+                "开启后逐字显示模型回复（关闭则一次性返回）", aiSettings.streamProperty()));
+
+        // ---- 默认推理强度 ----
+        LineSelectButton<String> reasoning = new LineSelectButton<>();
+        reasoning.setTitle("默认推理强度");
+        reasoning.setSubtitle("仅对支持 reasoning 的模型生效");
+        reasoning.setItems(List.of("none", "low", "medium", "high", "xhigh", "max"));
+        reasoning.setNullSafeConverter(v -> v);
+        String currentEffort = aiSettings.getReasoningEffort();
+        reasoning.setValue(currentEffort.isEmpty() ? "none" : currentEffort);
+        reasoning.valueProperty().addListener((obs, old, val) -> {
+            if (val != null) {
+                aiSettings.reasoningEffortProperty().set("none".equals(val) ? "" : val);
+                saveAiSettings();
+            }
+        });
+        list.getContent().add(reasoning);
+
+        // ---- 自动调用记忆 ----
+        list.getContent().add(toggleRow("自动调用记忆",
+                "每次对话开始时，把全局记忆里的条目注入系统提示（限 1.5KB）",
+                aiSettings.autoRecallMemoryProperty()));
+
+        // ---- 自定义指令 ----
+        LineButton customInstructions = new LineButton();
+        customInstructions.setTitle("自定义指令");
+        customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
+                ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+        customInstructions.setTrailingIcon(SVG.EDIT);
+        customInstructions.setOnAction(e -> Controllers.prompt("自定义指令（会追加到系统提示，AI 务必遵守）", (result, handler) -> {
+            aiSettings.customInstructionsProperty().set(result.trim());
+            saveAiSettings();
+            customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
+                    ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+            handler.resolve();
+        }, aiSettings.getCustomInstructions()));
+        list.getContent().add(customInstructions);
+
         // ---- Agent 行为（折叠）----
         ComponentSublist agentSub = new ComponentSublist();
         agentSub.setTitle("Agent 行为");
@@ -1455,6 +1708,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 ComponentList.createComponentListTitle("安全"), safetyCard,
                 ComponentList.createComponentListTitle("界面与交互"), uiCard);
         return wrapScroll(root);
+    }
+
+    private static String responseLanguageDisplay(String mode) {
+        return switch (mode) {
+            case "zh" -> "简体中文";
+            case "en" -> "English";
+            default -> "自动 (auto)";
+        };
+    }
+
+    private static String normalizeLang(String mode) {
+        return ("zh".equals(mode) || "en".equals(mode)) ? mode : "auto";
     }
 
     // ---- Reusable setting-row helpers (toggle / integer slider) --------------------
