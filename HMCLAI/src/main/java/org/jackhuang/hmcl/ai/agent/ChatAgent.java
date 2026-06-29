@@ -64,6 +64,52 @@ public final class ChatAgent {
     public AiSession getSession() { return session; }
     public AiSettings getSettings() { return settings; }
 
+    /// System instruction used to summarise the running conversation into a compact,
+    /// continuation-style brief so the chat can continue with far fewer tokens.
+    private static final String COMPACT_SYSTEM_PROMPT = String.join("\n",
+            "You compress a long assistant/user conversation into a concise, continuation-style summary",
+            "so the chat can continue with far less context. Reply in the user's language (Chinese if the",
+            "conversation is mainly Chinese). Output ONLY the summary, structured with these headings:",
+            "目标 (what the user ultimately wants) / 已完成 (what has been done, including tool results and",
+            "concrete facts discovered: instance names, versions, mod lists, accounts, paths) / 关键发现",
+            "(important findings, decisions, user preferences, constraints) / 下一步 (the immediate next",
+            "action to take). Be specific and preserve names/versions/IDs; drop chit-chat and verbose logs.");
+
+    /// Compresses the current session into a continuation-style summary using a single
+    /// non-streaming model call, then replaces the session history with that summary.
+    ///
+    /// Runs on the agent's executor (off the FX thread). On success the session is
+    /// {@link AiSession#clear() cleared} and a single assistant message holding the
+    /// summary is added; the returned future completes with the raw summary text. If
+    /// the conversation is empty (or the model returns nothing) the session is left
+    /// untouched and the future completes with an empty string.
+    public CompletableFuture<String> compact() {
+        return CompletableFuture.supplyAsync(() -> {
+            try { return doCompact(); }
+            catch (LlmException e) { throw new RuntimeException(e); }
+        }, executor);
+    }
+
+    private String doCompact() throws LlmException {
+        List<LlmMessage> history = session.getMessages();
+        if (history.isEmpty()) {
+            return "";
+        }
+        List<LlmMessage> request = new ArrayList<>(history.size() + 2);
+        request.add(new LlmMessage("system", COMPACT_SYSTEM_PROMPT));
+        request.addAll(history);
+        request.add(new LlmMessage("user",
+                "请把以上整段对话压缩成续写式摘要（目标 / 已完成 / 关键发现 / 下一步），只输出摘要本身。"));
+        String summary = client.sendMessage(Collections.unmodifiableList(request)).join();
+        if (summary == null || summary.isBlank()) {
+            return "";
+        }
+        summary = summary.strip();
+        session.clear();
+        session.addMessage(new LlmMessage("assistant", "【上下文已压缩】\n" + summary));
+        return summary;
+    }
+
     public CompletableFuture<String> send(String userInput) {
         return CompletableFuture.supplyAsync(() -> {
             try { return doSend(userInput); }

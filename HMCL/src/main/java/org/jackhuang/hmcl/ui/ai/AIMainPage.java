@@ -213,6 +213,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final Label headerTitle = new Label();
     private final Label headerSubtitle = new Label();
     private final Label approvalBadge = new Label();
+    /// Header badge shown while plan mode (read-only-until-approved) is active.
+    private final Label planBadge = new Label("计划模式");
+
+    /// When true, write/install/delete/launch/shell tools are gated off for the next
+    /// response so the agent only investigates and proposes a plan. Toggled by /plan.
+    private boolean planMode = false;
+    /// Tool names this page disabled for the current plan-gated response, restored when it ends.
+    private final List<String> planDisabledTools = new ArrayList<>();
+
+    /// Pinned container above the scrollable messages that holds the live TODO card.
+    private final VBox todoCardContainer = new VBox();
+    /// The single reusable TODO card; (re)built on each todo_write call.
+    @Nullable private VBox todoCard;
 
     // ---- Toolbar ----
 
@@ -426,6 +439,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AskTool(this::showAskPanel));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool(this::updateTodoCard));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
         // Content management (reuse HMCL remote repos + download/install pipeline).
@@ -785,7 +799,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolActivityLabel.getStyleClass().add("ai-tool-activity-label");
         toolActivityBox.getChildren().add(toolActivityLabel);
 
-        VBox conversationCard = new VBox(toolActivityBox, messagesArea, statusLabel, buildComposer());
+        todoCardContainer.getStyleClass().add("ai-todo-container");
+        todoCardContainer.setVisible(false);
+        todoCardContainer.setManaged(false);
+
+        VBox conversationCard = new VBox(toolActivityBox, todoCardContainer, messagesArea, statusLabel, buildComposer());
         conversationCard.getStyleClass().addAll("card-no-padding", "ai-conversation-card");
         VBox.setVgrow(conversationCard, Priority.ALWAYS);
 
@@ -859,8 +877,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         approvalBadge.getStyleClass().add("ai-approval-badge");
         approvalBadge.setVisible(false);
         approvalBadge.setManaged(false);
+        planBadge.getStyleClass().addAll("ai-approval-badge", "ai-approval-badge-ask");
+        planBadge.setVisible(false);
+        planBadge.setManaged(false);
 
-        HBox subtitleRow = new HBox(6, headerSubtitle, approvalBadge);
+        HBox subtitleRow = new HBox(6, headerSubtitle, approvalBadge, planBadge);
         subtitleRow.setAlignment(Pos.CENTER_LEFT);
 
         VBox titleBox = new VBox(2, headerTitle, subtitleRow);
@@ -1028,6 +1049,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             sessionStore.save();
         } catch (Exception ignored) {
         }
+        hideTodoCard();
         messageList.getChildren().clear();
         updateEmptyState();
         refreshSessionList();
@@ -1045,11 +1067,85 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (current == null) return;
         current.clear();
         agentCache.remove(current.getId());
+        hideTodoCard();
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
         updateToolActivityVisibility();
         updateEmptyState();
         persistStore();
+    }
+
+    private boolean isPlanMode() {
+        return planMode;
+    }
+
+    /// Shows/hides the plan-mode header badge to match {@link #planMode}.
+    private void updatePlanBadge() {
+        planBadge.setVisible(planMode);
+        planBadge.setManaged(planMode);
+    }
+
+    /// Before a plan-mode response, disables every write-capable tool (CONTROLLED_WRITE /
+    /// DANGEROUS_WRITE) except `ask`, so the agent can only investigate and propose. The
+    /// disabled names are remembered and restored by {@link #restorePlanGating()}.
+    private void applyPlanGating() {
+        planDisabledTools.clear();
+        if (!planMode) return;
+        for (org.jackhuang.hmcl.ai.tools.Tool t : toolRegistry.listAll()) {
+            String name = t.getName();
+            if ("ask".equals(name)) continue;
+            org.jackhuang.hmcl.ai.tools.ToolPermission p = toolRegistry.getPermission(name);
+            if ((p == org.jackhuang.hmcl.ai.tools.ToolPermission.CONTROLLED_WRITE
+                    || p == org.jackhuang.hmcl.ai.tools.ToolPermission.DANGEROUS_WRITE)
+                    && !toolRegistry.isDisabled(name)) {
+                toolRegistry.disable(name);
+                planDisabledTools.add(name);
+            }
+        }
+    }
+
+    /// Re-enables whatever {@link #applyPlanGating()} disabled. Safe to call repeatedly.
+    private void restorePlanGating() {
+        for (String name : planDisabledTools) {
+            toolRegistry.enable(name);
+        }
+        planDisabledTools.clear();
+    }
+
+    /// Compresses the current conversation into a continuation-style summary (off the FX
+    /// thread), then rebuilds the view from the now-summarised session. Used by /compact.
+    private void compactConversation() {
+        AiSession current = sessionStore.getCurrentSession();
+        if (current == null) return;
+        if (current.getMessages().isEmpty()) {
+            addSystemMessage("当前对话为空，无需压缩。");
+            return;
+        }
+        ChatAgent agent = getOrCreateChatAgent();
+        if (agent == null) {
+            addSystemMessage(i18n("ai.error.no_endpoint"));
+            return;
+        }
+        final AiSession target = current;
+        setStatus("正在压缩上下文…");
+        agent.compact().whenComplete((summary, err) -> Platform.runLater(() -> {
+            setStatus(null);
+            if (err != null) {
+                Throwable cause = err;
+                while (cause.getCause() != null && cause.getCause() != cause) {
+                    cause = cause.getCause();
+                }
+                addSystemMessage("压缩失败：" + (cause.getMessage() != null
+                        ? cause.getMessage() : cause.getClass().getSimpleName()));
+                return;
+            }
+            // The agent has already cleared the session and stored the summary message.
+            agentCache.remove(target.getId());
+            if (sessionStore.getCurrentSession() == target) {
+                loadSessionMessages(target);
+            }
+            persistStore();
+        }));
     }
 
     /// Builds a one-line summary of the active provider/model for the `/model` command.
@@ -1677,15 +1773,37 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
     }
 
+    /// Slash commands offered in autocomplete and listed by /help, each with a
+    /// one-line Chinese description. This single table drives both the popup and
+    /// the /help output so they never drift apart.
+    private static final java.util.LinkedHashMap<String, String> SLASH_COMMANDS = new java.util.LinkedHashMap<>();
+    static {
+        SLASH_COMMANDS.put("/new", "新建一个会话");
+        SLASH_COMMANDS.put("/clear", "清空当前对话上下文");
+        SLASH_COMMANDS.put("/compact", "把当前对话压缩成摘要以节省 token");
+        SLASH_COMMANDS.put("/sessions", "搜索并切换历史会话");
+        SLASH_COMMANDS.put("/skills", "列出已启用的技能");
+        SLASH_COMMANDS.put("/plan", "切换计划模式（只读分析，批准前不改动）");
+        SLASH_COMMANDS.put("/model", "显示当前模型");
+        SLASH_COMMANDS.put("/crash", "分析最新的崩溃报告");
+        SLASH_COMMANDS.put("/log", "读取并分析最新的游戏日志");
+        SLASH_COMMANDS.put("/help", "显示命令帮助");
+    }
+
+    /// Builds the /help text from {@link #SLASH_COMMANDS}.
+    private static String buildSlashHelpText() {
+        StringBuilder sb = new StringBuilder("可用命令：");
+        for (java.util.Map.Entry<String, String> e : SLASH_COMMANDS.entrySet()) {
+            sb.append('\n').append(e.getKey()).append(" — ").append(e.getValue());
+        }
+        return sb.toString();
+    }
+
     /// Filters and displays slash command suggestions.
     private void handleSlashAutocomplete(String prefix) {
-        List<String> commands = List.of(
-                "/crash", "/log", "/help", "/clear", "/model"
-        );
-
         autocompleteItems.clear();
         String lowerPrefix = prefix.toLowerCase();
-        for (String cmd : commands) {
+        for (String cmd : SLASH_COMMANDS.keySet()) {
             if (cmd.toLowerCase().startsWith(lowerPrefix)) {
                 autocompleteItems.add(cmd);
             }
@@ -1732,7 +1850,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         for (int i = 0; i < autocompleteItems.size(); i++) {
             String item = autocompleteItems.get(i);
             int index = i;
-            Label itemLabel = new Label(item);
+            String display = SLASH_COMMANDS.containsKey(item)
+                    ? item + "  —  " + SLASH_COMMANDS.get(item) : item;
+            Label itemLabel = new Label(display);
             itemLabel.getStyleClass().add("ai-autocomplete-item");
             if (i == autocompleteSelectedIndex) {
                 itemLabel.getStyleClass().add("ai-autocomplete-item-selected");
@@ -1806,7 +1926,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 id -> {
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
-                            searchConfig);
+                            searchConfig, this::isPlanMode);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
                             this::confirmDangerousOperation);
                 });
@@ -1872,6 +1992,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private void loadSessionMessages(AiSession session) {
         cancelActiveAsk(); // a pending question can't be answered for a backgrounded session
+        hideTodoCard(); // the pinned TODO list is per-turn UI, not part of session history
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
@@ -2068,9 +2189,40 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 clearCurrentConversation();
                 return;
             }
+            case "/new" -> {
+                inputField.clear();
+                createSession();
+                return;
+            }
+            case "/sessions" -> {
+                inputField.clear();
+                showSearchOverlay();
+                return;
+            }
+            case "/skills" -> {
+                inputField.clear();
+                String summary = skillRegistry.summarizeEnabled();
+                addSystemMessage(summary.startsWith("(no")
+                        ? "当前没有已启用的技能。" : "已启用的技能：\n" + summary);
+                return;
+            }
+            case "/compact" -> {
+                inputField.clear();
+                compactConversation();
+                return;
+            }
+            case "/plan" -> {
+                inputField.clear();
+                planMode = !planMode;
+                updatePlanBadge();
+                addSystemMessage(planMode
+                        ? "已开启计划模式：我会只读分析并先给出分步计划，批准前不做任何改动（写入/安装/删除/启动等工具已暂时禁用）。再次输入 /plan 退出。"
+                        : "已关闭计划模式，现在可以正常执行操作。");
+                return;
+            }
             case "/help" -> {
                 inputField.clear();
-                addSystemMessage(i18n("ai.command.help"));
+                addSystemMessage(buildSlashHelpText());
                 return;
             }
             case "/model" -> {
@@ -2113,6 +2265,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
         streamingBubble = null;
         pendingToolCards.clear();
+
+        // Plan mode: gate off write-capable tools for this response; restored in
+        // exitStreamingState() (reached on completion, stop, and error).
+        applyPlanGating();
 
         // Bind this stream to the session it belongs to. If the user switches to another
         // session mid-stream, callbacks must NOT touch the (now different) message view —
@@ -2253,6 +2409,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         currentResponse = null;
         sendBtn.setText(i18n("ai.send"));
         sendBtn.getStyleClass().remove("ai-stop-btn");
+        // Restore any tools plan mode disabled for the just-finished response.
+        restorePlanGating();
     }
 
     /// Stops the in-flight response: invalidates its callbacks, best-effort aborts the
@@ -2697,6 +2855,59 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));
         updateEmptyState();
         scrollToBottom();
+    }
+
+    /// {@link org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoUiHandler}: renders the agent's
+    /// latest TODO checklist as a pinned card above the messages. Called on the agent's
+    /// background thread, so it marshals onto the FX thread.
+    private void updateTodoCard(List<org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem> todos) {
+        Platform.runLater(() -> {
+            todoCardContainer.getChildren().clear();
+            if (todos == null || todos.isEmpty()) {
+                hideTodoCard();
+                return;
+            }
+            VBox card = new VBox(4);
+            card.getStyleClass().addAll("ai-bubble", "ai-tool-card", "ai-todo-card");
+            card.setPadding(new Insets(10, 12, 10, 12));
+
+            long done = todos.stream().filter(t -> "done".equals(t.status())).count();
+            Label title = new Label("任务清单 (" + done + "/" + todos.size() + ")");
+            title.getStyleClass().add("ai-tool-card-header");
+            title.setStyle("-fx-font-weight: bold;");
+            card.getChildren().add(title);
+
+            for (org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem t : todos) {
+                String status = t.status();
+                String mark = switch (status) {
+                    case "done" -> "✓";
+                    case "in_progress" -> "▶";
+                    default -> "○";
+                };
+                Label row = new Label(mark + "  " + t.content());
+                row.setWrapText(true);
+                row.setMaxWidth(440);
+                switch (status) {
+                    case "done" -> row.setStyle("-fx-text-fill: #6aa84f;");
+                    case "in_progress" -> row.setStyle("-fx-font-weight: bold; -fx-text-fill: #4285f4;");
+                    default -> { /* pending: default styling */ }
+                }
+                card.getChildren().add(row);
+            }
+
+            todoCard = card;
+            todoCardContainer.getChildren().add(card);
+            todoCardContainer.setVisible(true);
+            todoCardContainer.setManaged(true);
+        });
+    }
+
+    /// Hides and clears the pinned TODO card (e.g. on session switch / clear).
+    private void hideTodoCard() {
+        todoCard = null;
+        todoCardContainer.getChildren().clear();
+        todoCardContainer.setVisible(false);
+        todoCardContainer.setManaged(false);
     }
 
     /// A tool-call card shown inline in the conversation, in chronological order: it appears

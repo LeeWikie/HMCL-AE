@@ -13,6 +13,7 @@ import org.jetbrains.annotations.Nullable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 /// Assembles a deliberately small system prompt (Pi-style): a short persona, concise
 /// tool-selection guidance, the Minecraft/HMCL conventions the agent needs, and the
@@ -89,7 +90,8 @@ public final class AiPromptBuilder {
             "2. NEVER fall back to shell for things shell fundamentally cannot do: logging into a Microsoft account, installing a version/loader/mod through HMCL, fetching the live version list, managing accounts/Java. If the dedicated tool fails, shell will NOT succeed at the same goal — instead: (a) if it looks transient (network/timeout), retry the SAME dedicated tool at most once; (b) otherwise explain the failure to the user in plain language and, if a decision is needed, use `ask`. Spamming shell after a tool error just produces garbage and wastes turns.",
             "3. Be efficient — minimise tool calls. Do NOT call the same read/list tool again with the same arguments; remember what you already saw in this conversation (instances, versions, mod lists, account list). Gather everything a step needs, then act. Batch all the decisions you need into ONE `ask` instead of several.",
             "4. If a tool reports a wrong/unknown target (e.g. 'no such instance'), call the matching list_* tool ONCE to get valid names, then proceed — don't guess repeatedly.",
-            "5. Prefer the smallest sequence of tools that completes the task. Don't re-verify things you just did unless the user asks.");
+            "5. Prefer the smallest sequence of tools that completes the task. Don't re-verify things you just did unless the user asks.",
+            "6. For a multi-step task (more than ~2 steps), call todo_write at the START to lay out the steps as a checklist, then call it again after EACH step to update statuses (exactly one item 'in_progress' at a time). This shows the user your progress. Skip it for trivial one-shot requests.");
 
     private static final String PLAYBOOKS = String.join("\n",
             "Operating playbooks (follow end-to-end with tools; never hand the user manual steps you can do yourself):",
@@ -99,17 +101,36 @@ public final class AiPromptBuilder {
             "[Log in / switch account / \"登录/换账号\"]: 1) list_accounts to see what exists and which is active. 2) For a Microsoft (genuine/online) account: call microsoft_login — it opens HMCL's native sign-in dialog; tell the user to finish signing in there, then list_accounts to confirm. 3) For an offline account: add_offline_account(username). 4) To switch the active one: select_account(username). NEVER try to perform login via shell or by editing files.",
             "Version isolation: the runtime context states the selected instance and whether isolation is ON. ON => that instance's mods/saves/config live under versions/<name>/; OFF => they are SHARED in the base .minecraft across all versions. Before installing mods, know which it is and pass the target instance to install_mod. If isolation is OFF, warn that version-specific mods will be shared across versions.");
 
+    /// Injected when the user has switched on "plan mode" — read-only investigation plus an
+    /// approval step before any write. Re-read on every {@link #build()} so toggling takes
+    /// effect on the next turn without rebuilding the agent.
+    private static final String PLAN = String.join("\n",
+            "PLAN MODE IS ACTIVE — the user wants a plan BEFORE you change anything.",
+            "- Do read-only investigation only: list_*, instance_details, read/grep/glob, recall, web_search/web_fetch, system_info.",
+            "  Write/install/delete/edit/launch/shell tools are DISABLED this turn and WILL fail — do not attempt them.",
+            "- First investigate enough to be concrete, then produce a clear numbered plan of exactly what you WILL do.",
+            "- Use the `ask` tool to present the plan and get approval (e.g. single-choice: 批准执行 / 修改 / 取消).",
+            "- Do NOT perform the actual changes now. The user will turn off plan mode (/plan) and tell you to proceed.");
+
     private final AiSettings settings;
     private final ToolRegistry toolRegistry;
     private final SkillRegistry skillRegistry;
     private final AiSearchConfig searchConfig;
+    private final BooleanSupplier planMode;
 
     public AiPromptBuilder(AiSettings settings, ToolRegistry toolRegistry,
                            SkillRegistry skillRegistry, AiSearchConfig searchConfig) {
+        this(settings, toolRegistry, skillRegistry, searchConfig, () -> false);
+    }
+
+    public AiPromptBuilder(AiSettings settings, ToolRegistry toolRegistry,
+                           SkillRegistry skillRegistry, AiSearchConfig searchConfig,
+                           BooleanSupplier planMode) {
         this.settings = settings;
         this.toolRegistry = toolRegistry;
         this.skillRegistry = skillRegistry;
         this.searchConfig = searchConfig;
+        this.planMode = planMode;
     }
 
     public String build() {
@@ -123,6 +144,11 @@ public final class AiPromptBuilder {
         blocks.add(DISCIPLINE);
         blocks.add("");
         blocks.add(buildRuntimeContext());
+
+        if (planMode.getAsBoolean()) {
+            blocks.add("");
+            blocks.add(PLAN);
+        }
 
         if (searchConfig.isEnabled()) {
             blocks.add("");
