@@ -80,3 +80,6 @@ HMCL无AI集成项目.json
 
 # AUR 打包文件,暂时本地保留,不上传远程
 packaging/aur/
+
+# 本地 AI CLI 测试配置(含密钥),绝不入库
+.ai-cli-test.json
