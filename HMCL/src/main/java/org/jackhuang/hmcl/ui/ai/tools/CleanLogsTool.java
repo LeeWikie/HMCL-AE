@@ -105,9 +105,8 @@ public final class CleanLogsTool implements Tool {
             keepObj = parameters.get("query");
         }
         if (keepObj != null && !String.valueOf(keepObj).trim().isEmpty()) {
-            try {
-                keep = Integer.parseInt(String.valueOf(keepObj).trim());
-            } catch (NumberFormatException e) {
+            keep = InstanceToolSupport.parseInt(keepObj, Integer.MIN_VALUE);
+            if (keep == Integer.MIN_VALUE) {
                 return ToolResult.failure("Parameter 'keep' must be an integer, got: " + keepObj);
             }
             if (keep < 0) {

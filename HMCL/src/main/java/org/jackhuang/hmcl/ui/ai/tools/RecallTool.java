@@ -56,12 +56,7 @@ public final class RecallTool implements Tool {
         String query = String.valueOf(parameters.getOrDefault("query", "")).trim();
         Object tagObj = parameters.get("tag");
         @Nullable String tag = tagObj instanceof String && !((String) tagObj).isBlank() ? ((String) tagObj).trim() : null;
-        int limit = 10;
-        Object limitObj = parameters.get("limit");
-        if (limitObj instanceof Number) limit = ((Number) limitObj).intValue();
-        else if (limitObj instanceof String) {
-            try { limit = Integer.parseInt(((String) limitObj).trim()); } catch (NumberFormatException ignored) {}
-        }
+        int limit = InstanceToolSupport.parseInt(parameters, "limit", 10);
         if (limit <= 0) limit = 10;
 
         try {

@@ -58,16 +58,7 @@ public final class ReadNbtTool implements Tool {
             Path savesDir = NbtToolSupport.savesDir(profile, instance);
             Path file = NbtToolSupport.resolveTargetFile(savesDir, parameters);
 
-            int maxDepth = 6;
-            Object md = parameters.get("maxDepth");
-            if (md instanceof Number) {
-                maxDepth = ((Number) md).intValue();
-            } else if (md instanceof String) {
-                try {
-                    maxDepth = Integer.parseInt(((String) md).trim());
-                } catch (NumberFormatException ignored) {
-                }
-            }
+            int maxDepth = InstanceToolSupport.parseInt(parameters, "maxDepth", 6);
 
             Tag tag = NbtToolSupport.readTag(file);
             String tree = NbtToolSupport.renderTree(tag, maxDepth);

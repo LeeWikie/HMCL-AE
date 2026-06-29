@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /// A tool that sets the maximum JVM heap memory (-Xmx, in MiB) for a single
@@ -117,10 +118,8 @@ public final class SetInstanceMemoryTool implements Tool {
                     + "To change it, call this tool again with the 'maxMemoryMB' parameter.");
         }
 
-        int maxMemoryMB;
-        try {
-            maxMemoryMB = Integer.parseInt(String.valueOf(memoryObj).trim());
-        } catch (NumberFormatException e) {
+        int maxMemoryMB = InstanceToolSupport.parseInt(memoryObj, Integer.MIN_VALUE);
+        if (maxMemoryMB == Integer.MIN_VALUE) {
             return ToolResult.failure("Parameter 'maxMemoryMB' must be an integer number of megabytes, got: " + memoryObj);
         }
         if (maxMemoryMB < 256) {
@@ -166,7 +165,9 @@ public final class SetInstanceMemoryTool implements Tool {
                         latch.countDown();
                     }
                 });
-                latch.await();
+                if (!latch.await(10, TimeUnit.SECONDS)) {
+                    return ToolResult.failure("Timed out while applying the memory setting; the UI did not respond.");
+                }
             } catch (IllegalStateException e) {
                 // JavaFX runtime not started (should not happen inside the running launcher UI).
                 return ToolResult.failure("Cannot apply the memory setting: the JavaFX runtime is unavailable.");

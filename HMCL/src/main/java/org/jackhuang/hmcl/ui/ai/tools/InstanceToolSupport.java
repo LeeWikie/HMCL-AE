@@ -62,6 +62,41 @@ final class InstanceToolSupport {
         return value != null && "true".equalsIgnoreCase(value.toString().trim());
     }
 
+    /// Parses an integer parameter from {@code args} under {@code key}, returning {@code def}
+    /// when the value is absent, blank, or unparseable.
+    ///
+    /// Gson decodes every JSON number as a {@link Double}, so an integer argument arrives as
+    /// e.g. {@code 4096.0}; a naive {@code Integer.parseInt(String.valueOf(value))} would throw
+    /// on that. This accepts a {@link Number} directly and tolerates a trailing {@code ".0"} on
+    /// string values.
+    static int parseInt(Map<String, Object> args, String key, int def) {
+        return parseInt(args.get(key), def);
+    }
+
+    /// Parses an already-resolved parameter value as an integer (see {@link #parseInt(Map, String, int)}).
+    /// Useful when the value may come from one of several keys (e.g. a {@code query} fallback).
+    static int parseInt(@Nullable Object value, int def) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value != null) {
+            String text = value.toString().trim();
+            if (!text.isEmpty()) {
+                try {
+                    return Integer.parseInt(text);
+                } catch (NumberFormatException ignored) {
+                    // Tolerate a number that arrived as a string with a trailing ".0".
+                    try {
+                        return (int) Math.round(Double.parseDouble(text));
+                    } catch (NumberFormatException ignored2) {
+                        // fall through to default
+                    }
+                }
+            }
+        }
+        return def;
+    }
+
     /// The currently selected profile's game repository.
     static HMCLGameRepository repository() {
         Profile profile = Profiles.getSelectedProfile();

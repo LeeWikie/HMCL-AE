@@ -145,7 +145,16 @@ public final class AiSessionStore {
 
         StoreData data = new StoreData();
         data.currentSessionId = currentSessionId;
-        data.sessions = new ArrayList<>(sessions.values());
+        // Serialize independent per-session snapshots. Gson reflectively iterates each session's
+        // live `messages` list, and the agent thread mutates it concurrently (addMessage / prune)
+        // → ConcurrentModificationException that aborts the save (lost save). copyForStore() takes
+        // the session's own monitor and copies its messages into a fresh list, so Gson only ever
+        // walks the detached copy and never races the live list.
+        List<AiSession> snapshot = new ArrayList<>(sessions.size());
+        for (AiSession session : sessions.values()) {
+            snapshot.add(session.copyForStore());
+        }
+        data.sessions = snapshot;
 
         String json = GSON.toJson(data, STORE_TYPE);
         Files.writeString(filePath, json, StandardCharsets.UTF_8);

@@ -89,6 +89,20 @@ public final class AiSession {
         pruneByTokenBudget();
     }
 
+    /// Private copy constructor used by {@link #copyForStore()} to snapshot a session for
+    /// serialization. Copies every field verbatim — including {@code maxContextTokens} and the
+    /// full message list — WITHOUT re-pruning, so the saved JSON matches the live state exactly.
+    /// Callers must hold {@code other}'s monitor (see {@link #copyForStore()}) so the message
+    /// copy is consistent with concurrent mutators.
+    private AiSession(AiSession other) {
+        this.id = other.id;
+        this.title = other.title;
+        this.createdAt = other.createdAt;
+        this.updatedAt = other.updatedAt;
+        this.maxContextTokens = other.maxContextTokens;
+        this.messages = new ArrayList<>(other.messages);
+    }
+
     /// Returns the unique session identifier.
     public String getId() {
         return id;
@@ -174,10 +188,13 @@ public final class AiSession {
         return Collections.unmodifiableList(new ArrayList<>(messages));
     }
 
-    /// Returns the raw message list for serialization (used by Gson only).
-    /// Callers should prefer {@link #getMessages()} for the safe unmodifiable view.
-    synchronized List<LlmMessage> messagesForSerialization() {
-        return messages;
+    /// Returns an independent, point-in-time copy of this session whose message list is a fresh
+    /// snapshot, safe to hand to Gson on another thread (e.g. the FX thread during
+    /// {@link AiSessionStore#save()}) while this session keeps being mutated by the agent thread.
+    /// Taken under this session's monitor, so it is consistent with {@link #addMessage} and the
+    /// other synchronized mutators.
+    synchronized AiSession copyForStore() {
+        return new AiSession(this);
     }
 
     /// Prunes oldest messages until the estimated token count is within the budget.

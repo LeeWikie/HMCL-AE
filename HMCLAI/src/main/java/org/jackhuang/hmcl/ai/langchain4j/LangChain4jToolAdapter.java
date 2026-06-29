@@ -226,11 +226,20 @@ public final class LangChain4jToolAdapter {
             } else {
                 text = "Error: " + result.getError();
             }
-        } catch (Exception e) {
-            String message = e.getMessage();
+        } catch (Throwable t) {
+            // Catch Throwable, not just Exception: optional dependencies (e.g. OCR) can throw an
+            // Error such as NoClassDefFoundError, which is NOT an Exception. If one escaped, this
+            // assistant tool-use request would get no matching tool-result, leaving the agent loop
+            // (and the UI Stop button) wedged forever. Always turn any failure into an "Error:"
+            // tool-result so the loop keeps a valid, non-null result it can feed back to the model.
+            // Never swallow interruption: restore the interrupt flag so the loop's Stop still works.
+            if (t instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            String message = t.getMessage();
             text = "Error: " + (message != null && !message.isBlank()
                     ? message
-                    : e.getClass().getSimpleName());
+                    : t.getClass().getSimpleName());
         }
 
         return ToolExecutionResultMessage.from(request, text);

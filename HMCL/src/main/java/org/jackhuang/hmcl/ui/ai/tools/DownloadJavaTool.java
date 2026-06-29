@@ -79,10 +79,8 @@ public final class DownloadJavaTool implements Tool {
         String queryParam = str(parameters.get("query"));
 
         if (javaVersionParam != null) {
-            int major;
-            try {
-                major = Integer.parseInt(javaVersionParam.trim());
-            } catch (NumberFormatException e) {
+            int major = InstanceToolSupport.parseInt(parameters.get("javaVersion"), Integer.MIN_VALUE);
+            if (major == Integer.MIN_VALUE) {
                 return ToolResult.failure("Parameter 'javaVersion' must be an integer Java major version, got: " + javaVersionParam);
             }
             target = GameJavaVersion.get(major);
