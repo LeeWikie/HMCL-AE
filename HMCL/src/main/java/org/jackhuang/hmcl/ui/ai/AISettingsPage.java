@@ -471,6 +471,21 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         advGrid.add(captionedField("最大输出 tokens", maxOutField), 1, 0);
         advGrid.add(captionedField("温度", tempField), 0, 1);
         advGrid.add(captionedField("默认推理强度", reasoningField), 1, 1);
+        JFXTextField inModalField = new JFXTextField(entry.getInputModalities());
+        inModalField.setPromptText("如 text 或 text,image");
+        JFXTextField outModalField = new JFXTextField(entry.getOutputModalities());
+        outModalField.setPromptText("如 text");
+        advGrid.add(captionedField("输入模态", inModalField), 0, 2);
+        advGrid.add(captionedField("输出模态", outModalField), 1, 2);
+        JFXCheckBox capToolsBox = new JFXCheckBox("工具调用");
+        capToolsBox.setSelected(entry.isSupportsTools());
+        JFXCheckBox capVisionBox = new JFXCheckBox("图像识别");
+        capVisionBox.setSelected(entry.isSupportsVision());
+        JFXCheckBox capReasoningBox = new JFXCheckBox("推理模式");
+        capReasoningBox.setSelected(entry.isSupportsReasoning());
+        HBox capRow = new HBox(12, capToolsBox, capVisionBox, capReasoningBox);
+        capRow.setAlignment(Pos.CENTER_LEFT);
+        advGrid.add(captionedField("模型能力", capRow), 0, 3, 2, 1);
         ComponentSublist advPane = new ComponentSublist();
         advPane.setTitle("高级设置");
         advPane.getContent().setAll(advGrid);
@@ -523,6 +538,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         ? AiModelEntry.TEMPERATURE_UNSET
                         : parseDoubleSafe(temp, AiModelEntry.TEMPERATURE_UNSET));
                 entry.setReasoningEffort(reasoningField.getText().trim());
+                entry.setInputModalities(inModalField.getText());
+                entry.setOutputModalities(outModalField.getText());
+                entry.setSupportsTools(capToolsBox.isSelected());
+                entry.setSupportsVision(capVisionBox.isSelected());
+                entry.setSupportsReasoning(capReasoningBox.isSelected());
                 entry.setInputPricePerMillion(parsePrice(inField.getText()));
                 entry.setOutputPricePerMillion(parsePrice(outField.getText()));
                 entry.setCacheWritePricePerMillion(parsePrice(cwField.getText()));
