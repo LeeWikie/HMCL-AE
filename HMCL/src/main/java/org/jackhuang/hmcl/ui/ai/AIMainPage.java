@@ -342,6 +342,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// background-job ↔ auto-continue loop from silently burning tokens. Reset on a real user send.
     private static final int AUTO_CONTINUE_LIMIT = 5;
     private int autoContinueDepth = 0;
+    /// Background jobs whose completion arrived while a turn was streaming; drained one-at-a-time by
+    /// exitStreamingState() so a mid-turn completion still auto-continues instead of being dropped.
+    private final java.util.ArrayDeque<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> pendingCompletions = new java.util.ArrayDeque<>();
     @Nullable
     private Label fileChip;
     @Nullable
@@ -2528,14 +2531,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (current == null || job.getSessionId() == null || !job.getSessionId().equals(current.getId())) {
             return;
         }
+        if (job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.CANCELLED) {
+            return; // the user cancelled it — never auto-continue
+        }
         if (isStreaming()) {
-            return; // a turn is already in flight; don't pile on
+            // Finished mid-turn: queue it; exitStreamingState() drains the queue when the turn ends,
+            // so a completion arriving during a stream is no longer silently dropped.
+            if (!pendingCompletions.contains(job)) {
+                pendingCompletions.add(job);
+            }
+            return;
         }
         String status;
         switch (job.getStatus()) {
             case SUCCEEDED: status = "已完成"; break;
             case FAILED: status = "失败"; break;
-            case CANCELLED: return; // the user cancelled it — don't spend a turn auto-continuing
             default: return; // not terminal — ignore
         }
         org.jackhuang.hmcl.ai.tools.ToolResult result = job.getResult();
@@ -2666,6 +2676,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sendBtn.getStyleClass().remove("ai-stop-btn");
         // Restore any tools plan mode disabled for the just-finished response.
         restorePlanGating();
+        // A background job that finished while this turn was streaming was queued; handle the next
+        // one now that we're idle (it starts its own turn, which naturally serializes the rest).
+        if (!pendingCompletions.isEmpty()) {
+            org.jackhuang.hmcl.ai.tools.AiJobManager.Job next = pendingCompletions.poll();
+            Platform.runLater(() -> onBackgroundJobComplete(next));
+        }
     }
 
     /// Stops the in-flight response: invalidates its callbacks, best-effort aborts the

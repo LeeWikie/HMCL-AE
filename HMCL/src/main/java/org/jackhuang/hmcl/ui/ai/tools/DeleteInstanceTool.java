@@ -130,6 +130,10 @@ public final class DeleteInstanceTool implements Tool {
         }
 
         repository.refreshVersions();
-        return ToolResult.success("Permanently deleted instance '" + instance + "' from disk.");
+        // HMCL's native removeVersionFromDisk itself attempts a move-to-trash where the platform
+        // supports it, so the removal may in fact be recoverable — report honestly rather than
+        // claiming an irreversible permanent delete.
+        return ToolResult.success("Removed instance '" + instance
+                + "' from disk (it may be recoverable from the system recycle bin where supported).");
     }
 }

@@ -96,7 +96,7 @@ public final class DangerousCommands {
     /// token boundary so it does not match inside words/paths, and longest spellings come first so
     /// the alternation prefers the full flag.
     private static final Pattern ENCODED_FLAG_WITH_ARG = Pattern.compile(
-            "(?i)(?<![A-Za-z0-9])-(?:encodedcommand|encodedarguments|encoded|encode|encod|enco|enc)"
+            "(?i)(?<![A-Za-z0-9])-(?:encodedcommand|encodedarguments|encoded|encode|encod|enco|enc|en)"
                     + "(?=\\s|[:=]|$)\\s*[:=]?\\s*[\"']?([A-Za-z0-9+/=]*)");
 
     /// Matches a long "bare" base64 blob (no flag) such as the argument of
@@ -108,6 +108,9 @@ public final class DangerousCommands {
     /// Safety bounds so a pathological input cannot blow up CPU/memory during scanning.
     private static final int MAX_PAYLOADS = 12;
     private static final int MAX_TOKEN_CHARS = 200_000;
+    /// How many nested decode levels to inspect, so double-base64 / base64-inside-EncodedCommand
+    /// obfuscation cannot slip a single layer past the scanner. Bounded with MAX_PAYLOADS.
+    private static final int MAX_DECODE_DEPTH = 3;
     /// Minimum length for a flag argument to be considered a real encoded payload (rather than a
     /// short benign value like a charset name), used to gate the fail-closed path.
     private static final int PAYLOAD_MIN_LEN = 16;
@@ -125,13 +128,20 @@ public final class DangerousCommands {
     ///         if an explicit encoding flag is present whose payload cannot be safely decoded
     ///         (fail-closed); {@link EncodedScan#NONE} for plain commands or benign decoded payloads.
     public static EncodedScan scanEncodedPayloads(String text, Predicate<String> matcher) {
+        return scanEncodedPayloads(text, matcher, 0);
+    }
+
+    /// Depth-aware worker: after decoding a payload that does not directly match, it recurses into the
+    /// decoded text (up to {@link #MAX_DECODE_DEPTH}) so double-base64 / base64-inside-EncodedCommand
+    /// obfuscation cannot slip a single layer past the scanner.
+    private static EncodedScan scanEncodedPayloads(String text, Predicate<String> matcher, int depth) {
         if (text == null || text.isEmpty()) {
             return EncodedScan.NONE;
         }
         boolean undecodable = false;
         int decoded = 0;
 
-        // 1) Unambiguous encoding flags (-enc .. -EncodedCommand). These FAIL CLOSED: a payload-like
+        // 1) Unambiguous encoding flags (-en .. -EncodedCommand). These FAIL CLOSED: a payload-like
         //    argument (>= PAYLOAD_MIN_LEN) that we cannot decode into inspectable text is exactly the
         //    obfuscation we must not wave through. Short args (e.g. "-enc utf8") are benign and ignored.
         Matcher fm = ENCODED_FLAG_WITH_ARG.matcher(text);
@@ -144,6 +154,19 @@ public final class DangerousCommands {
                 String s8 = new String(bytes, StandardCharsets.UTF_8);
                 if (matcher.test(s16) || matcher.test(s8)) {
                     return EncodedScan.MATCH;
+                }
+                // The decoded script may itself carry another encoded payload — recurse (text only).
+                if (depth < MAX_DECODE_DEPTH) {
+                    if (looksLikeText(s16)) {
+                        EncodedScan inner = scanEncodedPayloads(s16, matcher, depth + 1);
+                        if (inner == EncodedScan.MATCH) return EncodedScan.MATCH;
+                        if (inner == EncodedScan.UNDECODABLE) undecodable = true;
+                    }
+                    if (looksLikeText(s8)) {
+                        EncodedScan inner = scanEncodedPayloads(s8, matcher, depth + 1);
+                        if (inner == EncodedScan.MATCH) return EncodedScan.MATCH;
+                        if (inner == EncodedScan.UNDECODABLE) undecodable = true;
+                    }
                 }
                 // A genuine -EncodedCommand decodes to readable UTF-16LE script. If a payload-like
                 // token decodes only to opaque bytes (e.g. gzip then decompress|iex), we cannot
@@ -168,6 +191,17 @@ public final class DangerousCommands {
             decoded++;
             if (matchesDecoded(bytes, matcher)) {
                 return EncodedScan.MATCH;
+            }
+            // Recurse into a decoded bare blob too (double base64), text interpretations only.
+            if (depth < MAX_DECODE_DEPTH) {
+                String s8 = new String(bytes, StandardCharsets.UTF_8);
+                if (looksLikeText(s8) && scanEncodedPayloads(s8, matcher, depth + 1) == EncodedScan.MATCH) {
+                    return EncodedScan.MATCH;
+                }
+                String s16 = new String(bytes, StandardCharsets.UTF_16LE);
+                if (looksLikeText(s16) && scanEncodedPayloads(s16, matcher, depth + 1) == EncodedScan.MATCH) {
+                    return EncodedScan.MATCH;
+                }
             }
         }
 
