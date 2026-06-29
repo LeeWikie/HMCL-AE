@@ -254,8 +254,17 @@ public final class ChatAgent {
     }
 
     public CompletableFuture<Void> sendStreaming(String userInput, LlmStreamCallback callback) {
+        return sendStreaming(userInput, callback, null);
+    }
+
+    /// @param cancelled when it reports {@code true} (the user pressed Stop), the streamed assistant
+    ///                  reply is NOT written to the session. The underlying HTTP request has already
+    ///                  been sent, so it cannot be un-billed — this just prevents persisting an
+    ///                  unwanted reply and lets the UI move on.
+    public CompletableFuture<Void> sendStreaming(String userInput, LlmStreamCallback callback,
+                                                 @Nullable java.util.function.BooleanSupplier cancelled) {
         return CompletableFuture.supplyAsync(() -> {
-            try { doSendStreaming(userInput, callback); }
+            try { doSendStreaming(userInput, callback, cancelled); }
             catch (LlmException e) { throw new RuntimeException(e); }
             return null;
         }, executor);
@@ -271,7 +280,8 @@ public final class ChatAgent {
         return response;
     }
 
-    private void doSendStreaming(String userInput, LlmStreamCallback callback) throws LlmException {
+    private void doSendStreaming(String userInput, LlmStreamCallback callback,
+                                 @Nullable java.util.function.BooleanSupplier cancelled) throws LlmException {
         // See doSend: compact before adding the user message so it isn't summarised away.
         maybeAutoCompact();
         session.addMessage(new LlmMessage("user", userInput));
@@ -295,6 +305,11 @@ public final class ChatAgent {
             @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
             @Override public void onComplete(String c) {
                 String f = c != null && full.isEmpty() ? c : full.toString();
+                if (cancelled != null && cancelled.getAsBoolean()) {
+                    // The user stopped this turn: drop the unwanted assistant reply instead of
+                    // persisting it (the request itself already happened and can't be un-billed).
+                    return;
+                }
                 LlmMessage aiMessage = new LlmMessage("assistant", f);
                 if (usage != null) {
                     aiMessage.setUsage(usage);

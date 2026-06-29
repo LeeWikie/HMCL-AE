@@ -286,6 +286,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     @Nullable
     private java.util.concurrent.CompletableFuture<Void> currentResponse;
     private int responseGeneration = 0;
+    /// Cancellation flag for the in-flight turn; set true by stopResponse() so the agent drops the
+    /// streamed reply instead of persisting it after the user pressed Stop.
+    @Nullable
+    private java.util.concurrent.atomic.AtomicBoolean currentCancelled;
 
     /// The currently-open thinking-level popup, tracked to prevent stacking duplicates.
     @Nullable
@@ -2404,6 +2408,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         StringBuilder segment = new StringBuilder();
         // Holds provider-reported usage (if any) so onComplete can render the footer.
         LlmUsage[] usageHolder = {null};
+        final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        currentCancelled = cancelled;
         currentResponse = agent.sendStreaming(userInput, new LlmStreamCallback() {
             @Override
             public void onToken(String token) {
@@ -2502,7 +2508,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 if (generation != responseGeneration) return;
                 showAiError(streamingBubble, fullContent, error, streamSession);
             }
-        }).exceptionally(ex -> {
+        }, cancelled::get).exceptionally(ex -> {
             if (generation != responseGeneration) return null; // stopped; ignore
             Throwable cause = ex;
             while (cause.getCause() != null && cause.getCause() != cause) {
@@ -2858,6 +2864,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private void stopResponse() {
         responseGeneration++; // invalidate any further callbacks from the stopped response
+        if (currentCancelled != null) {
+            currentCancelled.set(true); // tell the agent NOT to persist the dropped reply
+        }
         cancelActiveAsk();
         java.util.concurrent.CompletableFuture<Void> future = currentResponse;
         if (future != null) {
