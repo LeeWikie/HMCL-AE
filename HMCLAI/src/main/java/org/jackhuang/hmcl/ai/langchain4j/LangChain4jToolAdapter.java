@@ -217,6 +217,23 @@ public final class LangChain4jToolAdapter {
                 }
             }
 
+            // Background dispatch: long-running tools (installs / downloads / backups) run as a
+            // job so the chat stays usable. The model can force it with background=true or opt out
+            // with background=false. All confirm/critical gates above already ran synchronously, so
+            // the user has approved before the work is detached. The model polls with check_job.
+            if (wantsBackground(tool.getName(), parameters)) {
+                final Tool bgTool = tool;
+                final Map<String, Object> bgParams = parameters;
+                String label = summarizeForConfirm(tool.getName(), parameters);
+                String jobId = org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
+                        .submit(null, tool.getName(), label, () -> bgTool.execute(bgParams));
+                return ToolExecutionResultMessage.from(request,
+                        "已在后台开始执行（任务 #" + jobId + "：" + tool.getName() + "）。聊天不会被占用，"
+                                + "你可以继续做别的事；之后用 check_job(jobId=\"" + jobId + "\") 查看结果，"
+                                + "用 list_jobs 看全部任务、cancel_job 取消。"
+                                + "重要：在 check_job 显示该任务已完成之前，绝不要声称它已完成。");
+            }
+
             ToolResult result = tool.execute(parameters);
             if (result == null) {
                 text = "Error: tool '" + request.name()
@@ -243,6 +260,34 @@ public final class LangChain4jToolAdapter {
         }
 
         return ToolExecutionResultMessage.from(request, text);
+    }
+
+    /// Tools whose work is inherently long-running (download / install / backup / export) and
+    /// therefore default to running as a background job, so a single slow operation never freezes
+    /// the chat. The model can still opt out per call with {@code background=false}.
+    private static final java.util.Set<String> LONG_TASK_TOOLS = java.util.Set.of(
+            "install_loader", "install_mod", "install_modpack", "install_resourcepack",
+            "install_shader", "install_datapack", "download_java", "export_modpack",
+            "create_world_backup", "restore_world_backup", "import_world");
+
+    /// Decides whether a tool call should run in the background: an explicit {@code background}
+    /// argument (boolean or "true"/"false"/"yes"/"no"/"1"/"0") wins; otherwise long-task tools
+    /// default to background and everything else runs inline.
+    private static boolean wantsBackground(String toolName, Map<String, Object> parameters) {
+        Object b = parameters.get("background");
+        if (b instanceof Boolean) {
+            return (Boolean) b;
+        }
+        if (b instanceof String) {
+            String s = ((String) b).trim().toLowerCase(java.util.Locale.ROOT);
+            if (s.equals("true") || s.equals("yes") || s.equals("1")) {
+                return true;
+            }
+            if (s.equals("false") || s.equals("no") || s.equals("0")) {
+                return false;
+            }
+        }
+        return LONG_TASK_TOOLS.contains(toolName);
     }
 
     /// Parses a JSON arguments string into a flat parameter map.

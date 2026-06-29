@@ -524,6 +524,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
+        // Background jobs: query/cancel long-running tasks started with background=true (AiJobManager).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJobsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckJobTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CancelJobTool());
         // Save NBT editing (read/write save & player NBT data; writes are backup-gated +
         // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
         if (aiSettings.isNbtToolsEnabled()) {
