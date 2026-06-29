@@ -24,6 +24,7 @@ import com.google.gson.annotations.SerializedName;
 import com.jfoenix.controls.JFXButton;
 import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXPopup;
+import com.jfoenix.controls.JFXProgressBar;
 import com.jfoenix.controls.JFXRadioButton;
 import com.jfoenix.controls.JFXTextField;
 import javafx.animation.FadeTransition;
@@ -269,6 +270,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// can find the matching card appended by onToolActivity.
     private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
 
+    /// The tool card currently executing (set on tool-call, cleared on its result). Live download
+    /// / install progress from {@link org.jackhuang.hmcl.ai.tools.ToolProgress} is routed here, so
+    /// the chat shows a real-time progress bar instead of freezing. Tools run sequentially, so a
+    /// single "active" card is sufficient. JavaFX-thread confined.
+    @Nullable
+    private ToolCard activeToolCard;
+
     /// Whether the message view should auto-scroll to the bottom on new content. Set false when
     /// the user scrolls up to read history; restored when they scroll back to the bottom.
     private boolean stickToBottom = true;
@@ -386,6 +394,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         buildLayout();
 
         registerTools();
+        installToolProgressListener();
 
         // Seed built-in skills and load the skill list so the agent's prompt knows them.
         skillRegistry.setSkillsDir(SettingsManager.localConfigDirectory().resolve("ai-skills"));
@@ -2055,6 +2064,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
         pendingToolCards.clear();
+        activeToolCard = null;
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
         int index = 0;
         for (LlmMessage msg : session.getMessages()) {
@@ -2323,6 +2333,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
         streamingBubble = null;
         pendingToolCards.clear();
+        activeToolCard = null;
 
         // Plan mode: gate off write-capable tools for this response; restored in
         // exitStreamingState() (reached on completion, stop, and error).
@@ -2380,6 +2391,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     ToolCard card = new ToolCard(toolName);
                     messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
                     pendingToolCards.computeIfAbsent(toolName, k -> new java.util.ArrayDeque<>()).addLast(card);
+                    // Route live download / install progress to this card until it finishes.
+                    activeToolCard = card;
                     scrollToBottom();
                 });
             }
@@ -2399,6 +2412,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         card.complete(success, resultSummary);
                         scrollToBottom();
                     }
+                    activeToolCard = null;
                 });
             }
 
@@ -2976,6 +2990,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         private final Label result = new Label();
         private final String toolName;
 
+        /// Live progress UI (hidden until the first progress event, removed once the tool finishes).
+        private final JFXProgressBar progressBar = new JFXProgressBar();
+        private final Label progressLabel = new Label();
+        private final VBox progressBox = new VBox(2, progressLabel, progressBar);
+        private boolean finished = false;
+
         ToolCard(String toolName) {
             super(2);
             this.toolName = toolName;
@@ -2992,6 +3012,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             result.setVisible(false);
             result.setManaged(false);
 
+            progressLabel.setWrapText(true);
+            progressLabel.setMaxWidth(440);
+            progressLabel.getStyleClass().add("ai-tool-card-result");
+            progressBar.setPrefWidth(440);
+            progressBar.setMaxWidth(Double.MAX_VALUE);
+            progressBox.setVisible(false);
+            progressBox.setManaged(false);
+
             header.setOnMouseClicked(e -> {
                 String r = result.getText();
                 if (r != null && !r.isEmpty()) {
@@ -3001,11 +3029,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
             });
 
-            getChildren().addAll(header, result);
+            getChildren().addAll(header, progressBox, result);
+        }
+
+        /// Applies a live progress update. {@code fraction < 0} renders an indeterminate bar.
+        /// JavaFX thread only. No-op after the tool has finished.
+        void updateProgress(double fraction, @Nullable String message) {
+            if (finished) {
+                return;
+            }
+            if (!progressBox.isVisible()) {
+                progressBox.setVisible(true);
+                progressBox.setManaged(true);
+            }
+            progressBar.setProgress(fraction < 0 || Double.isNaN(fraction) ? -1.0 : Math.min(fraction, 1.0));
+            String pct = (fraction >= 0 && !Double.isNaN(fraction))
+                    ? " " + Math.round(fraction * 100) + "%" : "";
+            progressLabel.setText((message == null || message.isBlank() ? "" : message.strip()) + pct);
         }
 
         /// Updates the card once its tool finishes; stores the (collapsible) result text.
         void complete(boolean success, @Nullable String summary) {
+            finished = true;
+            progressBox.setVisible(false);
+            progressBox.setManaged(false);
             header.setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
             getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
             if (summary != null && !summary.isBlank()) {
@@ -3013,6 +3060,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 header.getStyleClass().add("ai-tool-card-expandable");
             }
         }
+    }
+
+    /// Subscribes the chat view to the decoupled {@link org.jackhuang.hmcl.ai.tools.ToolProgress}
+    /// bus so long-running download / install tools render a live progress card instead of
+    /// appearing frozen. Events may arrive on any thread, so we marshal onto the JavaFX thread
+    /// and route them to the {@link #activeToolCard} of the in-flight tool call.
+    private void installToolProgressListener() {
+        org.jackhuang.hmcl.ai.tools.ToolProgress.setListener(event -> Platform.runLater(() -> {
+            ToolCard card = activeToolCard;
+            if (card == null) {
+                return; // no tool card on screen (display disabled, or between turns)
+            }
+            if (event.done()) {
+                // The terminal state is rendered by ToolCard.complete() via onToolResult; just
+                // collapse the in-flight bar so a finished card never shows a stale progress.
+                card.updateProgress(event.success() ? 1.0 : -1.0, event.message());
+            } else {
+                card.updateProgress(event.fraction(), event.message());
+            }
+            scrollToBottom();
+        }));
     }
 
     /// Adds a tool event entry to the message list with tool-specific styling
