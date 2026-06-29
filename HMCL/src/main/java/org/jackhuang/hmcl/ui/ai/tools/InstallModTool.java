@@ -151,8 +151,14 @@ public final class InstallModTool implements Tool {
         }
 
         Path dest = modsDir.resolve(file.filename());
-        if (Files.exists(dest)) {
-            return ToolResult.success("Mod file already present, skipping download: " + dest);
+        // Only skip when a NON-EMPTY file is already there — a 0-byte / truncated leftover from a
+        // failed earlier download must be re-fetched, not mistaken for a good install.
+        try {
+            if (Files.exists(dest) && Files.size(dest) > 0) {
+                return ToolResult.success("Mod file already present, skipping download: " + dest);
+            }
+        } catch (java.io.IOException ignored) {
+            // size unreadable — fall through and re-download to be safe
         }
 
         try {

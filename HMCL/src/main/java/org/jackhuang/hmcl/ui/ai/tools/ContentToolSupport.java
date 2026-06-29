@@ -524,12 +524,15 @@ final class ContentToolSupport {
         if (!repository.hasVersion(base)) {
             return base;
         }
-        AtomicInteger counter = new AtomicInteger(2);
-        String candidate;
-        do {
-            candidate = base + "-" + counter.getAndIncrement();
-        } while (repository.hasVersion(candidate));
-        return candidate;
+        // Bounded probe so a pathological repository state can't spin forever; fall back to a
+        // timestamp suffix (effectively unique) if we somehow exhaust the numbered candidates.
+        for (int i = 2; i < 1000; i++) {
+            String candidate = base + "-" + i;
+            if (!repository.hasVersion(candidate)) {
+                return candidate;
+            }
+        }
+        return base + "-" + System.currentTimeMillis();
     }
 
     static boolean isCurseForgeAvailable() {

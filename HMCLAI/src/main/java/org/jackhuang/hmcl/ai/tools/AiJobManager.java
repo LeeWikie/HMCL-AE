@@ -209,11 +209,15 @@ public final class AiJobManager {
         String id = Integer.toString(seq);
         Job job = new Job(id, seq, toolName, effectiveLabel, sessionId, work);
         jobs.put(id, job);
-        fireChange();
+        notifier.execute(this::fireChange);
 
         try {
             Future<?> future = workers.submit(() -> runJob(job));
             job.future = future;
+            // If cancel() raced in before the future was assigned, honour it now by interrupting.
+            if (job.getStatus() == Status.CANCELLED) {
+                future.cancel(true);
+            }
         } catch (RejectedExecutionException e) {
             // The pool is unavailable (e.g. JVM shutting down); fail the job immediately.
             complete(job, Status.FAILED,
@@ -257,7 +261,7 @@ public final class AiJobManager {
         }
         notifier.execute(() -> fireCompletion(job));
         pruneFinished();
-        fireChange();
+        notifier.execute(this::fireChange); // serialize change notifications off the worker/FX thread
         return true;
     }
 
