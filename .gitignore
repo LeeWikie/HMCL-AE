@@ -77,3 +77,6 @@ language-subtag-registry
 
 HMCL无AI集成项目.json
 .claude/
+
+# AUR 打包文件,暂时本地保留,不上传远程
+packaging/aur/
