@@ -143,6 +143,8 @@ public final class AiPromptBuilder {
         blocks.add("");
         blocks.add(DISCIPLINE);
         blocks.add("");
+        blocks.add(PLAYBOOKS);
+        blocks.add("");
         blocks.add(buildRuntimeContext());
 
         if (planMode.getAsBoolean()) {
