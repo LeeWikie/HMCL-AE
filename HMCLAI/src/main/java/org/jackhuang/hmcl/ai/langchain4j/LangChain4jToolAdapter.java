@@ -60,6 +60,11 @@ public final class LangChain4jToolAdapter {
     @Nullable
     private final ToolConfirmHandler criticalConfirmHandler;
 
+    /// Id of the chat session this adapter serves, stamped onto background jobs so their
+    /// completion can be routed back to the right conversation for auto-continuation.
+    @Nullable
+    private volatile String sessionId;
+
     /// Creates an adapter with no safety enforcement (allow-all). Used by tests and
     /// callers that gate elsewhere.
     public LangChain4jToolAdapter(ToolRegistry registry) {
@@ -82,6 +87,11 @@ public final class LangChain4jToolAdapter {
         this.policy = policy;
         this.confirmHandler = confirmHandler;
         this.criticalConfirmHandler = criticalConfirmHandler;
+    }
+
+    /// Binds the chat session id used to tag background jobs (for completion routing).
+    public void setSessionId(@Nullable String sessionId) {
+        this.sessionId = sessionId;
     }
 
     /// Builds LangChain4j [`ToolSpecification`] instances for all non-disabled
@@ -226,7 +236,7 @@ public final class LangChain4jToolAdapter {
                 final Map<String, Object> bgParams = parameters;
                 String label = summarizeForConfirm(tool.getName(), parameters);
                 String jobId = org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
-                        .submit(null, tool.getName(), label, () -> bgTool.execute(bgParams));
+                        .submit(sessionId, tool.getName(), label, () -> bgTool.execute(bgParams));
                 return ToolExecutionResultMessage.from(request,
                         "已在后台开始执行（任务 #" + jobId + "：" + tool.getName() + "）。聊天不会被占用，"
                                 + "你可以继续做别的事；之后用 check_job(jobId=\"" + jobId + "\") 查看结果，"

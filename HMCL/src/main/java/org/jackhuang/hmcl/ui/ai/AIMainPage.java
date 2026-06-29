@@ -1282,6 +1282,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         jobsPane.setManaged(false);
         org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
                 .addChangeListener(() -> Platform.runLater(this::refreshJobsPane));
+        // Auto-continue: when a background job of the current session finishes while idle, feed its
+        // result back so the AI carries on (the chosen "auto-continue" behaviour).
+        org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
+                .addCompletionListener(job -> Platform.runLater(() -> onBackgroundJobComplete(job)));
         refreshJobsPane();
 
         VBox composerInner = new VBox(4, jobsPane, askPanel, fileChipArea, inputField);
@@ -2504,6 +2508,37 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private boolean isStreaming() {
         return currentResponse != null;
+    }
+
+    /// Auto-continuation hook. When a background job belonging to the CURRENT session finishes while
+    /// no response is streaming, feed its result back as a follow-up so the AI carries on. Jobs from
+    /// other sessions (or completions arriving mid-turn) are left for the task panel / check_job.
+    private void onBackgroundJobComplete(org.jackhuang.hmcl.ai.tools.AiJobManager.Job job) {
+        AiSession current = sessionStore.getCurrentSession();
+        if (current == null || job.getSessionId() == null || !job.getSessionId().equals(current.getId())) {
+            return;
+        }
+        if (isStreaming()) {
+            return; // a turn is already in flight; don't pile on
+        }
+        String status;
+        switch (job.getStatus()) {
+            case SUCCEEDED: status = "已完成"; break;
+            case FAILED: status = "失败"; break;
+            case CANCELLED: status = "已取消"; break;
+            default: return; // not terminal — ignore
+        }
+        org.jackhuang.hmcl.ai.tools.ToolResult result = job.getResult();
+        String detail = result != null && result.getOutput() != null && !result.getOutput().isEmpty()
+                ? result.getOutput()
+                : (job.getError() != null ? job.getError() : "");
+        if (detail.length() > 2000) {
+            detail = detail.substring(0, 2000) + "…";
+        }
+        String prompt = "（后台任务 #" + job.getId() + "「" + job.getLabel() + "」" + status + "）"
+                + (detail.isEmpty() ? "" : "结果：\n" + detail)
+                + "\n请据此继续。";
+        submitExternalPrompt(prompt);
     }
 
     /// Rebuilds the live background-tasks panel above the composer: one row per RUNNING job with its

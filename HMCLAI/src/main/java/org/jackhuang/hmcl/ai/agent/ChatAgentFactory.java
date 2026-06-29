@@ -131,7 +131,7 @@ public final class ChatAgentFactory {
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
                         settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
                         settings.isFileWriteConfirmEnabled());
-        AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler);
+        AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler, session.getId());
         // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
         // truncation) to the LangChain4j adapter when that is the active backend.
         if (client instanceof org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter adapter) {
@@ -305,19 +305,23 @@ public final class ChatAgentFactory {
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools) {
         // Connection-test / non-interactive paths: no safety enforcement needed.
         return resolveClient(config, tools, new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
-                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null, null);
+                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null, null, null);
     }
 
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools,
                                               org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy,
                                               @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
-                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler) {
+                                              @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler,
+                                              @Nullable String sessionId) {
         String provider = config.getProvider();
         AiProtocolFamily family = provider != null ? AiProtocolFamily.fromId(provider) : null;
 
         LangChain4jToolAdapter toolAdapter = tools != null
                 ? new LangChain4jToolAdapter(tools, policy, confirmHandler, criticalConfirmHandler)
                 : null;
+        if (toolAdapter != null) {
+            toolAdapter.setSessionId(sessionId);
+        }
 
         if (family != null) {
             return switch (family) {
