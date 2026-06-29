@@ -463,6 +463,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Diagnostics (reuse HMCL SystemInfo hardware detection; screenshots listing).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
+        // Convenience (clipboard for pasted crash logs / errors, conversation export, prompt presets).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadClipboardTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PromptLibraryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportConversationTool(sessionStore));
+        // Local content visibility (read-only snapshots of what the user already has).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListWorldsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListServersTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListResourcePacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstanceDetailsTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
