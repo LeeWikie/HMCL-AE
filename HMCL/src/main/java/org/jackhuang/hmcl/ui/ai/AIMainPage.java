@@ -513,7 +513,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // World / datapack management (reuse repository run dir; delete is confirm-gated).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListDatapacksTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallDatapackTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool(aiSettings::isDeleteToRecycleBin));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ImportWorldTool());
         // Mod info / updates / modpack export (reuse ModManager / RemoteAddonRepository / export task).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());

@@ -26,11 +26,8 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Map;
 import java.util.stream.Stream;
 
@@ -49,6 +46,14 @@ import java.util.stream.Stream;
 /// path, file count and total size that would be removed, then explains how to confirm.
 @NotNullByDefault
 public final class DeleteWorldTool implements Tool {
+
+    private final java.util.function.BooleanSupplier toRecycleBin;
+
+    /// @param toRecycleBin whether to route deletions to the OS recycle bin (recoverable) instead
+    ///                     of permanently deleting; read live on each call.
+    public DeleteWorldTool(java.util.function.BooleanSupplier toRecycleBin) {
+        this.toRecycleBin = toRecycleBin;
+    }
 
     @Override
     public String getName() {
@@ -144,33 +149,17 @@ public final class DeleteWorldTool implements Tool {
                     + "Re-invoke delete_world with confirm=true to proceed (consider backup_world first).");
         }
 
+        boolean trashed;
         try {
-            deleteRecursively(worldDir);
+            trashed = FileTrash.delete(worldDir, toRecycleBin.getAsBoolean());
         } catch (Throwable e) {
             return ToolResult.failure("Failed to delete world '" + world + "': " + e.getMessage());
         }
 
-        return ToolResult.success("Permanently deleted world '" + world + "' of instance '" + instance + "' from disk.\n"
-                + "Removed path: " + worldDir + "\n"
-                + "Files removed: " + stats[0] + " (total " + stats[1] + " bytes)");
-    }
-
-    private static void deleteRecursively(Path root) throws IOException {
-        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.delete(file);
-                return FileVisitResult.CONTINUE;
-            }
-
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, @Nullable IOException exc) throws IOException {
-                if (exc != null) {
-                    throw exc;
-                }
-                Files.delete(dir);
-                return FileVisitResult.CONTINUE;
-            }
-        });
+        return ToolResult.success((trashed
+                ? "Moved world '" + world + "' of instance '" + instance + "' to the system recycle bin (recoverable).\n"
+                : "Permanently deleted world '" + world + "' of instance '" + instance + "' from disk.\n")
+                + "Path: " + worldDir + "\n"
+                + "Files: " + stats[0] + " (total " + stats[1] + " bytes)");
     }
 }
