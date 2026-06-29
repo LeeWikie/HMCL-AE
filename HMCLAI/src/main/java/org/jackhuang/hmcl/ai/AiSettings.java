@@ -182,6 +182,12 @@ public final class AiSettings {
         @SerializedName("sendOnEnter")
         private boolean sendOnEnter = DEFAULT_SEND_ON_ENTER;
 
+        @SerializedName("criticalConfirmEnabled")
+        private boolean criticalConfirmEnabled = DEFAULT_CRITICAL_CONFIRM_ENABLED;
+
+        @SerializedName("memoryEnabled")
+        private boolean memoryEnabled = DEFAULT_MEMORY_ENABLED;
+
         @SerializedName("customInstructions")
         @Nullable
         private String customInstructions = "";
@@ -236,6 +242,8 @@ public final class AiSettings {
     private final BooleanProperty fileWriteConfirmEnabled;
     private final BooleanProperty autoScrollEnabled;
     private final BooleanProperty sendOnEnter;
+    private final BooleanProperty criticalConfirmEnabled;
+    private final BooleanProperty memoryEnabled;
     private final StringProperty customInstructions;
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
@@ -298,6 +306,12 @@ public final class AiSettings {
     /// Default value for the send-on-Enter flag (Enter sends; off → Ctrl+Enter sends).
     public static final boolean DEFAULT_SEND_ON_ENTER = true;
 
+    /// Default for the red second-tier critical confirmation (on).
+    public static final boolean DEFAULT_CRITICAL_CONFIRM_ENABLED = true;
+
+    /// Default for the global memory feature (remember/recall) being enabled.
+    public static final boolean DEFAULT_MEMORY_ENABLED = true;
+
     /// Default reply-language mode (`"auto"` = follow the user's language).
     /// Other accepted values: `"zh"` (always 简体中文), `"en"` (always English).
     public static final String DEFAULT_RESPONSE_LANGUAGE = "auto";
@@ -343,6 +357,8 @@ public final class AiSettings {
         this.fileWriteConfirmEnabled = new SimpleBooleanProperty(this, "fileWriteConfirmEnabled", DEFAULT_FILE_WRITE_CONFIRM_ENABLED);
         this.autoScrollEnabled = new SimpleBooleanProperty(this, "autoScrollEnabled", DEFAULT_AUTO_SCROLL_ENABLED);
         this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
+        this.criticalConfirmEnabled = new SimpleBooleanProperty(this, "criticalConfirmEnabled", DEFAULT_CRITICAL_CONFIRM_ENABLED);
+        this.memoryEnabled = new SimpleBooleanProperty(this, "memoryEnabled", DEFAULT_MEMORY_ENABLED);
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
@@ -503,6 +519,14 @@ public final class AiSettings {
     /// Returns the send-on-Enter flag property.
     public BooleanProperty sendOnEnterProperty() {
         return sendOnEnter;
+    }
+
+    public BooleanProperty criticalConfirmEnabledProperty() {
+        return criticalConfirmEnabled;
+    }
+
+    public BooleanProperty memoryEnabledProperty() {
+        return memoryEnabled;
     }
 
     /// Returns the user custom-instructions property (appended to the system prompt).
@@ -681,6 +705,14 @@ public final class AiSettings {
     /// Returns whether Enter sends the message (off → Ctrl+Enter sends).
     public boolean isSendOnEnter() {
         return sendOnEnter.get();
+    }
+
+    public boolean isCriticalConfirmEnabled() {
+        return criticalConfirmEnabled.get();
+    }
+
+    public boolean isMemoryEnabled() {
+        return memoryEnabled.get();
     }
 
     /// Returns the user custom-instructions text (may be empty).
@@ -941,6 +973,8 @@ public final class AiSettings {
         data.fileWriteConfirmEnabled = fileWriteConfirmEnabled.get();
         data.autoScrollEnabled = autoScrollEnabled.get();
         data.sendOnEnter = sendOnEnter.get();
+        data.criticalConfirmEnabled = criticalConfirmEnabled.get();
+        data.memoryEnabled = memoryEnabled.get();
         data.customInstructions = customInstructions.get();
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
@@ -1100,6 +1134,8 @@ public final class AiSettings {
         fileWriteConfirmEnabled.set(data.fileWriteConfirmEnabled);
         autoScrollEnabled.set(data.autoScrollEnabled);
         sendOnEnter.set(data.sendOnEnter);
+        criticalConfirmEnabled.set(data.criticalConfirmEnabled);
+        memoryEnabled.set(data.memoryEnabled);
         customInstructions.set(data.customInstructions != null ? data.customInstructions : "");
         responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);

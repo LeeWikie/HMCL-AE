@@ -469,8 +469,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Global memory (hermes-style file-based store; remember/recall across conversations).
         rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
+        if (aiSettings.isMemoryEnabled()) {
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
+        }
         // Mod management (reuse repository mods dir; toggle by renaming, not shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ToggleModTool());
@@ -1958,7 +1960,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                             skillRegistry,
                             searchConfig, this::isPlanMode, rememberStore);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
-                            this::confirmDangerousOperation, this::confirmCriticalOperation);
+                            this::confirmDangerousOperation,
+                            aiSettings.isCriticalConfirmEnabled() ? this::confirmCriticalOperation : null);
                 });
     }
 

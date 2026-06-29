@@ -1705,7 +1705,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
                         aiSettings.webAccessEnabledProperty()),
                 toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
-                        aiSettings.fileWriteConfirmEnabledProperty()));
+                        aiSettings.fileWriteConfirmEnabledProperty()),
+                toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
+                        aiSettings.criticalConfirmEnabledProperty()),
+                toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
+                        aiSettings.memoryEnabledProperty()));
         ComponentList safetyCard = new ComponentList();
         safetyCard.getContent().add(safetySub);
 
