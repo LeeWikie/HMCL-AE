@@ -331,8 +331,8 @@ public final class AiSettings {
     /// Default for the red second-tier critical confirmation (on).
     public static final boolean DEFAULT_CRITICAL_CONFIRM_ENABLED = true;
 
-    /// Default for the global memory feature (remember/recall) being enabled.
-    public static final boolean DEFAULT_MEMORY_ENABLED = true;
+    /// Default for the global memory feature (remember/recall): OFF by default; the user opts in.
+    public static final boolean DEFAULT_MEMORY_ENABLED = false;
 
     /// Default for the developer-only bypass that skips ALL permission confirmations
     /// (dangerous + red critical). Off by default; only the 开发者选项 toggle turns it on.
