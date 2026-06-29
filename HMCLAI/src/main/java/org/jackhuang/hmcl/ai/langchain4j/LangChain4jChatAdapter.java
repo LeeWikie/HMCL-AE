@@ -219,6 +219,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// failing call (see {@link #DUP_CALL_LIMIT}).
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
                             java.util.Map<String, Integer> callCounts) {
+        if (callback.isCancelled()) {
+            return; // user pressed Stop — abort instead of issuing another model call / tool cycle
+        }
         if (cycle >= maxToolCycles) {
             callback.onComplete("");
             return;
@@ -263,6 +266,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     // Tool-call turn: record it, run each tool, feed results back, loop.
                     conversation.add(aiMessage);
                     for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
+                        if (callback.isCancelled()) {
+                            return; // stopped mid-turn — skip this and any remaining tool calls
+                        }
                         callback.onToolActivity(req.name(), req.arguments());
                         ToolExecutionResultMessage result = executeWithLoopGuard(req, callCounts);
                         if (result != null) {

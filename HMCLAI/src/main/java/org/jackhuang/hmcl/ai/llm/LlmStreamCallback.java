@@ -68,4 +68,11 @@ public interface LlmStreamCallback {
     ///
     /// @param error the exception describing the failure
     void onError(LlmException error);
+
+    /// Whether the user has cancelled this turn (pressed Stop). The agent loop polls this between
+    /// tool cycles and tool calls so a stopped turn stops executing tools instead of running on.
+    /// Defaults to {@code false} for callbacks that don't support cancellation.
+    default boolean isCancelled() {
+        return false;
+    }
 }

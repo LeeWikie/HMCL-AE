@@ -311,6 +311,7 @@ public final class ChatAgent {
             }
             @Override public void onToolActivity(String name, String args) { callback.onToolActivity(name, args); }
             @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
+            @Override public boolean isCancelled() { return cancelled != null && cancelled.getAsBoolean(); }
             @Override public void onComplete(String c) {
                 String f = c != null && full.isEmpty() ? c : full.toString();
                 if (cancelled != null && cancelled.getAsBoolean()) {
