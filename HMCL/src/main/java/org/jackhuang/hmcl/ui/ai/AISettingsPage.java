@@ -281,7 +281,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
 
-        JFXButton testButton = FXUtils.newToggleButton4(SVG.SEARCH, 16);
+        JFXButton testButton = FXUtils.newToggleButton4(SVG.ROCKET_LAUNCH, 16);
         FXUtils.installFastTooltip(testButton, "测试连通性");
         testButton.setOnAction(e -> showTestModelsDialog());
 
@@ -789,9 +789,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 String model = r.modelId;
                 Thread worker = new Thread(() -> {
                     try {
+                        long startNanos = System.nanoTime();
                         org.jackhuang.hmcl.ai.agent.ChatAgentFactory.testConnectionSync(
                                 p.getEndpoint(), p.getApiKey(), model, p.getProtocolFamily(), 15);
-                        Platform.runLater(() -> r.result.setText("✓ 正常"));
+                        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                        Platform.runLater(() -> r.result.setText("✓ " + elapsedMs + " ms"));
                     } catch (Exception ex) {
                         Platform.runLater(() -> r.result.setText("✗ " + ex.getMessage()));
                     }

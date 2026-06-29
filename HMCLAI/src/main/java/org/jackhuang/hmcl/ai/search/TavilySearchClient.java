@@ -28,7 +28,11 @@ public final class TavilySearchClient implements SearchClient {
 
     @Override
     public SearchResponse search(String query, int maxResults) throws Exception {
+        // Honour HMCL's globally-configured proxy. The JDK HttpClient does NOT use the
+        // default ProxySelector unless told to (unlike HttpURLConnection/NetworkUtils),
+        // so without this the search silently bypasses the user's proxy and fails (esp. in CN).
         HttpClient client = HttpClient.newBuilder()
+                .proxy(java.net.ProxySelector.getDefault())
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 

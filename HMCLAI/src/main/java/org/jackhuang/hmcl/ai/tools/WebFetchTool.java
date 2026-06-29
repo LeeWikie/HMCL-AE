@@ -91,6 +91,10 @@ public final class WebFetchTool implements ToolSpec {
 
         try {
             HttpClient client = HttpClient.newBuilder()
+                    // Honour HMCL's globally-configured proxy (JDK HttpClient ignores the
+                    // default ProxySelector otherwise) — without this web_fetch bypasses the
+                    // user's proxy and fails for many sites, especially in CN.
+                    .proxy(java.net.ProxySelector.getDefault())
                     .followRedirects(HttpClient.Redirect.NORMAL)
                     .connectTimeout(Duration.ofSeconds(15))
                     .build();

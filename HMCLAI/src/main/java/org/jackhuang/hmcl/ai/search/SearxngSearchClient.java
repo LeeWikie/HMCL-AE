@@ -28,7 +28,11 @@ public final class SearxngSearchClient implements SearchClient {
 
     @Override
     public SearchResponse search(String query, int maxResults) throws Exception {
+        // Honour HMCL's globally-configured proxy (JDK HttpClient ignores the default
+        // ProxySelector otherwise) and follow redirects (self-hosted instances often 301).
         HttpClient client = HttpClient.newBuilder()
+                .proxy(java.net.ProxySelector.getDefault())
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
