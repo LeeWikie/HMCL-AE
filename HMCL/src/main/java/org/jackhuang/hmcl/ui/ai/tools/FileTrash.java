@@ -56,14 +56,20 @@ public final class FileTrash {
     /// @throws IOException if the target could not be removed by either method
     public static boolean delete(Path target, boolean preferTrash) throws IOException {
         if (preferTrash && trashSupported()) {
+            boolean moved;
             try {
-                if (Desktop.getDesktop().moveToTrash(target.toFile())) {
-                    return true;
-                }
+                moved = Desktop.getDesktop().moveToTrash(target.toFile());
             } catch (Throwable t) {
-                // Fall through to a permanent delete below.
+                // Fail CLOSED: the user asked for a recoverable delete, so do NOT silently fall back
+                // to a permanent recursive delete — surface the failure so the caller can report it.
+                throw new IOException("Failed to move to the recycle bin: " + t.getMessage(), t);
             }
+            if (moved) {
+                return true;
+            }
+            throw new IOException("The system declined to move this to the recycle bin.");
         }
+        // preferTrash is off, or the platform has no recycle bin at all: permanent delete.
         deleteRecursively(target);
         return false;
     }

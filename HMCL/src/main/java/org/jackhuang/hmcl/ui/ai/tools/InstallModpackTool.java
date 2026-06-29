@@ -90,6 +90,10 @@ public final class InstallModpackTool implements Tool {
         try {
             RemoteAddon.Version version = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionId);
             RemoteAddon.File file = version.file();
+            if (file == null || file.url() == null || file.url().isBlank()) {
+                return ToolResult.failure("This modpack version has no downloadable file. "
+                        + "Try a different version or source.");
+            }
 
             modpackFile = Files.createTempFile("hmcl-ai-modpack", ".zip");
             Path downloadTarget = modpackFile;

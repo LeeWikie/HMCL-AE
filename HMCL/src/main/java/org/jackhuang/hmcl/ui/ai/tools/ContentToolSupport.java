@@ -257,6 +257,14 @@ final class ContentToolSupport {
                 throw e;
             } catch (Exception e) {
                 last = e;
+                // A non-network failure (404 / checksum / disk full) won't be fixed by retrying the
+                // SAME source — skip the duplicate same-provider attempt and move to the next distinct
+                // mirror. Network errors keep the same-source retry (they are usually transient).
+                if (!isNetworkError(e)) {
+                    while (attempt + 1 < plan.size() && plan.get(attempt + 1).equals(plan.get(attempt))) {
+                        attempt++;
+                    }
+                }
                 if (attempt < plan.size() - 1) {
                     sleepBackoff(attempt);
                 }

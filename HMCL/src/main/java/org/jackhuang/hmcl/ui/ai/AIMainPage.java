@@ -338,6 +338,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Live "background tasks" panel above the composer (running jobs + cancel buttons).
     @Nullable
     private VBox jobsPane;
+    /// Consecutive auto-continue turns without a real user message; capped to stop a runaway
+    /// background-job ↔ auto-continue loop from silently burning tokens. Reset on a real user send.
+    private static final int AUTO_CONTINUE_LIMIT = 5;
+    private int autoContinueDepth = 0;
     @Nullable
     private Label fileChip;
     @Nullable
@@ -2283,6 +2287,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         String text = inputField.getText().trim();
         if (text.isEmpty()) return;
 
+        // A real user message resets the auto-continue depth guard. Auto-continue prompts start with
+        // the "（后台任务" marker and deliberately do NOT reset it, so a runaway loop can't be masked.
+        if (!text.startsWith("（后台任务")) {
+            autoContinueDepth = 0;
+        }
+
         AiSession session = sessionStore.getCurrentSession();
         if (session == null) return;
 
@@ -2535,6 +2545,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (detail.length() > 2000) {
             detail = detail.substring(0, 2000) + "…";
         }
+        if (autoContinueDepth >= AUTO_CONTINUE_LIMIT) {
+            addSystemMessage("后台任务「" + job.getLabel() + "」" + status
+                    + "，但连续自动继续已达上限，已暂停以免空转。发送任意消息让我接着处理。");
+            return;
+        }
+        autoContinueDepth++;
         String prompt = "（后台任务 #" + job.getId() + "「" + job.getLabel() + "」" + status + "）"
                 + (detail.isEmpty() ? "" : "结果：\n" + detail)
                 + "\n请据此继续。";
