@@ -91,7 +91,7 @@ AI 会:读 `logs/latest.log` → 找最新崩溃报告 → 用 HMCL 内置规则
 
 ### 2. 运行
 - **Windows**:双击 `.exe`
-- **Linux / macOS**:`java -jar HMCL-AE-xxx.exe`(这个 exe 同时也是合法 jar)
+- **Linux / macOS**:`java -jar HMCL-AE-xxx.jar`(需 Java 8+)
 
 ### 3. 配 AI
 进入侧栏 **「AI 助手」** → **「AI 设置」→「服务商」** → 添加,填:

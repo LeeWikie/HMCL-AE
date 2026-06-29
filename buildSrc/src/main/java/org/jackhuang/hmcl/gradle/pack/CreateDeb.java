@@ -97,19 +97,19 @@ public abstract class CreateDeb extends DefaultTask {
     }
 
     private String getLauncherPath() {
-        return "/usr/bin/hmcl-" + getCurrentTypeName();
+        return "/usr/bin/hmcl-ae-" + getCurrentTypeName();
     }
 
     private String getTargetPath() {
-        return "/usr/share/java/hmcl/" + getAppShFile().getAsFile().get().getName();
+        return "/usr/share/java/hmcl-ae/" + getAppShFile().getAsFile().get().getName();
     }
 
     private String getDesktopFilePath() {
-        return "/usr/share/applications/hmcl-%s.desktop".formatted(getCurrentTypeName());
+        return "/usr/share/applications/hmcl-ae-%s.desktop".formatted(getCurrentTypeName());
     }
 
     private String getIconTargetPath() {
-        return "/usr/share/icons/hicolor/256x256/apps/hmcl-%s.png".formatted(getCurrentTypeName());
+        return "/usr/share/icons/hicolor/256x256/apps/hmcl-ae-%s.png".formatted(getCurrentTypeName());
     }
 
     /// Ensures parent directories exist in the tar stream before child entries are written.
@@ -228,22 +228,22 @@ public abstract class CreateDeb extends DefaultTask {
                 Priority: optional
                 Architecture: all
                 Installed-Size: %d
-                Maintainer: Glavo <zjx001202@gmail.com>
-                Description: Hello Minecraft! Launcher
-                Homepage: https://github.com/HMCL-dev/HMCL
+                Maintainer: Neryc <leewikie@outlook.com>
+                Description: HMCL-AE — AI-enhanced Minecraft launcher (a modified version of HMCL)
+                Homepage: https://github.com/LeeWikie/HMCL-AE
                 """.formatted(getCurrentType().getPackageName(), getVersion().get(), Math.max(installedSize, 1)) + "\n";
     }
 
-    private static final String COMMON_LAUNCHER_PATH = "/usr/bin/hmcl";
+    private static final String COMMON_LAUNCHER_PATH = "/usr/bin/hmcl-ae";
 
-    /// Registers the channel command into the shared `hmcl` alternatives group.
+    /// Registers the channel command into the shared `hmcl-ae` alternatives group.
     private String getPostinst() {
         return """
                 #!/bin/sh
                 set -e
-                
+
                 if [ "$1" = configure ]; then
-                    update-alternatives --install %s hmcl %s %d
+                    update-alternatives --install %s hmcl-ae %s %d
                 fi
                 """.formatted(COMMON_LAUNCHER_PATH, getLauncherPath(), getCurrentType().getAlternativesPriority());
     }
@@ -255,7 +255,7 @@ public abstract class CreateDeb extends DefaultTask {
                 set -e
                 
                 if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
-                    update-alternatives --remove hmcl %s
+                    update-alternatives --remove hmcl-ae %s
                 fi
                 """.formatted(getLauncherPath());
     }

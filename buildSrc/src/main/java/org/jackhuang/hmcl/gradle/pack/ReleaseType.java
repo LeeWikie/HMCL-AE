@@ -23,9 +23,9 @@ package org.jackhuang.hmcl.gradle.pack;
 /// priority are intentionally centralized here so `CreateDeb` can stay focused
 /// on archive layout instead of duplicating channel-specific branching.
 public enum ReleaseType {
-    STABLE("stable", "hmcl", "HMCL", 100),
-    DEVELOPMENT("beta", "hmcl-beta", "HMCL (Beta)", 200),
-    NIGHTLY("nightly", "hmcl-nightly", "HMCL (Nightly)", 300);
+    STABLE("stable", "hmcl-ae", "HMCL-AE", 100),
+    DEVELOPMENT("beta", "hmcl-ae-beta", "HMCL-AE (Beta)", 200),
+    NIGHTLY("nightly", "hmcl-ae-nightly", "HMCL-AE (Nightly)", 300);
 
     private final String name;
     private final String packageName;
