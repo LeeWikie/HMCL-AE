@@ -68,6 +68,26 @@ public final class AiModelEntry {
     @SerializedName("cacheReadPricePerMillion")
     private double cacheReadPricePerMillion;
 
+    /// Comma-separated input modalities the model accepts (e.g. "text", "text,image").
+    @SerializedName("inputModalities")
+    private String inputModalities = "text";
+
+    /// Comma-separated output modalities the model produces (e.g. "text").
+    @SerializedName("outputModalities")
+    private String outputModalities = "text";
+
+    /// Whether the model supports native tool/function calling.
+    @SerializedName("supportsTools")
+    private boolean supportsTools = true;
+
+    /// Whether the model can read images (vision input).
+    @SerializedName("supportsVision")
+    private boolean supportsVision = false;
+
+    /// Whether the model exposes a reasoning/thinking mode.
+    @SerializedName("supportsReasoning")
+    private boolean supportsReasoning = false;
+
     /// No-arg constructor for Gson.
     public AiModelEntry() {
     }
@@ -165,6 +185,46 @@ public final class AiModelEntry {
 
     public void setCacheReadPricePerMillion(double v) {
         this.cacheReadPricePerMillion = Math.max(0, v);
+    }
+
+    public String getInputModalities() {
+        return inputModalities == null ? "text" : inputModalities;
+    }
+
+    public void setInputModalities(String v) {
+        this.inputModalities = v == null || v.isBlank() ? "text" : v.trim();
+    }
+
+    public String getOutputModalities() {
+        return outputModalities == null ? "text" : outputModalities;
+    }
+
+    public void setOutputModalities(String v) {
+        this.outputModalities = v == null || v.isBlank() ? "text" : v.trim();
+    }
+
+    public boolean isSupportsTools() {
+        return supportsTools;
+    }
+
+    public void setSupportsTools(boolean v) {
+        this.supportsTools = v;
+    }
+
+    public boolean isSupportsVision() {
+        return supportsVision;
+    }
+
+    public void setSupportsVision(boolean v) {
+        this.supportsVision = v;
+    }
+
+    public boolean isSupportsReasoning() {
+        return supportsReasoning;
+    }
+
+    public void setSupportsReasoning(boolean v) {
+        this.supportsReasoning = v;
     }
 
     /// Returns whether any non-zero price is configured.

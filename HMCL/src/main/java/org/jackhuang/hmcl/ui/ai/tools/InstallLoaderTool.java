@@ -336,6 +336,8 @@ public final class InstallLoaderTool implements ToolSpec {
     @Nullable
     private static String await(Task<?> task, int timeoutSeconds, String what) {
         TaskExecutor executor = task.executor(false);
+        // Mirror the task chain's live progress onto the chat UI's progress card.
+        executor.addTaskListener(ContentToolSupport.progressListener(what));
         boolean[] success = {false};
         Thread worker = new Thread(() -> success[0] = executor.test(), "AI-install-loader");
         worker.setDaemon(true);

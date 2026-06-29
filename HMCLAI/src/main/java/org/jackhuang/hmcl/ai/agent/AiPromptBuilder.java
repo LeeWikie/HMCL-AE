@@ -5,6 +5,7 @@ import org.jackhuang.hmcl.ai.tools.GameContextTool;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
+import org.jackhuang.hmcl.ai.remember.RememberStore;
 import org.jackhuang.hmcl.ai.skills.SkillRegistry;
 import org.jackhuang.hmcl.ai.tools.AiExecutionPolicy;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -69,6 +70,7 @@ public final class AiPromptBuilder {
             "- list_accounts, add_offline_account(username), select_account(username), microsoft_login (native OAuth dialog). list_java: discovered Java runtimes.",
             "Diagnostics / convenience:",
             "- system_info: OS/CPU/GPU/RAM for crash diagnosis. read_clipboard: read text the user copied (use when they say they pasted/copied a crash log or error). copy_to_clipboard(text): put something on their clipboard. export_conversation: save this chat to a Markdown file. prompt_library: browse reusable prompt presets.",
+            "- list_screenshots(instance): list captured screenshots. ocr_image(image[, instance]): READ the text inside an image — use when a crash/error is given as a SCREENSHOT instead of text (list_screenshots first, then ocr_image the file name), then diagnose from the recognized text. Needs OCR enabled in AI 设置 > OCR; if it returns a 'not enabled/not implemented' error, tell the user to configure it.",
             "Memory (persists across conversations, file-based):",
             "- remember(title, content[, tags]): store a durable fact (user preferences, decisions, recurring setups). recall(query[, tag, limit]): retrieve them. Use recall at the start when a task may depend on remembered preferences; use remember when the user states a lasting preference.",
             "Web / dialog:",
@@ -91,13 +93,15 @@ public final class AiPromptBuilder {
             "3. Be efficient — minimise tool calls. Do NOT call the same read/list tool again with the same arguments; remember what you already saw in this conversation (instances, versions, mod lists, account list). Gather everything a step needs, then act. Batch all the decisions you need into ONE `ask` instead of several.",
             "4. If a tool reports a wrong/unknown target (e.g. 'no such instance'), call the matching list_* tool ONCE to get valid names, then proceed — don't guess repeatedly.",
             "5. Prefer the smallest sequence of tools that completes the task. Don't re-verify things you just did unless the user asks.",
-            "6. For a multi-step task (more than ~2 steps), call todo_write at the START to lay out the steps as a checklist, then call it again after EACH step to update statuses (exactly one item 'in_progress' at a time). This shows the user your progress. Skip it for trivial one-shot requests.");
+            "6. For a multi-step task (more than ~2 steps), call todo_write at the START to lay out the steps as a checklist, then call it again after EACH step to update statuses (exactly one item 'in_progress' at a time). This shows the user your progress. Skip it for trivial one-shot requests.",
+            "7. When you call `shell` (or any operation that changes the user's files/system), ALWAYS pass a `description`: ONE short plain-language sentence in the user's language saying what it does and why. The user sees THIS in the confirmation dialog — they usually cannot read a raw command, so a missing/vague description means they'll blindly approve. Make it honest and specific.",
+            "8. Catastrophic operations (deleting a world/instance, editing save/NBT data, deleting backups) trigger an extra RED safety confirmation and should be preceded by a backup. Treat these with maximum caution: read/verify before writing, explain the risk plainly, never proceed if the user hesitates.");
 
     private static final String PLAYBOOKS = String.join("\n",
             "Operating playbooks (follow end-to-end with tools; never hand the user manual steps you can do yourself):",
             "[Fresh install + mods] e.g. \"装个最新版+Sodium全家桶\": 1) list_instances. 2) list_game_versions to get REAL versions (never guess from memory). 3) search_mods for the requested mod(s) to get real options/compatibility. 4) ask the user with REAL options: which version (from list_game_versions), which loader (Fabric for the Sodium family), which addons (multi, from search_mods); pick sensible defaults and ask only what matters. 5) install_loader(gameVersion, loader) to create the instance; tell the user it may take a while. 6) install_mod for each chosen mod, passing instance = the just-installed instance name so files land in the right place (see Version isolation). 7) verify (read/glob the mods dir) and tell the user it's ready (offer launch_instance).",
             "[Add mods to an existing instance]: 1) list_instances; ask which instance if ambiguous. 2) search_mods; ask which to install (multi, real options) if unspecified. 3) install_mod with instance = that instance. 4) verify + report.",
-            "[Diagnose a crash / \"游戏崩溃了\"]: 1) read logs/latest.log and the newest file in crash-reports/ (glob then read). 2) match_known_errors on that text. 3) explain the cause in plain language + the concrete fix; if you can perform the fix (toggle a mod, change memory, install a mod) do it (confirm anything destructive).",
+            "[Diagnose a crash / \"游戏崩溃了\"]: 1) read logs/latest.log and the newest file in crash-reports/ (glob then read). If the user gave the error only as a SCREENSHOT, use list_screenshots then ocr_image to turn it into text first. 2) match_known_errors on that text. 3) explain the cause in plain language + the concrete fix; if you can perform the fix (toggle a mod, change memory, install a mod) do it (confirm anything destructive).",
             "[Log in / switch account / \"登录/换账号\"]: 1) list_accounts to see what exists and which is active. 2) For a Microsoft (genuine/online) account: call microsoft_login — it opens HMCL's native sign-in dialog; tell the user to finish signing in there, then list_accounts to confirm. 3) For an offline account: add_offline_account(username). 4) To switch the active one: select_account(username). NEVER try to perform login via shell or by editing files.",
             "Version isolation: the runtime context states the selected instance and whether isolation is ON. ON => that instance's mods/saves/config live under versions/<name>/; OFF => they are SHARED in the base .minecraft across all versions. Before installing mods, know which it is and pass the target instance to install_mod. If isolation is OFF, warn that version-specific mods will be shared across versions.");
 
@@ -117,20 +121,31 @@ public final class AiPromptBuilder {
     private final SkillRegistry skillRegistry;
     private final AiSearchConfig searchConfig;
     private final BooleanSupplier planMode;
+    /// Optional read-only handle to the global memory store. When non-null AND
+    /// {@link AiSettings#isAutoRecallMemory()} is on, recent memories are injected into the prompt.
+    @Nullable
+    private final RememberStore rememberStore;
 
     public AiPromptBuilder(AiSettings settings, ToolRegistry toolRegistry,
                            SkillRegistry skillRegistry, AiSearchConfig searchConfig) {
-        this(settings, toolRegistry, skillRegistry, searchConfig, () -> false);
+        this(settings, toolRegistry, skillRegistry, searchConfig, () -> false, null);
     }
 
     public AiPromptBuilder(AiSettings settings, ToolRegistry toolRegistry,
                            SkillRegistry skillRegistry, AiSearchConfig searchConfig,
                            BooleanSupplier planMode) {
+        this(settings, toolRegistry, skillRegistry, searchConfig, planMode, null);
+    }
+
+    public AiPromptBuilder(AiSettings settings, ToolRegistry toolRegistry,
+                           SkillRegistry skillRegistry, AiSearchConfig searchConfig,
+                           BooleanSupplier planMode, @Nullable RememberStore rememberStore) {
         this.settings = settings;
         this.toolRegistry = toolRegistry;
         this.skillRegistry = skillRegistry;
         this.searchConfig = searchConfig;
         this.planMode = planMode;
+        this.rememberStore = rememberStore;
     }
 
     public String build() {
@@ -169,7 +184,71 @@ public final class AiPromptBuilder {
         blocks.add("");
         blocks.add("Tool execution policy: " + describePolicy(policy));
 
+        // ---- User-configurable prompt injections (block two) ----
+
+        String languageDirective = languageDirective(settings.getResponseLanguage());
+        if (languageDirective != null) {
+            blocks.add("");
+            blocks.add(languageDirective);
+        }
+
+        if (settings.isAutoRecallMemory()) {
+            String memory = recallMemoryBlock();
+            if (memory != null && !memory.isEmpty()) {
+                blocks.add("");
+                blocks.add(memory);
+            }
+        }
+
+        String custom = settings.getCustomInstructions().trim();
+        if (!custom.isEmpty()) {
+            blocks.add("");
+            blocks.add("用户自定义指令（务必遵守）:\n" + custom);
+        }
+
         return String.join("\n", blocks);
+    }
+
+    /// Maps a reply-language mode to a directive, or {@code null} for `auto` / unknown.
+    @Nullable
+    private static String languageDirective(String mode) {
+        return switch (mode) {
+            case "zh" -> "Always reply in 简体中文, regardless of the language the user writes in.";
+            case "en" -> "Always reply in English, regardless of the language the user writes in.";
+            default -> null;
+        };
+    }
+
+    /// Builds a compact, size-capped (≤1.5KB) block of the most recent stored memories,
+    /// or {@code null} if the store is unavailable/empty.
+    @Nullable
+    private String recallMemoryBlock() {
+        if (rememberStore == null) {
+            return null;
+        }
+        try {
+            java.util.List<RememberStore.Entry> entries = rememberStore.listAll();
+            if (entries.isEmpty()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder("Saved memories (from earlier conversations — use if relevant):");
+            int budget = 1500;
+            for (RememberStore.Entry e : entries) {
+                String title = e.getTitle() != null ? e.getTitle() : "(untitled)";
+                String content = e.getContent() != null ? e.getContent().trim() : "";
+                if (content.length() > 200) {
+                    content = content.substring(0, 200) + "…";
+                }
+                String line = "\n- " + title + ": " + content;
+                if (sb.length() + line.length() > budget) {
+                    break;
+                }
+                sb.append(line);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /// Injects basic machine info and the concrete runtime paths so the agent knows the

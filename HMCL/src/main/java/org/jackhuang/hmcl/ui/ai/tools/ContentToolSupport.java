@@ -17,10 +17,13 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import javafx.application.Platform;
+import javafx.beans.InvalidationListener;
 import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.CurseForgeRemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
+import org.jackhuang.hmcl.ai.tools.ToolProgress;
 import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.DownloadProviders;
@@ -28,6 +31,7 @@ import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.task.TaskExecutor;
+import org.jackhuang.hmcl.task.TaskListener;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
@@ -140,6 +144,7 @@ final class ContentToolSupport {
     /// Cancels the task on timeout and rethrows the underlying failure otherwise.
     static void runTaskBlocking(Task<?> task, int timeoutSeconds, String operation) throws Exception {
         TaskExecutor executor = task.executor();
+        executor.addTaskListener(progressListener(operation));
         Future<Boolean> future = WORKER.submit(() -> {
             boolean ok = executor.test();
             if (!ok) {
@@ -161,6 +166,67 @@ final class ContentToolSupport {
             }
             throw new IOException(operation + " failed: " + cause, cause);
         }
+    }
+
+    /// Builds a [TaskListener] that bridges an HMCL task chain's live progress onto the
+    /// decoupled [ToolProgress] bus, so the chat UI can render a real-time progress card.
+    ///
+    /// It tracks the currently *running* significant subtask and forwards that subtask's
+    /// {@code progressProperty} (fraction; negative = indeterminate) together with a phase
+    /// label (the subtask name when meaningful, otherwise the operation label). HMCL mutates
+    /// the progress property on the JavaFX thread, so the property listener is added/removed
+    /// on that same thread to avoid racing with JavaFX's (non-thread-safe) listener lists.
+    static TaskListener progressListener(String operation) {
+        return new TaskListener() {
+            /// The subtask we are currently mirroring (confined to the JavaFX thread).
+            private Task<?> tracked;
+            private final InvalidationListener onProgress = o -> {
+                Task<?> current = tracked;
+                if (current != null) {
+                    ToolProgress.publish(operation, current.progressProperty().get(), phaseOf(current, operation));
+                }
+            };
+
+            @Override
+            public void onStart() {
+                ToolProgress.begin(operation, operation + "…");
+            }
+
+            @Override
+            public void onRunning(Task<?> task) {
+                if (!task.getSignificance().shouldShow()) {
+                    return;
+                }
+                Platform.runLater(() -> {
+                    if (tracked != null) {
+                        tracked.progressProperty().removeListener(onProgress);
+                    }
+                    tracked = task;
+                    task.progressProperty().addListener(onProgress);
+                    ToolProgress.publish(operation, task.progressProperty().get(), phaseOf(task, operation));
+                });
+            }
+
+            @Override
+            public void onStop(boolean success, TaskExecutor executor) {
+                Platform.runLater(() -> {
+                    if (tracked != null) {
+                        tracked.progressProperty().removeListener(onProgress);
+                        tracked = null;
+                    }
+                    ToolProgress.finish(operation, success, success ? operation + " 完成" : operation + " 失败");
+                });
+            }
+        };
+    }
+
+    /// A human-readable phase label: the task's own name when it set one, else the operation.
+    private static String phaseOf(Task<?> task, String fallback) {
+        String name = task.getName();
+        if (name == null || name.isBlank() || name.equals(task.getClass().getName())) {
+            return fallback;
+        }
+        return name;
     }
 
     /// Performs a popularity-sorted search and renders a compact, model-friendly listing.

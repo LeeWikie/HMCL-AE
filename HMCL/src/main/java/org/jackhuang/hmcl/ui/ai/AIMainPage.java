@@ -24,6 +24,7 @@ import com.google.gson.annotations.SerializedName;
 import com.jfoenix.controls.JFXButton;
 import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXPopup;
+import com.jfoenix.controls.JFXProgressBar;
 import com.jfoenix.controls.JFXRadioButton;
 import com.jfoenix.controls.JFXTextField;
 import javafx.animation.FadeTransition;
@@ -269,6 +270,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// can find the matching card appended by onToolActivity.
     private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
 
+    /// The tool card currently executing (set on tool-call, cleared on its result). Live download
+    /// / install progress from {@link org.jackhuang.hmcl.ai.tools.ToolProgress} is routed here, so
+    /// the chat shows a real-time progress bar instead of freezing. Tools run sequentially, so a
+    /// single "active" card is sufficient. JavaFX-thread confined.
+    @Nullable
+    private ToolCard activeToolCard;
+
     /// Whether the message view should auto-scroll to the bottom on new content. Set false when
     /// the user scrolls up to read history; restored when they scroll back to the bottom.
     private boolean stickToBottom = true;
@@ -293,8 +301,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             .create();
     private static final String CHAT_SETTINGS_FILE = "ai-chat-settings.json";
     private static final String SEARCH_CONFIG_FILE = "ai-search-settings.json";
+    private static final String OCR_CONFIG_FILE = org.jackhuang.hmcl.ai.ocr.AiOcrConfig.FILE_NAME;
     /// Web-search config, loaded from disk and shared by the web_search tool + the prompt.
     private final org.jackhuang.hmcl.ai.search.AiSearchConfig searchConfig;
+    /// OCR config, loaded from disk and shared by the ocr_image tool.
+    private final org.jackhuang.hmcl.ai.ocr.AiOcrConfig ocrConfig;
+    /// Global memory store (created in registerTools); shared with the prompt builder for auto-recall.
+    private org.jackhuang.hmcl.ai.remember.RememberStore rememberStore;
 
     @Nullable
     private VBox chatSettingsDrawer;
@@ -362,6 +375,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         this.chatSettings = loadChatSettings();
         this.searchConfig = loadSearchConfig();
+        this.ocrConfig = loadOcrConfig();
 
         if (sessionStore.getCurrentSession() == null) {
             sessionStore.createSession();
@@ -380,6 +394,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         buildLayout();
 
         registerTools();
+        installToolProgressListener();
 
         // Seed built-in skills and load the skill list so the agent's prompt knows them.
         skillRegistry.setSkillsDir(SettingsManager.localConfigDirectory().resolve("ai-skills"));
@@ -461,11 +476,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
         // Global memory (hermes-style file-based store; remember/recall across conversations).
-        org.jackhuang.hmcl.ai.remember.RememberStore rememberStore =
-                new org.jackhuang.hmcl.ai.remember.RememberStore(
+        rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
+        if (aiSettings.isMemoryEnabled()) {
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
+        }
         // Mod management (reuse repository mods dir; toggle by renaming, not shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ToggleModTool());
@@ -477,6 +493,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Diagnostics (reuse HMCL SystemInfo hardware detection; screenshots listing).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
+        // OCR a screenshot/image into text (crash/error shots) — backend chosen in AI 设置 > OCR.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
         // Convenience (clipboard for pasted crash logs / errors, conversation export, prompt presets).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadClipboardTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
@@ -487,6 +505,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListServersTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListResourcePacksTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstanceDetailsTool());
+        // World / datapack management (reuse repository run dir; delete is confirm-gated).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListDatapacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallDatapackTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ImportWorldTool());
+        // Mod info / updates / modpack export (reuse ModManager / RemoteAddonRepository / export task).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckModUpdatesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportModpackTool());
+        // Server / Java / instance runtime (SLP ping, JavaManager download, GameSettings memory, log cleanup).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PingServerTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
+        // Save NBT editing (flagship: NBTExplorer-grade automation; writes are backup-gated +
+        // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
@@ -1926,9 +1967,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 id -> {
                     AiPromptBuilder pb = new AiPromptBuilder(aiSettings, toolRegistry,
                             skillRegistry,
-                            searchConfig, this::isPlanMode);
+                            searchConfig, this::isPlanMode, rememberStore);
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
-                            this::confirmDangerousOperation);
+                            this::confirmDangerousOperation,
+                            aiSettings.isCriticalConfirmEnabled() ? this::confirmCriticalOperation : null);
                 });
     }
 
@@ -1950,6 +1992,31 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         try {
             return future.get(120, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /// Second-tier CRITICAL confirmation (red) for catastrophic operations — deleting a
+    /// world/instance, editing save/NBT data, deleting backups, or removing files under
+    /// saves/playerdata/.minecraft. Shown IN ADDITION to (and after) the normal confirm,
+    /// right before execution, even in YOLO mode. Denies on timeout/error so nothing hangs.
+    private boolean confirmCriticalOperation(String toolName, String summary) {
+        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                Controllers.confirm(
+                        "⛔ 高危操作，可能不可恢复！请仔细确认：\n\n" + summary
+                                + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
+                        "⛔ 高危操作 · 二次确认",
+                        () -> future.complete(true),
+                        () -> future.complete(false));
+            } catch (Throwable t) {
+                future.complete(false);
+            }
+        });
+        try {
+            return future.get(180, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Throwable t) {
             return false;
         }
@@ -1997,6 +2064,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
         pendingToolCards.clear();
+        activeToolCard = null;
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
         int index = 0;
         for (LlmMessage msg : session.getMessages()) {
@@ -2265,6 +2333,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
         streamingBubble = null;
         pendingToolCards.clear();
+        activeToolCard = null;
 
         // Plan mode: gate off write-capable tools for this response; restored in
         // exitStreamingState() (reached on completion, stop, and error).
@@ -2322,6 +2391,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     ToolCard card = new ToolCard(toolName);
                     messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
                     pendingToolCards.computeIfAbsent(toolName, k -> new java.util.ArrayDeque<>()).addLast(card);
+                    // Route live download / install progress to this card until it finishes.
+                    activeToolCard = card;
                     scrollToBottom();
                 });
             }
@@ -2341,6 +2412,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         card.complete(success, resultSummary);
                         scrollToBottom();
                     }
+                    activeToolCard = null;
                 });
             }
 
@@ -2918,6 +2990,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         private final Label result = new Label();
         private final String toolName;
 
+        /// Live progress UI (hidden until the first progress event, removed once the tool finishes).
+        private final JFXProgressBar progressBar = new JFXProgressBar();
+        private final Label progressLabel = new Label();
+        private final VBox progressBox = new VBox(2, progressLabel, progressBar);
+        private boolean finished = false;
+
         ToolCard(String toolName) {
             super(2);
             this.toolName = toolName;
@@ -2934,6 +3012,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             result.setVisible(false);
             result.setManaged(false);
 
+            progressLabel.setWrapText(true);
+            progressLabel.setMaxWidth(440);
+            progressLabel.getStyleClass().add("ai-tool-card-result");
+            progressBar.setPrefWidth(440);
+            progressBar.setMaxWidth(Double.MAX_VALUE);
+            progressBox.setVisible(false);
+            progressBox.setManaged(false);
+
             header.setOnMouseClicked(e -> {
                 String r = result.getText();
                 if (r != null && !r.isEmpty()) {
@@ -2943,11 +3029,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
             });
 
-            getChildren().addAll(header, result);
+            getChildren().addAll(header, progressBox, result);
+        }
+
+        /// Applies a live progress update. {@code fraction < 0} renders an indeterminate bar.
+        /// JavaFX thread only. No-op after the tool has finished.
+        void updateProgress(double fraction, @Nullable String message) {
+            if (finished) {
+                return;
+            }
+            if (!progressBox.isVisible()) {
+                progressBox.setVisible(true);
+                progressBox.setManaged(true);
+            }
+            progressBar.setProgress(fraction < 0 || Double.isNaN(fraction) ? -1.0 : Math.min(fraction, 1.0));
+            String pct = (fraction >= 0 && !Double.isNaN(fraction))
+                    ? " " + Math.round(fraction * 100) + "%" : "";
+            progressLabel.setText((message == null || message.isBlank() ? "" : message.strip()) + pct);
         }
 
         /// Updates the card once its tool finishes; stores the (collapsible) result text.
         void complete(boolean success, @Nullable String summary) {
+            finished = true;
+            progressBox.setVisible(false);
+            progressBox.setManaged(false);
             header.setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
             getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
             if (summary != null && !summary.isBlank()) {
@@ -2955,6 +3060,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 header.getStyleClass().add("ai-tool-card-expandable");
             }
         }
+    }
+
+    /// Subscribes the chat view to the decoupled {@link org.jackhuang.hmcl.ai.tools.ToolProgress}
+    /// bus so long-running download / install tools render a live progress card instead of
+    /// appearing frozen. Events may arrive on any thread, so we marshal onto the JavaFX thread
+    /// and route them to the {@link #activeToolCard} of the in-flight tool call.
+    private void installToolProgressListener() {
+        org.jackhuang.hmcl.ai.tools.ToolProgress.setListener(event -> Platform.runLater(() -> {
+            ToolCard card = activeToolCard;
+            if (card == null) {
+                return; // no tool card on screen (display disabled, or between turns)
+            }
+            if (event.done()) {
+                // The terminal state is rendered by ToolCard.complete() via onToolResult; just
+                // collapse the in-flight bar so a finished card never shows a stale progress.
+                card.updateProgress(event.success() ? 1.0 : -1.0, event.message());
+            } else {
+                card.updateProgress(event.fraction(), event.message());
+            }
+            scrollToBottom();
+        }));
     }
 
     /// Adds a tool event entry to the message list with tool-specific styling
@@ -3015,6 +3141,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
         } catch (IOException | JsonParseException e) {
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
+        }
+    }
+
+    /// Loads the OCR config from disk (defaults — disabled — if absent or corrupt).
+    private org.jackhuang.hmcl.ai.ocr.AiOcrConfig loadOcrConfig() {
+        Path filePath = SettingsManager.localConfigDirectory().resolve(OCR_CONFIG_FILE);
+        try {
+            String json = Files.readString(filePath, StandardCharsets.UTF_8);
+            org.jackhuang.hmcl.ai.ocr.AiOcrConfig loaded =
+                    CHAT_SETTINGS_GSON.fromJson(json, org.jackhuang.hmcl.ai.ocr.AiOcrConfig.class);
+            return loaded != null ? loaded : new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
+        } catch (NoSuchFileException e) {
+            return new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
+        } catch (IOException | JsonParseException e) {
+            return new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
         }
     }
 
