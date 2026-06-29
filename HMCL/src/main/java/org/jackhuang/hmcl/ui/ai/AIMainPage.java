@@ -2446,6 +2446,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     exitStreamingState();
                     persistStore();
+                    maybeAutoTitle(agent, streamSession);
                 });
             }
 
@@ -2473,6 +2474,28 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private boolean isStreaming() {
         return currentResponse != null;
+    }
+
+    /// After the first user+assistant exchange, asks the model for a concise title (one cheap
+    /// non-streaming call) and replaces the naive first-message truncation. No-op if disabled,
+    /// not the first exchange, or the model returns nothing.
+    private void maybeAutoTitle(ChatAgent agent, AiSession session) {
+        if (agent == null || session == null || !aiSettings.isAutoTitleEnabled()) return;
+        java.util.List<org.jackhuang.hmcl.ai.llm.LlmMessage> msgs = session.getMessages();
+        if (msgs.size() != 2) return; // only right after the very first user+assistant exchange
+        String firstUser = null, firstAssistant = null;
+        for (org.jackhuang.hmcl.ai.llm.LlmMessage m : msgs) {
+            if ("user".equals(m.getRole()) && firstUser == null) firstUser = m.getContent();
+            else if ("assistant".equals(m.getRole()) && firstAssistant == null) firstAssistant = m.getContent();
+        }
+        if (firstUser == null || firstUser.isBlank()) return;
+        agent.suggestTitle(firstUser, firstAssistant).thenAccept(title -> Platform.runLater(() -> {
+            if (title == null || title.isBlank()) return;
+            session.setTitle(title);
+            if (sessionStore.getCurrentSession() == session) updateHeader(session);
+            refreshSessionList();
+            persistStore();
+        }));
     }
 
     /// Switches the send button into Stop mode while a response streams.

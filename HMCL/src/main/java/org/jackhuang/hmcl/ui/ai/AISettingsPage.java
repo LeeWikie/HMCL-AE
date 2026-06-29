@@ -1724,7 +1724,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow("自动滚动到底部", "有新消息时自动滚到底（手动上滑时暂停）",
                         aiSettings.autoScrollEnabledProperty()),
                 toggleRow("回车发送", "开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送",
-                        aiSettings.sendOnEnterProperty()));
+                        aiSettings.sendOnEnterProperty()),
+                toggleRow("自动命名会话", "首轮对话后让模型生成简短标题（替代截取首句）",
+                        aiSettings.autoTitleEnabledProperty()));
         ComponentList uiCard = new ComponentList();
         uiCard.getContent().add(uiSub);
 

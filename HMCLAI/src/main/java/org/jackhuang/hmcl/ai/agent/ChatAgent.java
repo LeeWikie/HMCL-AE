@@ -110,6 +110,54 @@ public final class ChatAgent {
         return summary;
     }
 
+    /// System instruction used to derive a short conversation title from the opening exchange.
+    private static final String TITLE_SYSTEM_PROMPT = String.join("\n",
+            "You generate a very short title for a conversation, summarising what the user wants.",
+            "Reply in the user's language (Chinese if the conversation is mainly Chinese): 4-10 Chinese",
+            "characters, or 2-6 words in English. Output ONLY the title text — no quotes, no surrounding",
+            "punctuation, no prefix like '标题:', no explanation, a single line, at most 24 characters.");
+
+    /// Derives a concise title for this conversation from its opening exchange using a single
+    /// non-streaming model call (no tools). Runs off the FX thread on the agent executor.
+    ///
+    /// Completes with a trimmed, single-line title (quotes/punctuation stripped, length-capped),
+    /// or an empty string if the model returns nothing or the call fails — callers should keep
+    /// their existing title in that case.
+    public CompletableFuture<String> suggestTitle(String firstUser, @Nullable String firstAssistant) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                StringBuilder ctx = new StringBuilder("用户：").append(firstUser.strip());
+                if (firstAssistant != null && !firstAssistant.isBlank()) {
+                    String a = firstAssistant.strip();
+                    if (a.length() > 300) a = a.substring(0, 300);
+                    ctx.append("\n助手：").append(a);
+                }
+                ctx.append("\n\n只输出这段对话的简短标题。");
+                List<LlmMessage> request = new ArrayList<>(2);
+                request.add(new LlmMessage("system", TITLE_SYSTEM_PROMPT));
+                request.add(new LlmMessage("user", ctx.toString()));
+                String title = client.sendMessage(Collections.unmodifiableList(request)).join();
+                if (title == null) {
+                    return "";
+                }
+                title = title.strip();
+                int nl = title.indexOf('\n');
+                if (nl >= 0) {
+                    title = title.substring(0, nl).strip();
+                }
+                // Strip a leading "标题:"/"Title:" label and any wrapping quotes the model may add.
+                title = title.replaceFirst("(?i)^\\s*(标题|title)\\s*[:：]\\s*", "");
+                title = title.replaceAll("^[\"'`「『《]+", "").replaceAll("[\"'`」』》]+$", "").strip();
+                if (title.length() > 24) {
+                    title = title.substring(0, 24).strip();
+                }
+                return title;
+            } catch (RuntimeException e) {
+                return "";
+            }
+        }, executor);
+    }
+
     public CompletableFuture<String> send(String userInput) {
         return CompletableFuture.supplyAsync(() -> {
             try { return doSend(userInput); }
