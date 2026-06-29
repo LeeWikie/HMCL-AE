@@ -415,12 +415,18 @@ public final class AiCli {
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ToggleModTool());
 
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.BackupWorldTool());
+        // Versioned world-backup engine (timestamped full-copy snapshots + retention N); restore is red-critical.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CreateWorldBackupTool(settings::getWorldBackupRetention));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListWorldBackupsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RestoreWorldBackupTool(settings::getWorldBackupRetention));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadGameOptionsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetGameOptionTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OpenGameFolderTool());
 
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
+        // OCR a screenshot/image into text — backend configured in .hmcl/ai-ocr-settings.json.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(loadOcrConfig()));
 
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadClipboardTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
@@ -431,6 +437,34 @@ public final class AiCli {
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListServersTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListResourcePacksTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstanceDetailsTool());
+
+        // World / datapack management (delete is confirm-gated).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListDatapacksTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallDatapackTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ImportWorldTool());
+
+        // Mod info / updates / modpack export.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckModUpdatesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportModpackTool());
+
+        // Server / Java / instance runtime (SLP ping, Java download, memory, log cleanup).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PingServerTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
+
+        // Save NBT editing (writes are backup-gated + path-confined + atomic + red-critical confirm).
+        if (settings.isNbtToolsEnabled()) {
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
+        }
 
         // Wire the currently-selected Minecraft run directory into the filesystem +
         // install_mod tools, exactly like AIMainPage.refreshGameContext().
@@ -469,6 +503,21 @@ public final class AiCli {
             return repository.getBaseDirectory();
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /// Loads OCR settings from `.hmcl/ai-ocr-settings.json` (mirrors AIMainPage.loadOcrConfig),
+    /// falling back to defaults when the file is absent or unparseable. Credentials are never printed.
+    private static org.jackhuang.hmcl.ai.ocr.AiOcrConfig loadOcrConfig() {
+        Path filePath = SettingsManager.localConfigDirectory()
+                .resolve(org.jackhuang.hmcl.ai.ocr.AiOcrConfig.FILE_NAME);
+        try {
+            String json = Files.readString(filePath);
+            org.jackhuang.hmcl.ai.ocr.AiOcrConfig loaded =
+                    GSON.fromJson(json, org.jackhuang.hmcl.ai.ocr.AiOcrConfig.class);
+            return loaded != null ? loaded : new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
+        } catch (Exception e) {
+            return new org.jackhuang.hmcl.ai.ocr.AiOcrConfig();
         }
     }
 
