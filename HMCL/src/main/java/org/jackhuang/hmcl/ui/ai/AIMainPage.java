@@ -439,6 +439,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Instance lifecycle (rename/duplicate are reversible; delete is confirm-gated).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.EditInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool());
+        // Accounts (reuse HMCL's account system — never shell out / hand-edit for login).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListAccountsTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AddOfflineAccountTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SelectAccountTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.MicrosoftLoginTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();
