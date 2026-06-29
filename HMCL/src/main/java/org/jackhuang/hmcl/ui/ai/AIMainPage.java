@@ -732,6 +732,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         StackPane.setMargin(autocompletePopup, new Insets(0, 0, 6, 12));
         messagesArea.getStyleClass().add("ai-messages-area");
         VBox.setVgrow(messagesArea, Priority.ALWAYS);
+        // Let the scrollable message area absorb all vertical shrink so the header and
+        // composer keep their size when the window is small.
+        messagesArea.setMinHeight(0);
 
         // Drag-and-drop file support on the chat area
         messagesArea.setOnDragOver(this::handleDragOver);
@@ -862,6 +865,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         headerBox.setPadding(new Insets(9, 14, 9, 14));
         headerBox.getStyleClass().add("ai-main-header");
         HBox.setHgrow(titleArea, Priority.ALWAYS);
+        // Never let the header be squeezed away when the window gets short — only the
+        // (scrollable) message area should yield vertical space.
+        headerBox.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
         return headerBox;
     }
@@ -1030,6 +1036,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputField.setPromptText(i18n("ai.input_placeholder"));
         inputField.getStyleClass().add("ai-input-field");
         HBox.setHgrow(inputField, Priority.ALWAYS);
+        // Keep the input box usably tall even in a short window.
+        inputField.setMinHeight(34);
         inputField.setOnAction(e -> sendMessage());
 
         // Autocomplete key listener
@@ -1084,6 +1092,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputBar.setAlignment(Pos.BOTTOM_LEFT);
         inputBar.setPadding(new Insets(8, 16, 12, 16));
         inputBar.getStyleClass().add("ai-input-bar");
+        // The composer must never be squeezed away in a short window.
+        inputBar.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
         // Thinking level popup button — circular, left of the input
         JFXButton thinkBtn = new JFXButton();
