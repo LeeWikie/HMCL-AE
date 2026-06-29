@@ -473,6 +473,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AddOfflineAccountTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SelectAccountTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.MicrosoftLoginTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetSkinTool());
         // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
         // Global memory (hermes-style file-based store; remember/recall across conversations).
@@ -518,6 +519,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Mod info / updates / modpack export (reuse ModManager / RemoteAddonRepository / export task).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckModUpdatesTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteModTool(aiSettings::isDeleteToRecycleBin));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.UpdateModTool(aiSettings::isDeleteToRecycleBin));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportModpackTool());
         // Server / Java / instance runtime (SLP ping, JavaManager download, GameSettings memory, log cleanup).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PingServerTool());

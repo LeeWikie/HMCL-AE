@@ -21,7 +21,6 @@ import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
-import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.game.ModpackHelper;
 import org.jackhuang.hmcl.modpack.Modpack;
 import org.jackhuang.hmcl.setting.Profile;
@@ -31,11 +30,9 @@ import org.jackhuang.hmcl.task.Schedulers;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.util.io.CompressingUtils;
 
-import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 
 /// AI tool that installs a modpack as a NEW game instance.
@@ -94,13 +91,15 @@ public final class InstallModpackTool implements Tool {
             RemoteAddon.Version version = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionId);
             RemoteAddon.File file = version.file();
 
-            DownloadProvider provider = ContentToolSupport.downloadProvider();
-            List<URI> urls = provider.injectURLWithCandidates(file.url());
-
             modpackFile = Files.createTempFile("hmcl-ai-modpack", ".zip");
-            FileDownloadTask downloadTask = new FileDownloadTask(urls, modpackFile);
-            downloadTask.setName(version.name());
-            ContentToolSupport.runTaskBlocking(downloadTask, DOWNLOAD_TIMEOUT_SECONDS, "Modpack download");
+            Path downloadTarget = modpackFile;
+            // Retry with backoff and switch download source on failure (flaky-network resilience).
+            ContentToolSupport.runDownloadWithFallback(provider -> {
+                FileDownloadTask downloadTask = new FileDownloadTask(
+                        provider.injectURLWithCandidates(file.url()), downloadTarget);
+                downloadTask.setName(version.name());
+                return downloadTask;
+            }, DOWNLOAD_TIMEOUT_SECONDS, "Modpack download");
 
             Charset charset = CompressingUtils.findSuitableEncoding(modpackFile);
             Modpack modpack = ModpackHelper.readModpackManifest(modpackFile, charset);
@@ -116,6 +115,9 @@ public final class InstallModpackTool implements Tool {
 
             return ToolResult.success("Installed modpack \"" + modpack.getName() + "\" as a new instance: " + name);
         } catch (Exception e) {
+            if (ContentToolSupport.isNetworkError(e)) {
+                return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+            }
             return ToolResult.failure("Modpack install failed: " + AbstractContentSearchTool.messageOf(e));
         } finally {
             if (modpackFile != null) {

@@ -1,0 +1,361 @@
+{
+  "schemaVersion": 1,
+  "_comment": "Model metadata catalog for auto-filling AiModelEntry. Keyed by exact (strict) model id. Context windows and modalities are best-effort accurate; prices are per-million-tokens and are 0 when not confidently known (callers treat 0 as 'use default'). Anthropic prices/limits are from the bundled claude-api reference. Update via ModelLibrary.installUpdate for the future silent-update path.",
+  "models": {
+    "gpt-4o": {
+      "contextWindow": 128000, "maxOutput": 16384,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4o-mini": {
+      "contextWindow": 128000, "maxOutput": 16384,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4.1": {
+      "contextWindow": 1047576, "maxOutput": 32768,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4.1-mini": {
+      "contextWindow": 1047576, "maxOutput": 32768,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4.1-nano": {
+      "contextWindow": 1047576, "maxOutput": 32768,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4-turbo": {
+      "contextWindow": 128000, "maxOutput": 4096,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gpt-4": {
+      "contextWindow": 8192, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "gpt-3.5-turbo": {
+      "contextWindow": 16385, "maxOutput": 4096,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "o1": {
+      "contextWindow": 200000, "maxOutput": 100000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "o1-mini": {
+      "contextWindow": 128000, "maxOutput": 65536,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": false, "supportsVision": false, "supportsReasoning": true
+    },
+    "o3": {
+      "contextWindow": 200000, "maxOutput": 100000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "o3-mini": {
+      "contextWindow": 200000, "maxOutput": 100000,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": true
+    },
+    "o4-mini": {
+      "contextWindow": 200000, "maxOutput": 100000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+
+    "claude-fable-5": {
+      "contextWindow": 1000000, "maxOutput": 128000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 10.0, "outputPricePerMillion": 50.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-8": {
+      "contextWindow": 1000000, "maxOutput": 128000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 5.0, "outputPricePerMillion": 25.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-7": {
+      "contextWindow": 1000000, "maxOutput": 128000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 5.0, "outputPricePerMillion": 25.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-6": {
+      "contextWindow": 1000000, "maxOutput": 128000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 5.0, "outputPricePerMillion": 25.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-5": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 5.0, "outputPricePerMillion": 25.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-5-20251101": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 5.0, "outputPricePerMillion": 25.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-sonnet-4-6": {
+      "contextWindow": 1000000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-sonnet-4-5": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-sonnet-4-5-20250929": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-haiku-4-5": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 1.0, "outputPricePerMillion": 5.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-haiku-4-5-20251001": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 1.0, "outputPricePerMillion": 5.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-1": {
+      "contextWindow": 200000, "maxOutput": 32000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 15.0, "outputPricePerMillion": 75.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-1-20250805": {
+      "contextWindow": 200000, "maxOutput": 32000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 15.0, "outputPricePerMillion": 75.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-0": {
+      "contextWindow": 200000, "maxOutput": 32000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 15.0, "outputPricePerMillion": 75.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-opus-4-20250514": {
+      "contextWindow": 200000, "maxOutput": 32000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 15.0, "outputPricePerMillion": 75.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-sonnet-4-0": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-sonnet-4-20250514": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-3-7-sonnet-20250219": {
+      "contextWindow": 200000, "maxOutput": 64000,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "claude-3-5-sonnet-20241022": {
+      "contextWindow": 200000, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "claude-3-5-sonnet-20240620": {
+      "contextWindow": 200000, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 3.0, "outputPricePerMillion": 15.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "claude-3-5-haiku-20241022": {
+      "contextWindow": 200000, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "inputPricePerMillion": 0.8, "outputPricePerMillion": 4.0,
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "claude-3-opus-20240229": {
+      "contextWindow": 200000, "maxOutput": 4096,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 15.0, "outputPricePerMillion": 75.0,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "claude-3-haiku-20240307": {
+      "contextWindow": 200000, "maxOutput": 4096,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "inputPricePerMillion": 0.25, "outputPricePerMillion": 1.25,
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+
+    "deepseek-chat": {
+      "contextWindow": 65536, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "deepseek-reasoner": {
+      "contextWindow": 65536, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": true
+    },
+    "deepseek-coder": {
+      "contextWindow": 65536, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+
+    "glm-4.6": {
+      "contextWindow": 200000, "maxOutput": 128000,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": true
+    },
+    "glm-4.5": {
+      "contextWindow": 131072, "maxOutput": 98304,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": true
+    },
+    "glm-4-plus": {
+      "contextWindow": 131072, "maxOutput": 4096,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "glm-4": {
+      "contextWindow": 131072, "maxOutput": 4096,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "glm-4-flash": {
+      "contextWindow": 131072, "maxOutput": 4096,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "glm-4v": {
+      "contextWindow": 8192, "maxOutput": 1024,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": false, "supportsVision": true, "supportsReasoning": false
+    },
+
+    "gemini-1.5-pro": {
+      "contextWindow": 2097152, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gemini-1.5-flash": {
+      "contextWindow": 1048576, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gemini-2.0-flash": {
+      "contextWindow": 1048576, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "gemini-2.5-pro": {
+      "contextWindow": 1048576, "maxOutput": 65536,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+    "gemini-2.5-flash": {
+      "contextWindow": 1048576, "maxOutput": 65536,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": true
+    },
+
+    "qwen-max": {
+      "contextWindow": 32768, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "qwen-plus": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "qwen-turbo": {
+      "contextWindow": 1000000, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "qwen2.5-72b-instruct": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "qwq-32b": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": true
+    },
+
+    "mistral-large-latest": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "mistral-small-latest": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "open-mistral-nemo": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "codestral-latest": {
+      "contextWindow": 262144, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "pixtral-large-latest": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+
+    "llama3.3": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "llama3.1": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "gemma3": {
+      "contextWindow": 131072, "maxOutput": 8192,
+      "inputModalities": "text,image", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": true, "supportsReasoning": false
+    },
+    "mistral": {
+      "contextWindow": 32768, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    },
+    "qwen2.5": {
+      "contextWindow": 32768, "maxOutput": 8192,
+      "inputModalities": "text", "outputModalities": "text",
+      "supportsTools": true, "supportsVision": false, "supportsReasoning": false
+    }
+  }
+}

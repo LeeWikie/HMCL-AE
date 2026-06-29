@@ -31,6 +31,7 @@ import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.task.TaskExecutor;
 import org.jetbrains.annotations.Nullable;
 
+import java.net.SocketTimeoutException;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.Locale;
@@ -64,6 +65,9 @@ public final class InstallLoaderTool implements ToolSpec {
 
     /// Timeout (seconds) for a full game + loader installation.
     private static final int INSTALL_TIMEOUT_SECONDS = 600;
+
+    /// Maximum attempts for the install task, retried on transient network failure.
+    private static final int INSTALL_MAX_ATTEMPTS = 3;
 
     @Override
     public String getName() {
@@ -257,22 +261,45 @@ public final class InstallLoaderTool implements ToolSpec {
         }
         name = uniqueName(profile, name);
 
-        // ---- Assemble the install task exactly like the wizard does. ----
-        GameBuilder builder = dependencyManager.gameBuilder()
-                .name(name)
-                .gameVersion(gameVersion);
-        if (loaderId != null) {
-            builder.version(loaderId, loaderVersion);
-        }
+        // ---- Assemble and run the install task exactly like the wizard does, retrying on
+        // transient network failure with backoff. The underlying FileDownloadTasks are
+        // resumable and HMCL's AutoDownloadProvider already supplies both BMCLAPI and Mojang
+        // candidate URLs, so a rebuilt install task naturally exercises the alternate source. ----
+        String installError = null;
+        for (int attempt = 0; attempt < INSTALL_MAX_ATTEMPTS; attempt++) {
+            GameBuilder builder = dependencyManager.gameBuilder()
+                    .name(name)
+                    .gameVersion(gameVersion);
+            if (loaderId != null) {
+                builder.version(loaderId, loaderVersion);
+            }
 
-        Task<?> installTask;
-        try {
-            installTask = builder.buildAsync();
-        } catch (RuntimeException e) {
-            return ToolResult.failure("Failed to build the install task: " + describe(e));
-        }
+            Task<?> installTask;
+            try {
+                installTask = builder.buildAsync();
+            } catch (RuntimeException e) {
+                if (ContentToolSupport.isNetworkError(e) && attempt < INSTALL_MAX_ATTEMPTS - 1) {
+                    installError = ContentToolSupport.networkErrorAdvice(e);
+                    if (backoffInterrupted(attempt)) {
+                        break;
+                    }
+                    continue;
+                }
+                return ToolResult.failure(ContentToolSupport.isNetworkError(e)
+                        ? ContentToolSupport.networkErrorAdvice(e)
+                        : "Failed to build the install task: " + describe(e));
+            }
 
-        String installError = await(installTask, INSTALL_TIMEOUT_SECONDS, "Installation");
+            boolean[] networkFailure = {false};
+            installError = await(installTask, INSTALL_TIMEOUT_SECONDS, "Installation", networkFailure);
+            if (installError == null) {
+                break; // success
+            }
+            // Only retry transient network failures; fail fast on logical errors.
+            if (!networkFailure[0] || attempt == INSTALL_MAX_ATTEMPTS - 1 || backoffInterrupted(attempt)) {
+                break;
+            }
+        }
         if (installError != null) {
             return ToolResult.failure(installError);
         }
@@ -335,6 +362,14 @@ public final class InstallLoaderTool implements ToolSpec {
     /// elapses. Returns {@code null} on success, or a human-readable error message otherwise.
     @Nullable
     private static String await(Task<?> task, int timeoutSeconds, String what) {
+        return await(task, timeoutSeconds, what, null);
+    }
+
+    /// Variant of {@link #await(Task, int, String)} that, for network/connectivity failures
+    /// (including timeouts), returns a clear actionable Chinese message and flags
+    /// {@code networkOut[0]} so the caller can decide whether to retry.
+    @Nullable
+    private static String await(Task<?> task, int timeoutSeconds, String what, @Nullable boolean[] networkOut) {
         TaskExecutor executor = task.executor(false);
         // Mirror the task chain's live progress onto the chat UI's progress card.
         executor.addTaskListener(ContentToolSupport.progressListener(what));
@@ -353,13 +388,36 @@ public final class InstallLoaderTool implements ToolSpec {
 
         if (worker.isAlive()) {
             cancelQuietly(executor);
-            return what + " timed out after " + timeoutSeconds + " seconds";
+            if (networkOut != null) {
+                networkOut[0] = true;
+            }
+            return ContentToolSupport.networkErrorAdvice(
+                    new SocketTimeoutException(what + " 超时（" + timeoutSeconds + " 秒）"));
         }
 
         if (!success[0]) {
-            return what + " failed: " + describe(executor.getException());
+            Throwable exception = executor.getException();
+            if (ContentToolSupport.isNetworkError(exception)) {
+                if (networkOut != null) {
+                    networkOut[0] = true;
+                }
+                return ContentToolSupport.networkErrorAdvice(exception);
+            }
+            return what + " failed: " + describe(exception);
         }
         return null;
+    }
+
+    /// Sleeps with backoff before a retry. Returns {@code true} if the wait was interrupted
+    /// (in which case the caller should stop retrying).
+    private static boolean backoffInterrupted(int attempt) {
+        try {
+            ContentToolSupport.sleepBackoff(attempt);
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
+        }
     }
 
     private static void cancelQuietly(TaskExecutor executor) {

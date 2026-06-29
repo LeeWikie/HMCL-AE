@@ -519,6 +519,32 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList collapsibles = new ComponentList();
         collapsibles.getContent().addAll(advPane, pricePane);
 
+        // Auto-fill from the bundled model library: when ADDING a new model, after the user enters a
+        // known model id (focus leaves the id field), pre-fill context window / max output / modalities /
+        // capabilities / pricing so they don't have to look it up. One-shot, only for a new entry.
+        if (entry.getId().isEmpty()) {
+            final boolean[] filled = {false};
+            idField.focusedProperty().addListener((obs, was, focused) -> {
+                if (focused || filled[0]) return;
+                String id = idField.getText().trim();
+                if (id.isEmpty()) return;
+                org.jackhuang.hmcl.ai.ModelLibrary.ModelInfo info = org.jackhuang.hmcl.ai.ModelLibrary.find(id);
+                if (info == null) return;
+                filled[0] = true;
+                if (info.getContextWindow() > 0) ctxField.setText(String.valueOf(info.getContextWindow()));
+                if (info.getMaxOutput() > 0) maxOutField.setText(String.valueOf(info.getMaxOutput()));
+                if (info.getInputModalities() != null && !info.getInputModalities().isEmpty()) inModalField.setText(info.getInputModalities());
+                if (info.getOutputModalities() != null && !info.getOutputModalities().isEmpty()) outModalField.setText(info.getOutputModalities());
+                capToolsBox.setSelected(info.isSupportsTools());
+                capVisionBox.setSelected(info.isSupportsVision());
+                capReasoningBox.setSelected(info.isSupportsReasoning());
+                if (info.getInputPricePerMillion() > 0) inField.setText(fmtPrice(info.getInputPricePerMillion()));
+                if (info.getOutputPricePerMillion() > 0) outField.setText(fmtPrice(info.getOutputPricePerMillion()));
+                if (info.getCacheWritePricePerMillion() > 0) cwField.setText(fmtPrice(info.getCacheWritePricePerMillion()));
+                if (info.getCacheReadPricePerMillion() > 0) crField.setText(fmtPrice(info.getCacheReadPricePerMillion()));
+            });
+        }
+
         VBox bodyBox = new VBox(12, formGrid("模型 ID", idField, "显示别名", aliasField), collapsibles);
         FXUtils.setLimitWidth(bodyBox, 480);
 

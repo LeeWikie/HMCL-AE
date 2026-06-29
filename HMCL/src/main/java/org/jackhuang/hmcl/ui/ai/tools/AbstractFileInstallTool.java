@@ -21,12 +21,9 @@ import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
-import org.jackhuang.hmcl.download.DownloadProvider;
 import org.jackhuang.hmcl.task.FileDownloadTask;
 
-import java.net.URI;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 
 /// Base class for the single-file content-install AI tools (resource packs, shaders).
@@ -75,19 +72,22 @@ abstract class AbstractFileInstallTool implements Tool {
             RemoteAddon.Version version = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionId);
             RemoteAddon.File file = version.file();
 
-            DownloadProvider provider = ContentToolSupport.downloadProvider();
-            List<URI> urls = provider.injectURLWithCandidates(file.url());
-
             Path directory = ContentToolSupport.resolveInstanceSubdirectory(subdirectory, instance);
             Path destination = directory.resolve(file.filename());
 
-            FileDownloadTask task = new FileDownloadTask(urls, destination, file.getIntegrityCheck());
-            task.setName(version.name());
-
-            ContentToolSupport.runTaskBlocking(task, DOWNLOAD_TIMEOUT_SECONDS, "Download");
+            // Retry with backoff and switch download source on failure (flaky-network resilience).
+            ContentToolSupport.runDownloadWithFallback(provider -> {
+                FileDownloadTask task = new FileDownloadTask(
+                        provider.injectURLWithCandidates(file.url()), destination, file.getIntegrityCheck());
+                task.setName(version.name());
+                return task;
+            }, DOWNLOAD_TIMEOUT_SECONDS, "Download");
 
             return ToolResult.success("Installed \"" + file.filename() + "\" into " + subdirectory + ":\n" + destination);
         } catch (Exception e) {
+            if (ContentToolSupport.isNetworkError(e)) {
+                return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+            }
             return ToolResult.failure("Install failed: " + AbstractContentSearchTool.messageOf(e));
         }
     }

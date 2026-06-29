@@ -82,6 +82,10 @@ public final class ShellTool implements ToolSpec {
                 + " Operating system: " + osLabel + ". Shell: " + shellName
                 + ". Emit commands in the syntax of this shell (e.g. PowerShell on Windows 10/11,"
                 + " or bash/fish/zsh on Linux/macOS)."
+                + " Always pass the literal command in plain text — never obfuscate it with base64,"
+                + " PowerShell -EncodedCommand/-enc, or similar encodings, so the user can read and"
+                + " confirm exactly what will run (encoded payloads are decoded and re-checked by the"
+                + " safety filter, and ones that cannot be decoded are blocked)."
                 + " Pass the full command line as 'command'. Commands run with a "
                 + TIMEOUT_SECONDS + "s timeout. Avoid interactive or long-running commands."
                 + " ALWAYS also pass 'description': one short plain-language sentence (in the user's"

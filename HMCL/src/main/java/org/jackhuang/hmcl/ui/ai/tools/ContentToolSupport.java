@@ -24,7 +24,9 @@ import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.CurseForgeRemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.ToolProgress;
+import org.jackhuang.hmcl.download.BMCLAPIDownloadProvider;
 import org.jackhuang.hmcl.download.DownloadProvider;
+import org.jackhuang.hmcl.download.MojangDownloadProvider;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jackhuang.hmcl.setting.Profile;
@@ -34,9 +36,16 @@ import org.jackhuang.hmcl.task.TaskExecutor;
 import org.jackhuang.hmcl.task.TaskListener;
 import org.jetbrains.annotations.Nullable;
 
+import javax.net.ssl.SSLException;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.PortUnreachableException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -98,6 +107,54 @@ final class ContentToolSupport {
 
     static DownloadProvider downloadProvider() {
         return DownloadProviders.getDownloadProvider();
+    }
+
+    /// Lazily-built single-source providers used as alternates when the configured
+    /// provider's candidates fail. They are stateless for our purposes (we only call
+    /// {@link DownloadProvider#injectURLWithCandidates}, a pure URL rewrite), so a
+    /// single cached instance is safe to share.
+    private static volatile DownloadProvider officialProvider;
+    private static volatile DownloadProvider mirrorProvider;
+
+    /// The official (Mojang) source only — forces direct download URLs.
+    private static DownloadProvider officialProvider() {
+        DownloadProvider p = officialProvider;
+        if (p == null) {
+            synchronized (ContentToolSupport.class) {
+                p = officialProvider;
+                if (p == null) {
+                    p = officialProvider = new MojangDownloadProvider();
+                }
+            }
+        }
+        return p;
+    }
+
+    /// The BMCLAPI mirror source only — forces mirror download URLs (helpful in mainland China).
+    private static DownloadProvider mirrorProvider() {
+        DownloadProvider p = mirrorProvider;
+        if (p == null) {
+            synchronized (ContentToolSupport.class) {
+                p = mirrorProvider;
+                if (p == null) {
+                    String root = System.getProperty("hmcl.bmclapi.override", "https://bmclapi2.bangbang93.com");
+                    p = mirrorProvider = new BMCLAPIDownloadProvider(root);
+                }
+            }
+        }
+        return p;
+    }
+
+    /// Ordered download providers to try when a download fails. The first entry is the
+    /// user-configured provider (an {@code AutoDownloadProvider} that already merges all
+    /// candidate mirrors); the remaining entries force a single alternate source so a
+    /// retry genuinely *switches* mirror ordering when one source is down.
+    static List<DownloadProvider> downloadProviderCandidates() {
+        List<DownloadProvider> providers = new ArrayList<>(3);
+        providers.add(downloadProvider());
+        providers.add(officialProvider());
+        providers.add(mirrorProvider());
+        return providers;
     }
 
     /// Reads a named parameter, falling back to the generic {@code "query"} key when absent.
@@ -166,6 +223,130 @@ final class ContentToolSupport {
             }
             throw new IOException(operation + " failed: " + cause, cause);
         }
+    }
+
+    /// Builds and runs a download [Task], retrying a couple of times with exponential
+    /// backoff and switching the download source on failure.
+    ///
+    /// The {@code factory} is handed each candidate [DownloadProvider] in turn so it can
+    /// rebuild the task with that source's candidate URLs (e.g.
+    /// {@code provider.injectURLWithCandidates(url)}). The attempt plan is:
+    /// configured provider → configured provider (retry) → each alternate source once.
+    /// On every failure we back off; on success we return immediately. If all attempts
+    /// fail, the last underlying exception is rethrown so callers can classify it (e.g.
+    /// via [#isNetworkError]).
+    static void runDownloadWithFallback(DownloadTaskFactory factory, int timeoutSeconds, String operation) throws Exception {
+        List<DownloadProvider> providers = downloadProviderCandidates();
+
+        // Attempt plan: primary, primary (retry), then each distinct alternate once.
+        List<DownloadProvider> plan = new ArrayList<>(providers.size() + 1);
+        plan.add(providers.get(0));
+        plan.add(providers.get(0));
+        for (int i = 1; i < providers.size(); i++) {
+            plan.add(providers.get(i));
+        }
+
+        Exception last = null;
+        for (int attempt = 0; attempt < plan.size(); attempt++) {
+            try {
+                Task<?> task = factory.create(plan.get(attempt));
+                runTaskBlocking(task, timeoutSeconds, operation);
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            } catch (Exception e) {
+                last = e;
+                if (attempt < plan.size() - 1) {
+                    sleepBackoff(attempt);
+                }
+            }
+        }
+        throw last != null ? last : new IOException(operation + " failed");
+    }
+
+    /// Builds a download [Task] for a specific [DownloadProvider]. Implementations should
+    /// resolve candidate URLs from the given provider (so a retry can switch source).
+    @FunctionalInterface
+    interface DownloadTaskFactory {
+        Task<?> create(DownloadProvider provider) throws Exception;
+    }
+
+    /// Sleeps with exponential backoff (1s, 2s, 4s, capped at 8s) between retries.
+    static void sleepBackoff(int attempt) throws InterruptedException {
+        long millis = Math.min(8000L, 1000L * (1L << Math.min(attempt, 3)));
+        Thread.sleep(millis);
+    }
+
+    /// Detects whether a failure is a low-level network/connectivity problem (DNS failure,
+    /// timeout, refused/unreachable connection, TLS handshake) rather than a logical error.
+    /// Walks the whole cause chain because HMCL wraps these inside {@code DownloadException}.
+    static boolean isNetworkError(@Nullable Throwable t) {
+        int guard = 0;
+        for (Throwable c = t; c != null && guard < 32; c = c.getCause(), guard++) {
+            if (c instanceof UnknownHostException
+                    || c instanceof SocketTimeoutException
+                    || c instanceof ConnectException
+                    || c instanceof NoRouteToHostException
+                    || c instanceof PortUnreachableException
+                    || c instanceof SSLException) {
+                return true;
+            }
+            String message = c.getMessage();
+            if (message != null && message.contains("timed out after")) {
+                // Our own timeout wrappers from callWithTimeout / runTaskBlocking.
+                return true;
+            }
+            if (c.getCause() == c) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /// A clear, actionable Chinese message for a network/connectivity failure, suitable
+    /// for returning directly as a {@code ToolResult.failure} payload.
+    static String networkErrorAdvice(@Nullable Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("网络连接失败，下载未能完成。可尝试：\n");
+        sb.append("1. 切换下载源：国内网络建议使用 BMCLAPI 镜像，海外网络建议使用官方源（可在 HMCL 设置中调整下载源）；\n");
+        sb.append("2. 检查网络与代理：确认能正常联网，若使用了代理/VPN 请确认其工作正常；\n");
+        sb.append("3. 稍后重试：可能是临时的网络波动或下载服务器繁忙。");
+        String reason = shortNetworkReason(t);
+        if (reason != null) {
+            sb.append("\n（错误详情：").append(reason).append("）");
+        }
+        return sb.toString();
+    }
+
+    /// A short, human-readable cause for a network failure (in Chinese), or {@code null}.
+    @Nullable
+    private static String shortNetworkReason(@Nullable Throwable t) {
+        int guard = 0;
+        for (Throwable c = t; c != null && guard < 32; c = c.getCause(), guard++) {
+            if (c instanceof UnknownHostException) {
+                return "无法解析主机地址（DNS 解析失败）：" + c.getMessage();
+            }
+            if (c instanceof SocketTimeoutException) {
+                String m = c.getMessage();
+                return m != null && !m.isBlank() ? m : "连接超时";
+            }
+            if (c instanceof ConnectException || c instanceof NoRouteToHostException
+                    || c instanceof PortUnreachableException) {
+                return "无法建立连接：" + c.getMessage();
+            }
+            if (c instanceof SSLException) {
+                return "安全连接（TLS/SSL）失败：" + c.getMessage();
+            }
+            if (c.getCause() == c) {
+                break;
+            }
+        }
+        if (t == null) {
+            return null;
+        }
+        String message = t.getMessage();
+        return message != null && !message.isBlank() ? message : t.getClass().getSimpleName();
     }
 
     /// Builds a [TaskListener] that bridges an HMCL task chain's live progress onto the

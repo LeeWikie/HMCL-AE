@@ -93,12 +93,30 @@ public final class CriticalOperations {
 
         // Shell (or any tool) whose arguments delete files under a critical path.
         if (argumentsJson != null && !argumentsJson.isEmpty()) {
-            boolean deletes = DELETE_VERB.matcher(argumentsJson).find();
-            if (deletes && CRITICAL_PATH.matcher(argumentsJson).find()) {
+            if (deletesCriticalPath(argumentsJson)) {
                 return "检测到对 存档 / 玩家数据 / 备份 / .minecraft 关键目录 的删除操作（不可恢复）。";
+            }
+            // Encoding-bypass hardening: a destructive command can be hidden in a base64 payload
+            // (PowerShell -EncodedCommand / -enc / -e, or a bare base64 blob). Decode it and re-run
+            // the same critical-path check on the decoded text; an opaque/undecodable encoding
+            // wrapper is treated as critical (fail-closed). Shared with DangerousCommands.
+            DangerousCommands.EncodedScan enc =
+                    DangerousCommands.scanEncodedPayloads(argumentsJson, CriticalOperations::deletesCriticalPath);
+            if (enc == DangerousCommands.EncodedScan.MATCH) {
+                return "检测到（base64 解码后）对 存档 / 玩家数据 / 备份 / .minecraft 关键目录 的删除操作（不可恢复）。";
+            }
+            if (enc == DangerousCommands.EncodedScan.UNDECODABLE) {
+                return "检测到无法安全解码的编码命令（如 PowerShell -EncodedCommand），可能隐藏对 存档 / 玩家数据 的破坏性操作，已按高危处理。";
             }
         }
         return null;
+    }
+
+    /// True when {@code text} contains BOTH a delete verb and a catastrophic path — the condition
+    /// for a critical shell deletion. Used directly on the raw arguments and, via
+    /// {@link DangerousCommands#scanEncodedPayloads}, on any decoded base64 payload.
+    private static boolean deletesCriticalPath(String text) {
+        return DELETE_VERB.matcher(text).find() && CRITICAL_PATH.matcher(text).find();
     }
 
     /// Convenience boolean form.

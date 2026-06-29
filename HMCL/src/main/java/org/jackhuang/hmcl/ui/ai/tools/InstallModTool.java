@@ -24,17 +24,13 @@ import org.jackhuang.hmcl.addon.repository.CurseForgeRemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
-import org.jackhuang.hmcl.download.DownloadProvider;
-import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jackhuang.hmcl.task.FileDownloadTask;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -119,8 +115,6 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Unknown loader '" + loaderStr + "'. Use fabric, forge, neoforge or quilt.");
         }
 
-        DownloadProvider downloadProvider = DownloadProviders.getDownloadProvider();
-
         // Resolve the addon and pick the best matching version through the shared,
         // timeout-guarded helper (it wraps getModById + loadVersions each in a 60s
         // timeout and applies the standard game-version / version-id selection).
@@ -167,15 +161,20 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Failed to create mods directory " + modsDir + ": " + e.getMessage());
         }
 
-        // Build the download task and run it through the shared helper, which cancels
-        // the task executor on timeout so a timed-out download cannot orphan-run.
-        List<URI> uris = downloadProvider.injectURLWithCandidates(file.url());
-        FileDownloadTask task = new FileDownloadTask(uris, dest, file.getIntegrityCheck());
-        task.setName(selected.name());
-
+        // Build the download task and run it through the shared helper, which retries with
+        // backoff, switches download source on failure, and cancels the task executor on
+        // timeout so a timed-out download cannot orphan-run.
         try {
-            ContentToolSupport.runTaskBlocking(task, DOWNLOAD_TIMEOUT_SECONDS, "Download");
+            ContentToolSupport.runDownloadWithFallback(provider -> {
+                FileDownloadTask task = new FileDownloadTask(
+                        provider.injectURLWithCandidates(file.url()), dest, file.getIntegrityCheck());
+                task.setName(selected.name());
+                return task;
+            }, DOWNLOAD_TIMEOUT_SECONDS, "Download");
         } catch (Exception e) {
+            if (ContentToolSupport.isNetworkError(e)) {
+                return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+            }
             return ToolResult.failure("Download failed for '" + id + "' version '"
                     + selected.name() + "': " + AbstractContentSearchTool.messageOf(e));
         }
