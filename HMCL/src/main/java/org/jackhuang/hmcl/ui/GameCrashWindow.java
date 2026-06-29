@@ -469,10 +469,25 @@ public class GameCrashWindow extends Stage {
                 helpButton.setOnAction(e -> FXUtils.openLink(Metadata.CONTACT_URL));
                 FXUtils.installFastTooltip(helpButton, i18n("logwindow.help"));
 
+                // Hand the crash off to the AI assistant: jump to the AI page with the log + context
+                // and let it diagnose and propose a fix.
+                JFXButton aiButton = FXUtils.newRaisedButton("让 AI 诊断");
+                aiButton.setOnAction(e -> {
+                    String rawLog = logs.stream().map(Log::getLog).collect(Collectors.joining("\n"));
+                    String tail = rawLog.length() > 6000 ? rawLog.substring(rawLog.length() - 6000) : rawLog;
+                    String prompt = "我的 Minecraft 崩溃了（版本 " + version.getId() + "，Java " + java + "）。"
+                            + "请根据下面的游戏日志分析崩溃原因，并给出具体、可执行的解决办法：\n```\n" + tail + "\n```";
+                    org.jackhuang.hmcl.ui.ai.AIMainPage ai = Controllers.getAiMainPage();
+                    ai.submitExternalPrompt(prompt);
+                    Controllers.navigate(ai);
+                    Controllers.getStage().toFront();
+                    close();
+                });
+
                 toolBar.setPadding(new Insets(8));
                 toolBar.setSpacing(8);
                 toolBar.getStyleClass().add("jfx-tool-bar");
-                toolBar.getChildren().setAll(exportButtonPane, logButton, helpButton);
+                toolBar.getChildren().setAll(exportButtonPane, logButton, aiButton, helpButton);
             }
 
             getChildren().setAll(titlePane, infoPane, moddedPane, gameDirPane, toolBar);

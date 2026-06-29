@@ -2494,6 +2494,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return currentResponse != null;
     }
 
+    /// Entry point for other parts of the launcher (e.g. the game crash window) to hand the AI a
+    /// prompt and have it answered as if the user had typed it. Runs on the FX thread; ignored if a
+    /// response is already streaming so an in-flight turn is never interrupted.
+    public void submitExternalPrompt(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        Platform.runLater(() -> {
+            if (isStreaming()) {
+                return;
+            }
+            inputField.setText(text);
+            sendMessage();
+        });
+    }
+
     /// Shows the one-time test-phase risk notice (forced 5s countdown). On acknowledgement the
     /// preference is persisted so it never shows again. No external project names in the copy.
     private void showAiRiskNotice() {
