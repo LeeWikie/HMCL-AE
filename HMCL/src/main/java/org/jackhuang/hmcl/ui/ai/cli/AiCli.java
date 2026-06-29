@@ -33,6 +33,7 @@ import org.jackhuang.hmcl.ai.agent.AiPromptBuilder;
 import org.jackhuang.hmcl.ai.agent.ChatAgent;
 import org.jackhuang.hmcl.ai.agent.ChatAgentFactory;
 import org.jackhuang.hmcl.ai.llm.LlmException;
+import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.llm.LlmStreamCallback;
 import org.jackhuang.hmcl.ai.llm.LlmUsage;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
@@ -108,6 +109,11 @@ public final class AiCli {
 
     private static final Gson GSON = new Gson();
 
+    /// Driver-supplied `ask` answers (from --answer), consumed in order across the turn.
+    private final java.util.ArrayDeque<String> answerQueue = new java.util.ArrayDeque<>();
+    /// Set when an `ask` ran out of supplied answers — the turn was paused, not guessed.
+    private final AtomicBoolean askDeferred = new AtomicBoolean(false);
+
     private AiCli() {
     }
 
@@ -151,6 +157,8 @@ public final class AiCli {
 
     private int run(Args args) throws Exception {
         long startNanos = System.nanoTime();
+        answerQueue.clear();
+        answerQueue.addAll(args.answers);
 
         // ---- 1. Load the (gitignored) model config. Never print the API key. ----
         ModelConfig model = loadModelConfig(args);
@@ -186,6 +194,18 @@ public final class AiCli {
         // ---- 4. Session + tools + prompt + agent (mirrors AIMainPage wiring). ----
         AiSessionStore sessionStore = new AiSessionStore(aiConfigDir);
         AiSession session = sessionStore.createSession();
+        // Multi-turn: load prior turns from the session.json so this invocation continues
+        // the same conversation (the agent appends the new prompt + its reply).
+        if (args.session != null) {
+            try {
+                int loaded = loadSessionJson(Path.of(args.session), session);
+                if (loaded > 0) {
+                    log("SESSION", "loaded " + loaded + " prior message(s) from " + args.session);
+                }
+            } catch (Exception e) {
+                log("SESSION", "load failed (" + args.session + "): " + e);
+            }
+        }
 
         AiSearchConfig searchConfig = new AiSearchConfig();
         SkillRegistry skillRegistry = new SkillRegistry();
@@ -285,20 +305,38 @@ public final class AiCli {
             }
         });
 
-        // Wait generously; the agent loop can chain many tool calls + model turns.
-        boolean finished = done.await(15, TimeUnit.MINUTES);
+        // Anti-hang: hard wall-clock cap. On expiry we fall through and main() System.exit()s,
+        // killing any stuck tool/model/FX thread — a test run must NEVER block forever.
+        boolean finished = done.await(args.timeoutSeconds, TimeUnit.SECONDS);
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
 
+        // Persist the session for multi-turn even on timeout/error (so the next turn has context).
+        if (args.session != null) {
+            try {
+                saveSessionJson(Path.of(args.session), session);
+                log("SESSION", "saved " + session.getMessages().size() + " message(s) -> " + args.session);
+            } catch (Exception e) {
+                log("SESSION", "save failed (" + args.session + "): " + e);
+            }
+        }
+
         if (!finished) {
-            log("TIMEOUT", "agent did not finish within 15 minutes");
+            log("TIMEOUT", "agent did not finish within " + args.timeoutSeconds + "s — force-exiting (anti-hang)");
             log("ELAPSED", elapsedMs + " ms");
-            return 1;
+            log("RESULT", "TIMEOUT");
+            return 124; // conventional timeout exit code
         }
 
         log("ELAPSED", elapsedMs + " ms");
         if (errorRef.get() != null) {
             log("RESULT", "FAILED");
             return 1;
+        }
+        if (askDeferred.get()) {
+            log("ASK-DEFERRED", "the agent asked something with no --answer supplied; "
+                    + "re-run with an added --answer (multi-turn via --session) to continue.");
+            log("RESULT", "OK (ask deferred — supply --answer and re-run)");
+            return 0;
         }
         log("RESULT", "OK" + (sawText.get() ? "" : " (no streamed text)"));
         return 0;
@@ -341,9 +379,9 @@ public final class AiCli {
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
-        // CLI ask handler: print the questions + options and auto-select an option so
-        // unattended automation never blocks (see autoAnswer).
-        toolRegistry.register(new AskTool(questions -> cliAsk(questions, args.autoAnswer)));
+        // CLI ask handler: answer from the --answer queue (in order); if exhausted, DEFER
+        // (tell the model to stop and state what it needs) instead of guessing — never blocks.
+        toolRegistry.register(new AskTool(this::cliAsk));
         // CLI todo handler: just print the checklist whenever the agent updates it.
         toolRegistry.register(new TodoWriteTool(this::cliTodo));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
@@ -436,12 +474,16 @@ public final class AiCli {
 
     // ---- CLI tool handlers ----
 
-    /// Auto-answers each question by picking option `autoAnswer` (clamped), or "" when a
-    /// question has no options. Prints the question + chosen answer so the run is auditable.
-    private CompletableFuture<List<String>> cliAsk(List<AskTool.Question> questions, int autoAnswer) {
+    /// Answers each `ask` question from the --answer queue (consumed in order). A queued
+    /// value that is a valid 0-based option index selects that option; otherwise it is used
+    /// verbatim as a free-text/custom answer. When the queue is empty the question is NOT
+    /// guessed — it is DEFERRED: the model is told to stop and state in plain words what it
+    /// needs, so the driver can re-run with another --answer (multi-turn via --session).
+    /// Prints everything so the run is auditable, and never blocks.
+    private CompletableFuture<List<String>> cliAsk(List<AskTool.Question> questions) {
         List<String> answers = new ArrayList<>();
         System.out.println();
-        log("ASK", questions.size() + " question(s) — auto-answering option index " + autoAnswer);
+        log("ASK", questions.size() + " question(s); " + answerQueue.size() + " --answer value(s) remaining");
         for (int i = 0; i < questions.size(); i++) {
             AskTool.Question q = questions.get(i);
             System.out.println("  Q" + (i + 1) + " [" + q.type() + "] " + q.question());
@@ -449,17 +491,33 @@ public final class AiCli {
             for (int j = 0; j < opts.size(); j++) {
                 System.out.println("      " + j + ") " + opts.get(j));
             }
+            String supplied = answerQueue.poll();
             String chosen;
-            if (opts.isEmpty()) {
-                chosen = "";
+            if (supplied != null) {
+                Integer idx = tryParseIndex(supplied);
+                if (idx != null && idx >= 0 && idx < opts.size()) {
+                    chosen = opts.get(idx);
+                    System.out.println("      -> [" + idx + "] " + chosen + "  (from --answer)");
+                } else {
+                    chosen = supplied; // free text / custom answer
+                    System.out.println("      -> \"" + chosen + "\"  (from --answer, custom)");
+                }
             } else {
-                int idx = Math.max(0, Math.min(autoAnswer, opts.size() - 1));
-                chosen = opts.get(idx);
+                askDeferred.set(true);
+                chosen = "（自动化测试未对该问题提供答案。请不要猜测、不要继续执行；用一句话明确告诉用户你需要他回答什么，然后停止本轮回复，等待用户下一轮提供答案。）";
+                System.out.println("      -> DEFERRED (no --answer left; model asked to stop and wait)");
             }
-            System.out.println("      -> " + (chosen.isEmpty() ? "(no answer)" : chosen));
             answers.add(chosen);
         }
         return CompletableFuture.completedFuture(answers);
+    }
+
+    private static Integer tryParseIndex(String s) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private void cliTodo(List<TodoWriteTool.TodoItem> todos) {
@@ -596,10 +654,53 @@ public final class AiCli {
                 "  --prompt <text>      (required) user message to send to the agent",
                 "  --config <path>      model config JSON (default: ./.ai-cli-test.json)",
                 "  --fallback           use the 'fallback' provider in the config",
-                "  --auto-answer <idx>  option index the ask tool auto-selects (default 0)",
+                "  --answer <text>      answer for an `ask` question (repeatable, in order; index or free text);",
+                "                       when exhausted the ask is DEFERRED (not guessed) — re-run with more --answer",
                 "  --verbose            print full (untruncated) tool results",
                 "  --no                 deny dangerous-operation confirmations (default: approve)",
+                "  --timeout <sec>      hard wall-clock cap for the turn (default 120; force-exits on hang)",
+                "  --session <path>     session.json for multi-turn (loaded before, saved after the turn)",
                 "  --help               show this help"));
+    }
+
+    // ---- Session.json (multi-turn) ----
+
+    /// Loads prior {role,content} turns from a session.json into the session. Returns the count.
+    private static int loadSessionJson(Path path, AiSession session) throws java.io.IOException {
+        if (!Files.isRegularFile(path)) {
+            return 0;
+        }
+        String json = Files.readString(path, java.nio.charset.StandardCharsets.UTF_8);
+        com.google.gson.JsonArray arr = new Gson().fromJson(json, com.google.gson.JsonArray.class);
+        if (arr == null) {
+            return 0;
+        }
+        int n = 0;
+        for (com.google.gson.JsonElement el : arr) {
+            if (!el.isJsonObject()) continue;
+            JsonObject o = el.getAsJsonObject();
+            String role = o.has("role") ? o.get("role").getAsString() : "user";
+            String content = o.has("content") ? o.get("content").getAsString() : "";
+            session.addMessage(new LlmMessage(role, content));
+            n++;
+        }
+        return n;
+    }
+
+    /// Writes the session's {role,content} turns to a session.json (pretty-printed).
+    private static void saveSessionJson(Path path, AiSession session) throws java.io.IOException {
+        com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
+        for (LlmMessage m : session.getMessages()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("role", m.getRole());
+            o.addProperty("content", m.getContent());
+            arr.add(o);
+        }
+        if (path.getParent() != null) {
+            Files.createDirectories(path.getParent());
+        }
+        Files.writeString(path, new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(arr),
+                java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // ---- Value holders ----
@@ -615,10 +716,20 @@ public final class AiCli {
         String prompt;
         String config;
         boolean fallback;
-        int autoAnswer = 0;
+        /// Driver-supplied answers for `ask`, consumed in order (one per question). Each is
+        /// either an option index (e.g. "0") or free text (custom answer). When exhausted,
+        /// the ask is DEFERRED (model is told to stop and state what it needs) rather than
+        /// auto-guessed — resolve it by re-running with more --answer (multi-turn via --session).
+        final List<String> answers = new ArrayList<>();
         boolean verbose;
         boolean deny;
         boolean help;
+        /// Hard wall-clock cap for the whole agent turn (seconds). Anti-hang: on expiry the
+        /// CLI prints [TIMEOUT] and force-exits non-zero so a test run NEVER blocks forever.
+        int timeoutSeconds = 120;
+        /// Optional session.json for multi-turn: loaded before the turn, saved after, so a
+        /// follow-up invocation with the same path continues the same conversation.
+        String session;
 
         static Args parse(String[] argv) {
             Args a = new Args();
@@ -627,14 +738,19 @@ public final class AiCli {
                 switch (arg) {
                     case "--prompt" -> a.prompt = requireValue(argv, ++i, "--prompt");
                     case "--config" -> a.config = requireValue(argv, ++i, "--config");
-                    case "--auto-answer" -> {
-                        String v = requireValue(argv, ++i, "--auto-answer");
+                    case "--session" -> a.session = requireValue(argv, ++i, "--session");
+                    case "--timeout" -> {
+                        String v = requireValue(argv, ++i, "--timeout");
                         try {
-                            a.autoAnswer = Integer.parseInt(v.trim());
+                            a.timeoutSeconds = Integer.parseInt(v.trim());
                         } catch (NumberFormatException e) {
-                            throw new IllegalArgumentException("--auto-answer expects an integer, got: " + v);
+                            throw new IllegalArgumentException("--timeout expects an integer (seconds), got: " + v);
+                        }
+                        if (a.timeoutSeconds <= 0) {
+                            throw new IllegalArgumentException("--timeout must be > 0");
                         }
                     }
+                    case "--answer" -> a.answers.add(requireValue(argv, ++i, "--answer"));
                     case "--fallback" -> a.fallback = true;
                     case "--verbose" -> a.verbose = true;
                     case "--no" -> a.deny = true;
