@@ -30,14 +30,21 @@ public final class AiExecutionPolicy {
 
     private final AiApprovalMode mode;
     private final boolean dangerousConfirmationEnabled;
+    private final boolean fileWriteConfirmEnabled;
 
-    public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled) {
+    public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
+                             boolean fileWriteConfirmEnabled) {
         this.mode = mode;
         this.dangerousConfirmationEnabled = dangerousConfirmationEnabled;
+        this.fileWriteConfirmEnabled = fileWriteConfirmEnabled;
+    }
+
+    public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled) {
+        this(mode, dangerousConfirmationEnabled, false);
     }
 
     public AiExecutionPolicy() {
-        this(AiApprovalMode.SAFE, true);
+        this(AiApprovalMode.SAFE, true, false);
     }
 
     /// Evaluates whether a tool with the given permission is allowed under
@@ -50,13 +57,20 @@ public final class AiExecutionPolicy {
                 if (permission == ToolPermission.DANGEROUS_WRITE && dangerousConfirmationEnabled) {
                     return Decision.ASK;
                 }
+                if (permission == ToolPermission.CONTROLLED_WRITE && fileWriteConfirmEnabled) {
+                    return Decision.ASK;
+                }
                 return Decision.ALLOW;
             case SAFE:
             default:
                 // Safe mode = ONLY dangerous operations require confirmation; read-only,
-                // controlled writes and network calls run automatically.
+                // controlled writes and network calls run automatically — unless the user
+                // opts into confirming controlled (file) writes too.
                 if (permission == ToolPermission.DANGEROUS_WRITE) {
                     return dangerousConfirmationEnabled ? Decision.ASK : Decision.ALLOW;
+                }
+                if (permission == ToolPermission.CONTROLLED_WRITE && fileWriteConfirmEnabled) {
+                    return Decision.ASK;
                 }
                 return Decision.ALLOW;
         }
@@ -68,5 +82,9 @@ public final class AiExecutionPolicy {
 
     public boolean isDangerousConfirmationEnabled() {
         return dangerousConfirmationEnabled;
+    }
+
+    public boolean isFileWriteConfirmEnabled() {
+        return fileWriteConfirmEnabled;
     }
 }

@@ -411,9 +411,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(editTool);
         toolRegistry.register(grepTool);
         toolRegistry.register(globTool);
-        toolRegistry.register(new ShellTool());
-        toolRegistry.register(new WebFetchTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
+        if (aiSettings.isShellToolEnabled()) {
+            toolRegistry.register(new ShellTool());
+        }
+        if (aiSettings.isWebAccessEnabled()) {
+            toolRegistry.register(new WebFetchTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
+        }
         toolRegistry.register(gameContextTool);
         // HMCL-operation tools (let the agent actually install/launch), reusing HMCL APIs.
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListInstancesTool());
@@ -1538,6 +1542,26 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Handles key presses in the input field for autocomplete triggers.
     private void handleInputKeyPress(KeyEvent event) {
+        // Send-on-Enter behaviour (only when the autocomplete popup is not capturing Enter).
+        if (event.getCode() == KeyCode.ENTER && (autocompletePopup == null || !autocompletePopup.isVisible())) {
+            boolean ctrl = event.isControlDown() || event.isMetaDown();
+            if (aiSettings.isSendOnEnter()) {
+                if (ctrl) { // Ctrl+Enter also sends, regardless
+                    sendMessage();
+                    event.consume();
+                    return;
+                }
+                // plain Enter: let TextField.onAction send it (default behaviour)
+            } else {
+                // "回车发送" off: plain Enter must NOT send; only Ctrl+Enter sends.
+                event.consume();
+                if (ctrl) {
+                    sendMessage();
+                }
+                return;
+            }
+        }
+
         if (autocompletePopup == null) return;
 
         if (autocompletePopup.isVisible()) {
@@ -2082,8 +2106,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolActivity(String toolName, String arguments) {
-                org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool call: " + toolName
-                        + " args=" + abbreviateLog(arguments));
+                if (aiSettings.isToolCallLoggingEnabled()) {
+                    org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool call: " + toolName
+                            + " args=" + abbreviateLog(arguments));
+                }
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
@@ -2102,8 +2128,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolResult(String toolName, boolean success, String resultSummary) {
-                org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool result: " + toolName + " -> "
-                        + (success ? "ok" : "FAILED") + " | " + abbreviateLog(resultSummary));
+                if (aiSettings.isToolCallLoggingEnabled()) {
+                    org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool result: " + toolName + " -> "
+                            + (success ? "ok" : "FAILED") + " | " + abbreviateLog(resultSummary));
+                }
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
@@ -2700,7 +2728,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void scrollToBottom() {
-        if (!stickToBottom) return;
+        if (!stickToBottom || !aiSettings.isAutoScrollEnabled()) return;
         Platform.runLater(() -> scrollPane.setVvalue(1.0));
     }
 

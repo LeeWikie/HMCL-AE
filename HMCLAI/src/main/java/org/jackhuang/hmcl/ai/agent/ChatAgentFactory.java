@@ -120,7 +120,8 @@ public final class ChatAgentFactory {
         LlmConfig config = buildConfig(settings);
         org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
-                        settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled());
+                        settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
+                        settings.isFileWriteConfirmEnabled());
         AiChatClient client = resolveClient(config, tools, policy, confirmHandler);
         // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
         // truncation) to the LangChain4j adapter when that is the active backend.

@@ -34,6 +34,8 @@ import javafx.scene.control.TitledPane;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.beans.binding.Bindings;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
@@ -1262,8 +1264,98 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
         list.getContent().add(crashAnalysis);
 
-        root.getChildren().addAll(ComponentList.createComponentListTitle(i18n("ai.settings.global")), list);
+        // ---- Agent 行为（折叠）----
+        ComponentSublist agentSub = new ComponentSublist();
+        agentSub.setTitle("Agent 行为");
+        agentSub.setHasSubtitle(true);
+        agentSub.setDescription("工具循环、上下文与超时等执行参数");
+        agentSub.getContent().setAll(
+                sliderRow("工具调用轮数上限", "单次回复内最多连续调用工具的次数（防失控）",
+                        aiSettings.maxToolCyclesProperty(), 1, 50, ""),
+                sliderRow("上下文消息条数上限", "只把最近 N 条发给模型，0=不限（始终保留系统提示）",
+                        aiSettings.maxContextMessagesProperty(), 0, 100, ""),
+                sliderRow("工具结果长度上限", "单个工具结果回传模型的最大字符数，0=不限",
+                        aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
+                sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
+                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"));
+        ComponentList agentCard = new ComponentList();
+        agentCard.getContent().add(agentSub);
+
+        // ---- 安全（折叠）----
+        ComponentSublist safetySub = new ComponentSublist();
+        safetySub.setTitle("安全");
+        safetySub.setHasSubtitle(true);
+        safetySub.setDescription("工具开关、日志与写入确认");
+        safetySub.getContent().setAll(
+                toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
+                        aiSettings.toolCallLoggingEnabledProperty()),
+                toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",
+                        aiSettings.shellToolEnabledProperty()),
+                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
+                        aiSettings.webAccessEnabledProperty()),
+                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
+                        aiSettings.fileWriteConfirmEnabledProperty()));
+        ComponentList safetyCard = new ComponentList();
+        safetyCard.getContent().add(safetySub);
+
+        // ---- 界面与交互（折叠）----
+        ComponentSublist uiSub = new ComponentSublist();
+        uiSub.setTitle("界面与交互");
+        uiSub.setHasSubtitle(true);
+        uiSub.setDescription("滚动与输入行为");
+        uiSub.getContent().setAll(
+                toggleRow("自动滚动到底部", "有新消息时自动滚到底（手动上滑时暂停）",
+                        aiSettings.autoScrollEnabledProperty()),
+                toggleRow("回车发送", "开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送",
+                        aiSettings.sendOnEnterProperty()));
+        ComponentList uiCard = new ComponentList();
+        uiCard.getContent().add(uiSub);
+
+        root.getChildren().addAll(
+                ComponentList.createComponentListTitle(i18n("ai.settings.global")), list,
+                ComponentList.createComponentListTitle("Agent 行为"), agentCard,
+                ComponentList.createComponentListTitle("安全"), safetyCard,
+                ComponentList.createComponentListTitle("界面与交互"), uiCard);
         return wrapScroll(root);
+    }
+
+    // ---- Reusable setting-row helpers (toggle / integer slider) --------------------
+
+    /// Builds a native toggle row bound to a boolean setting; persists on change.
+    private LineToggleButton toggleRow(String title, String subtitle, BooleanProperty prop) {
+        LineToggleButton t = new LineToggleButton();
+        t.setTitle(title);
+        t.setSubtitle(subtitle);
+        t.selectedProperty().bindBidirectional(prop);
+        t.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
+        return t;
+    }
+
+    /// Builds a native row with a trailing JFXSlider bound to an integer setting;
+    /// shows the live value and persists on change. Reuses the search-tab slider idiom.
+    private LineButton sliderRow(String title, String subtitle, IntegerProperty prop,
+                                 int min, int max, String unit) {
+        LineButton row = new LineButton();
+        row.setTitle(title);
+        row.setSubtitle(subtitle);
+        int initial = Math.max(min, Math.min(max, prop.get()));
+        JFXSlider slider = new JFXSlider(min, max, initial);
+        slider.setPrefWidth(160);
+        Label value = new Label(initial + unit);
+        value.setMinWidth(54);
+        value.setAlignment(Pos.CENTER_RIGHT);
+        slider.valueProperty().addListener((obs, old, val) -> {
+            int v = (int) Math.round(val.doubleValue());
+            value.setText(v + unit);
+            if (v != prop.get()) {
+                prop.set(v);
+                saveAiSettings();
+            }
+        });
+        HBox control = new HBox(8, slider, value);
+        control.setAlignment(Pos.CENTER_RIGHT);
+        row.setTrailingIcon(control);
+        return row;
     }
 
     private Node buildMemoryTab() {
