@@ -46,6 +46,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Slider;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import org.jackhuang.hmcl.ai.AiApprovalMode;
 import org.jackhuang.hmcl.ai.AiModelDiscoveryService;
 import org.jackhuang.hmcl.ai.AiProtocolFamily;
@@ -53,6 +54,7 @@ import org.jackhuang.hmcl.ai.AiModelEntry;
 import org.jackhuang.hmcl.ai.AiProviderDefinition;
 import org.jackhuang.hmcl.ai.AiProviderProfile;
 import org.jackhuang.hmcl.ai.AiSettings;
+import org.jackhuang.hmcl.ai.remember.RememberStore;
 import org.jackhuang.hmcl.ai.mcp.AiMcpServerConfig;
 import org.jackhuang.hmcl.ai.mcp.McpClientManager;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
@@ -95,6 +97,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -1158,34 +1161,77 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private Node buildBackupSettingsList() {
         ComponentList list = new ComponentList();
 
-        LineButton backup = new LineButton();
-        backup.setTitle("备份");
-        backup.setSubtitle("备份聊天记录、设置、技能与搜索/MCP配置（开发中）");
-        backup.setTrailingIcon(SVG.FOLDER_OPEN);
-        backup.setOnAction(e -> Controllers.showToast("数据备份入口正在开发中。"));
-        list.getContent().add(backup);
-
-        LineButton restore = new LineButton();
-        restore.setTitle("恢复");
-        restore.setSubtitle("从备份文件恢复 HMCL-AE 数据（开发中）");
-        restore.setTrailingIcon(SVG.FOLDER_OPEN);
-        restore.setOnAction(e -> Controllers.showToast("数据恢复入口正在开发中。"));
-        list.getContent().add(restore);
-
+        // Declared first so the 备份/导出 actions below can read its current value;
+        // it is added to the list later to keep the original row order.
         LineToggleButton slimBackup = new LineToggleButton();
         slimBackup.setTitle("精简备份");
         slimBackup.setSubtitle("备份时跳过图片、知识库等大文件，仅保留聊天记录和设置");
         slimBackup.setSelected(true);
+
+        LineButton backup = new LineButton();
+        backup.setTitle("备份");
+        backup.setSubtitle("备份聊天记录、设置、技能与搜索/MCP配置到 zip");
+        backup.setTrailingIcon(SVG.FOLDER_OPEN);
+        backup.setOnAction(e -> exportBackup(slimBackup.isSelected(), "hmcl-ae-backup.zip"));
+        list.getContent().add(backup);
+
+        LineButton restore = new LineButton();
+        restore.setTitle("恢复");
+        restore.setSubtitle("从备份 zip 恢复 HMCL-AE 数据（会覆盖现有数据）");
+        restore.setTrailingIcon(SVG.FOLDER_OPEN);
+        restore.setOnAction(e -> restoreBackup());
+        list.getContent().add(restore);
+
         list.getContent().add(slimBackup);
 
         LineButton fileExport = new LineButton();
         fileExport.setTitle("导出为文件");
-        fileExport.setSubtitle("导出到本地文件（开发中）");
+        fileExport.setSubtitle("导出全部 HMCL-AE 数据（含图片/知识库）到 zip");
         fileExport.setTrailingIcon(SVG.FOLDER_OPEN);
-        fileExport.setOnAction(e -> Controllers.showToast("导出文件入口正在开发中。"));
+        fileExport.setOnAction(e -> exportBackup(false, "hmcl-ae-export.zip"));
         list.getContent().add(fileExport);
 
         return list;
+    }
+
+    /// Prompts for a destination and writes an AE data backup (item 1 备份 / 3 导出).
+    /// {@code slim=false} exports the full dataset including large folders.
+    private void exportBackup(boolean slim, String defaultName) {
+        FileChooser fc = new FileChooser();
+        fc.setTitle(slim ? "备份 HMCL-AE 数据" : "导出 HMCL-AE 数据");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Zip", "*.zip"));
+        fc.setInitialFileName(defaultName);
+        java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
+        if (chosen == null) return;
+        Path target = chosen.toPath();
+        try {
+            int n = AiDataBackup.backup(target, slim);
+            Controllers.showToast("已备份 " + n + " 个文件到 " + target);
+        } catch (IOException ex) {
+            Controllers.showToast("备份失败：" + ex.getMessage());
+        }
+    }
+
+    /// Prompts for a backup zip and restores it after a confirmation (item 2 恢复).
+    private void restoreBackup() {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("恢复 HMCL-AE 数据");
+        fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Zip", "*.zip"));
+        java.io.File chosen = fc.showOpenDialog(Controllers.getStage());
+        if (chosen == null) return;
+        Path source = chosen.toPath();
+        Controllers.confirm(
+                "恢复将覆盖当前的聊天记录、设置、技能与记忆等数据，确定继续？",
+                "恢复数据",
+                () -> {
+                    try {
+                        int n = AiDataBackup.restore(source);
+                        Controllers.showToast("已恢复 " + n + " 个文件，重启 HMCL 后生效");
+                    } catch (IOException ex) {
+                        Controllers.showToast("恢复失败：" + ex.getMessage());
+                    }
+                },
+                null);
     }
 
     private Node buildDataSettingsList() {
@@ -1220,19 +1266,109 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         LineButton knowledgeFiles = new LineButton();
         knowledgeFiles.setTitle("知识库文件");
-        knowledgeFiles.setSubtitle("查看或删除技能/知识库文件（开发中）");
-        knowledgeFiles.setTrailingIcon(SVG.DELETE);
-        knowledgeFiles.setOnAction(e -> Controllers.showToast("知识库文件管理正在开发中。"));
+        knowledgeFiles.setSubtitle(SKILLS_DIR.toString());
+        knowledgeFiles.setTrailingIcon(SVG.FOLDER_OPEN);
+        knowledgeFiles.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
         list.getContent().add(knowledgeFiles);
 
         LineButton clearCache = new LineButton();
         clearCache.setTitle("清除缓存");
-        clearCache.setSubtitle("清除模型列表缓存、搜索缓存以及自定义请求头等临时数据（开发中）");
+        clearCache.setSubtitle("清除表情图片缓存与临时缓存目录（不影响聊天记录、设置、技能与记忆）");
         clearCache.setTrailingIcon(SVG.DELETE);
-        clearCache.setOnAction(e -> Controllers.showToast("缓存清理入口已预留，后续接入真实统计与清理逻辑。"));
+        clearCache.setOnAction(e -> clearCaches());
         list.getContent().add(clearCache);
 
         return list;
+    }
+
+    /// Cache directories under the config dir that are safe to wipe (regenerable).
+    /// Never includes ai-settings.json / sessions / skills / memory (= user data).
+    private static final List<String> CACHE_DIR_NAMES = List.of("emoji-cache", "cache");
+
+    /// Scans then deletes the regenerable cache directories after a confirmation,
+    /// reporting the number of files and bytes freed (item 5 清除缓存).
+    private void clearCaches() {
+        Path base = SettingsManager.localConfigDirectory();
+        List<Path> dirs = new ArrayList<>();
+        for (String name : CACHE_DIR_NAMES) {
+            Path dir = base.resolve(name);
+            if (Files.isDirectory(dir)) dirs.add(dir);
+        }
+        long[] stat = scanCache(dirs);
+        if (stat[0] == 0) {
+            Controllers.showToast("无缓存可清理");
+            return;
+        }
+        Controllers.confirm(
+                "将清理约 " + stat[0] + " 个缓存文件（" + humanSize(stat[1])
+                        + "），不影响聊天记录、设置、技能与记忆。确定继续？",
+                "清除缓存",
+                () -> {
+                    long[] removed = deleteCache(dirs);
+                    Controllers.showToast("已清除 " + removed[0] + " 个缓存文件（" + humanSize(removed[1]) + "）");
+                },
+                null);
+    }
+
+    /// Returns {fileCount, totalBytes} for the regular files under the given dirs.
+    private static long[] scanCache(List<Path> dirs) {
+        long files = 0, bytes = 0;
+        for (Path dir : dirs) {
+            try (var stream = Files.walk(dir)) {
+                for (Path p : (Iterable<Path>) stream::iterator) {
+                    if (Files.isRegularFile(p)) {
+                        files++;
+                        try {
+                            bytes += Files.size(p);
+                        } catch (IOException ignored) {
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return new long[]{files, bytes};
+    }
+
+    /// Deletes files (then now-empty subdirectories) under the given cache dirs.
+    /// Returns {deletedFiles, deletedBytes}.
+    private static long[] deleteCache(List<Path> dirs) {
+        long files = 0, bytes = 0;
+        for (Path dir : dirs) {
+            List<Path> all;
+            try (var stream = Files.walk(dir)) {
+                all = stream.sorted(Comparator.reverseOrder()).toList();
+            } catch (IOException e) {
+                continue;
+            }
+            for (Path p : all) {
+                try {
+                    if (Files.isRegularFile(p)) {
+                        long sz;
+                        try {
+                            sz = Files.size(p);
+                        } catch (IOException ignored) {
+                            sz = 0;
+                        }
+                        if (Files.deleteIfExists(p)) {
+                            files++;
+                            bytes += sz;
+                        }
+                    } else if (Files.isDirectory(p) && !p.equals(dir)) {
+                        Files.deleteIfExists(p); // remove now-empty subdir
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        return new long[]{files, bytes};
+    }
+
+    /// Formats a byte count as a short human-readable size (B / KB / MB).
+    private static String humanSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
     private Node buildGeneralTab() {
@@ -1361,33 +1497,79 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     }
 
     private Node buildMemoryTab() {
-        // Mirror the 帮助/关于 structure exactly (large-title head + native LineButton rows)
-        // so the card style and row heights match native HMCL.
+        // Mirror the 帮助/关于 structure (large-title head + native LineButton rows) so the
+        // card style and row heights match native HMCL. The global memory is a flat
+        // directory of markdown files written by the 记忆 tool (RememberStore); here we
+        // surface a count, an open-folder action and the list of entries.
         VBox root = createSettingsRoot();
+        Path memDir = SettingsManager.localConfigDirectory().resolve("ai-memory");
+
+        List<RememberStore.Entry> entries = new ArrayList<>();
+        try {
+            if (Files.isDirectory(memDir)) {
+                entries = new RememberStore(memDir).listAll();
+            }
+        } catch (Exception ignored) {
+        }
 
         ComponentList intro = new ComponentList();
         LineButton head = new LineButton();
         head.setLargeTitle(true);
         head.setLeading(SVG.PACKAGE, 32);
         head.setTitle("全局记忆");
-        head.setSubtitle("正在开发中 · 当前不提供持久化编辑入口。");
+        head.setSubtitle("AI 跨会话记住的事实，以 markdown 文件保存（共 " + entries.size() + " 条）");
         intro.getContent().add(head);
 
-        ComponentList notes = new ComponentList();
-        LineButton shortTerm = new LineButton();
-        shortTerm.setTitle("短期上下文");
-        shortTerm.setSubtitle("现阶段只有会话级短期上下文裁剪。");
-        LineButton planned = new LineButton();
-        planned.setTitle("规划中");
-        planned.setSubtitle("后续会加入摘要记忆、用户偏好记忆和可删除的长期记忆。");
-        LineButton privacy = new LineButton();
-        privacy.setTitle("隐私");
-        privacy.setSubtitle("开发完成前不会静默保存敏感文件内容。");
-        notes.getContent().setAll(shortTerm, planned, privacy);
+        ComponentList actions = new ComponentList();
+        LineButton openDir = new LineButton();
+        openDir.setTitle("打开记忆目录");
+        openDir.setSubtitle(memDir.toString());
+        openDir.setTrailingIcon(SVG.FOLDER_OPEN);
+        openDir.setOnAction(e -> FXUtils.openFolder(memDir));
+        actions.getContent().add(openDir);
+        LineButton reload = new LineButton();
+        reload.setTitle("刷新");
+        reload.setSubtitle("重新扫描记忆目录");
+        reload.setLeading(SVG.REFRESH, 20);
+        reload.setOnAction(e -> tab.select(memoryTab, false));
+        actions.getContent().add(reload);
+
+        ComponentList listCard = new ComponentList();
+        if (entries.isEmpty()) {
+            Label empty = new Label("暂无记忆条目。当 AI 使用「记忆」工具时会在此出现。");
+            empty.setWrapText(true);
+            empty.getStyleClass().add("subtitle-label");
+            listCard.getContent().add(empty);
+        } else {
+            for (RememberStore.Entry entry : entries) {
+                Path file = entry.getFile();
+                String title = entry.getTitle();
+                LineButton row = new LineButton();
+                row.setTitle(title != null && !title.isBlank()
+                        ? title
+                        : (file != null ? file.getFileName().toString() : "(无标题)"));
+                StringBuilder sb = new StringBuilder();
+                List<String> tags = entry.getTags();
+                if (tags != null && !tags.isEmpty()) sb.append(String.join(", ", tags));
+                String created = entry.getCreated();
+                if (created != null && !created.isBlank()) {
+                    if (sb.length() > 0) sb.append(" · ");
+                    sb.append(created);
+                }
+                if (sb.length() == 0 && file != null) sb.append(file.getFileName());
+                row.setSubtitle(sb.toString());
+                row.setTrailingIcon(SVG.FOLDER_OPEN);
+                if (file != null && file.getParent() != null) {
+                    row.setOnAction(e -> FXUtils.openFolder(file.getParent()));
+                }
+                listCard.getContent().add(row);
+            }
+        }
 
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle("全局记忆"), intro,
-                ComponentList.createComponentListTitle("说明"), notes);
+                ComponentList.createComponentListTitle("操作"), actions,
+                ComponentList.createComponentListTitle("记忆条目"), listCard);
         return wrapScroll(root);
     }
 
