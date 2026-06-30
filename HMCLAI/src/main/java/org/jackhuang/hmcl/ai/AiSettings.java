@@ -1082,6 +1082,9 @@ public final class AiSettings {
                 profiles.clear();
                 profiles.add(migrated);
             }
+            // The migrated profile still holds the Base64-encoded key; decode it like the profiles
+            // branch does, otherwise the next save re-encodes it (base64(base64)) and corrupts the key.
+            decodeProfileApiKeys();
             selectedProfileId = migrated.getId();
             applyProfileToProperties(migrated);
         }
@@ -1191,6 +1194,9 @@ public final class AiSettings {
                     original.getApiKey(), original.getDefaultModelId(),
                     new ArrayList<>(original.getCachedModels()),
                     original.isEnabled());
+            // Preserve the FULL per-model config (alias/pricing/capabilities/overrides) on save —
+            // the id-only ctor above would otherwise drop everything but the model ids.
+            p.setModels(original.getModels());
             String plainKey = p.getApiKey();
             if (plainKey != null && !plainKey.isEmpty()) {
                 p.setApiKey(Base64.getEncoder().encodeToString(

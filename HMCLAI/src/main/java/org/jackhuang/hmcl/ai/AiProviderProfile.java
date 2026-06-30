@@ -194,6 +194,15 @@ public final class AiProviderProfile {
         return Collections.unmodifiableList(new ArrayList<>(models()));
     }
 
+    /// Replaces the rich per-model entries. Used by the persistence copy so that save preserves the
+    /// full per-model config (alias / pricing / capabilities / overrides), not just the bare model ids.
+    /// Clears the legacy id-only fields so they are not re-serialized as stale data.
+    public void setModels(List<AiModelEntry> entries) {
+        this.models = new ArrayList<>(entries);
+        this.cachedModels = new ArrayList<>();
+        this.modelAliases = null;
+    }
+
     /// Returns the entry for the given model id, or `null`.
     @Nullable
     public AiModelEntry getModel(String modelId) {

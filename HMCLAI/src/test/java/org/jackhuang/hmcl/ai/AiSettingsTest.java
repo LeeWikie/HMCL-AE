@@ -365,6 +365,82 @@ public final class AiSettingsTest {
         }
     }
 
+    /// Rich per-model config (alias / pricing / capabilities) must survive a save→reload cycle.
+    /// Regression test for the bug where encodeProfilesForSave copied via the id-only constructor
+    /// and silently reset every per-model field to defaults on every save.
+    @Test
+    public void testRichModelConfigSurvivesRoundTrip() throws IOException {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
+        try {
+            AiSettings settings = new AiSettings(tempDir);
+            AiProviderProfile profile = new AiProviderProfile(
+                    "p-rich", "Rich", AiProtocolFamily.OPENAI_COMPLETIONS.getId(),
+                    "https://api.example.com/v1", "sk-x", "m1",
+                    new java.util.ArrayList<>(), true);
+            AiModelEntry m = new AiModelEntry("m1");
+            m.setAlias("我的模型");
+            m.setContextWindow(123456);
+            m.setMaxOutputTokens(4096);
+            m.setInputPricePerMillion(1.5);
+            m.setSupportsVision(true);
+            m.setSupportsTools(true);
+            profile.putModel(m);
+            settings.setProfiles(List.of(profile));
+            settings.setSelectedProfileId("p-rich");
+            settings.save();
+
+            AiSettings loaded = new AiSettings(tempDir);
+            loaded.load();
+            AiProviderProfile lp = loaded.getProfiles().get(0);
+            AiModelEntry lm = lp.getModel("m1");
+            assertNotNull(lm, "the model entry must survive save/load");
+            assertEquals("我的模型", lm.getAlias(), "alias must survive (the data-loss bug)");
+            assertEquals(123456, lm.getContextWindow());
+            assertEquals(4096, lm.getMaxOutputTokens());
+            assertEquals(1.5, lm.getInputPricePerMillion(), 1e-9);
+            assertTrue(lm.isSupportsVision());
+            assertTrue(lm.isSupportsTools());
+        } finally {
+            try {
+                Files.walk(tempDir).sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) { } });
+            } catch (IOException ignored) { }
+        }
+    }
+
+    /// A legacy single-provider config (Base64 key on disk) must migrate, then survive a save→reload
+    /// with the key still plaintext — regression for the double-Base64 corruption (migration branch
+    /// never decoded the key, so the next save re-encoded base64(base64(plain))).
+    @Test
+    public void testLegacyMigrationKeySurvivesResave() throws IOException {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
+        try {
+            String b64 = java.util.Base64.getEncoder().encodeToString(
+                    "sk-legacy-plain".getBytes(StandardCharsets.UTF_8));
+            String legacyJson = "{\"endpoint\":\"https://relay.example.com/v1\",\"apiKey\":\""
+                    + b64 + "\",\"model\":\"gpt-4o\",\"provider\":\"openai\"}";
+            Files.createDirectories(tempDir);
+            Files.writeString(tempDir.resolve(AiSettings.FILE_NAME), legacyJson, StandardCharsets.UTF_8);
+
+            AiSettings migrated = new AiSettings(tempDir);
+            migrated.load();
+            assertEquals(1, migrated.getProfiles().size());
+            assertEquals("sk-legacy-plain", migrated.getProfiles().get(0).getApiKey(),
+                    "migrated profile key must be decoded to plaintext");
+            migrated.save();
+
+            AiSettings reloaded = new AiSettings(tempDir);
+            reloaded.load();
+            assertEquals("sk-legacy-plain", reloaded.getProfiles().get(0).getApiKey(),
+                    "key must still be plaintext after save→reload (no double-Base64)");
+        } finally {
+            try {
+                Files.walk(tempDir).sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) { } });
+            } catch (IOException ignored) { }
+        }
+    }
+
     /// Verifies profile management operations: add, update, remove.
     @Test
     public void testProfileManagement() throws IOException {
