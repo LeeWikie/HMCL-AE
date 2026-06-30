@@ -793,15 +793,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         HBox searchRow = new HBox(10, search, selectAll);
         searchRow.setAlignment(Pos.CENTER_LEFT);
 
-        ComponentList tree = new ComponentList();
+        VBox tree = new VBox(8);
         for (AiProviderProfile profile : providers) {
             List<JFXCheckBox> modelBoxes = new ArrayList<>();
-            // Collapsible "provider folder" (提供商夹), built the native way: provider name as the
-            // sublist title, tri-state checkbox as the leading control; model rows are the indented
-            // children. Same idiom the rest of HMCL settings use, so it gets native header height/style.
-            ComponentSublist folder = new ComponentSublist();
-            folder.setTitle(displayProfileName(profile));
 
+            // Provider-folder header: [tri-state checkbox] name ........... [arrow]; click to fold.
             JFXCheckBox providerBox = new JFXCheckBox();
             providerBox.setAllowIndeterminate(true);
             providerBox.setSelected(true);
@@ -809,10 +805,21 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 boolean sel = providerBox.isSelected();
                 for (JFXCheckBox mcb : modelBoxes) mcb.setSelected(sel);
             });
-            // Toggling the checkbox selects only; it must not expand/collapse the folder.
+            // Clicking the checkbox selects only; it must not toggle the fold.
             providerBox.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_CLICKED, javafx.event.Event::consume);
-            folder.setLeading(providerBox);
 
+            Label nameLabel = new Label(displayProfileName(profile));
+            nameLabel.getStyleClass().add("title-label");
+            javafx.scene.layout.Region headSpacer = new javafx.scene.layout.Region();
+            HBox.setHgrow(headSpacer, javafx.scene.layout.Priority.ALWAYS);
+            javafx.scene.Node arrow = SVG.KEYBOARD_ARROW_DOWN.createIcon(18);
+            arrow.setMouseTransparent(true);
+            HBox header = new HBox(10, providerBox, nameLabel, headSpacer, arrow);
+            header.setAlignment(Pos.CENTER_LEFT);
+            header.setPadding(new Insets(10, 16, 10, 16));
+            header.setCursor(javafx.scene.Cursor.HAND);
+
+            VBox childrenBox = new VBox();
             for (AiModelEntry entry : profile.getModels()) {
                 JFXCheckBox mcb = new JFXCheckBox(entry.getDisplayName());
                 mcb.setSelected(true);
@@ -822,7 +829,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
                 HBox row = new HBox(8, mcb, spacer, result);
                 row.setAlignment(Pos.CENTER_LEFT);
-                folder.getContent().add(row);
+                row.setPadding(new Insets(8, 16, 8, 40));
+                childrenBox.getChildren().add(row);
                 modelBoxes.add(mcb);
                 rows.add(new TestRow(profile, entry.getId(), mcb, result, row));
                 mcb.selectedProperty().addListener((o, ov, nv) -> {
@@ -833,13 +841,25 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             if (profile.getModels().isEmpty()) {
                 Label none = new Label("（无模型，先用 🔄 加载）");
                 none.getStyleClass().add("subtitle-label");
-                HBox noneRow = new HBox(none);
-                noneRow.setAlignment(Pos.CENTER_LEFT);
-                folder.getContent().add(noneRow);
+                none.setPadding(new Insets(8, 16, 8, 40));
+                childrenBox.getChildren().add(none);
                 providerBox.setSelected(false);
             }
+
+            // Fold/unfold via visibility — no height animation/clip, so nothing leaks and rows keep
+            // their full height. Starts expanded; click the header to collapse a provider on demand.
+            final boolean[] expanded = {true};
+            header.setOnMouseClicked(e -> {
+                expanded[0] = !expanded[0];
+                childrenBox.setVisible(expanded[0]);
+                childrenBox.setManaged(expanded[0]);
+                arrow.setRotate(expanded[0] ? 0 : -90);
+            });
+
             updateProviderBox(providerBox, modelBoxes);
-            tree.getContent().add(folder);
+            VBox folderCard = new VBox(header, childrenBox);
+            folderCard.getStyleClass().add("card");
+            tree.getChildren().add(folderCard);
         }
         updateMasterBox(selectAll, rows);
 
