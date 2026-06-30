@@ -2941,9 +2941,35 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             setStatus(message);
             target.getStyleClass().add("ai-bubble-error");
+            // Offer a one-click retry of the failed turn (transient 429 / timeout / connection drop).
+            JFXButton retryBtn = new JFXButton("重试");
+            retryBtn.getStyleClass().add("ai-retry-btn");
+            retryBtn.setOnAction(e -> {
+                if (target.getParent() instanceof javafx.scene.Parent) {
+                    messageList.getChildren().remove(retryBtn);
+                }
+                retryLastTurn();
+            });
+            messageList.getChildren().add(retryBtn);
             scrollToBottom();
             persistStore();
         });
+    }
+
+    /// Re-sends the last user turn after a failed response (the failed assistant reply was never
+    /// persisted, so the last stored message is the user turn that triggered it).
+    private void retryLastTurn() {
+        AiSession cur = sessionStore.getCurrentSession();
+        if (cur == null) {
+            return;
+        }
+        java.util.List<org.jackhuang.hmcl.ai.llm.LlmMessage> msgs = cur.getMessages();
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            if ("user".equals(msgs.get(i).getRole())) {
+                resendUserMessage(i, msgs.get(i).getContent());
+                return;
+            }
+        }
     }
 
     private void setStatus(@Nullable String text) {
