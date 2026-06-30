@@ -187,6 +187,11 @@ final class ComponentSublistWrapper extends VBox implements NoPaddingComponent {
         updateObservedContentNodes(sublist);
 
         this.getChildren().add(header);
+
+        // Optionally start expanded (e.g. selection dialogs) by firing the header once it's on-scene.
+        if (sublist.isInitiallyExpanded()) {
+            Platform.runLater(header::fire);
+        }
     }
 
     /// Keeps dynamic child layout changes reflected in the expanded container height.

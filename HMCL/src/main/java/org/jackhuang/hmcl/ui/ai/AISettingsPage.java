@@ -770,9 +770,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         List<TestRow> rows = new ArrayList<>();
 
         JFXCheckBox selectAll = new JFXCheckBox("全选");
+        selectAll.setAllowIndeterminate(true);
         selectAll.setSelected(true);
         selectAll.setOnAction(e -> {
-            for (TestRow r : rows) r.checkBox.setSelected(selectAll.isSelected());
+            // On click: if everything is already selected, clear all; otherwise select all. The
+            // per-model listeners then refresh this master's tri-state visual (✓ 全选 / — 半选 / □ 未选).
+            boolean allSelected = !rows.isEmpty() && rows.stream().allMatch(r -> r.checkBox.isSelected());
+            boolean target = !allSelected;
+            for (TestRow r : rows) r.checkBox.setSelected(target);
         });
         JFXTextField search = new JFXTextField();
         search.setPromptText("搜索模型...");
@@ -788,11 +793,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         HBox searchRow = new HBox(10, search, selectAll);
         searchRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox treeBox = new VBox(10);
+        ComponentList tree = new ComponentList();
         for (AiProviderProfile profile : providers) {
             List<JFXCheckBox> modelBoxes = new ArrayList<>();
-            // One native card per provider: provider checkbox header + indented model rows.
-            ComponentList card = new ComponentList();
+            // Collapsible "provider folder" (提供商夹): tri-state checkbox + name on the LEFT of the
+            // header (not a centered bare row), model rows as indented children. Starts expanded so
+            // the models are visible to pick; collapse a provider when you don't need its detail.
+            ComponentSublist folder = new ComponentSublist();
+            folder.setInitiallyExpanded(true);
 
             JFXCheckBox providerBox = new JFXCheckBox(displayProfileName(profile));
             providerBox.setAllowIndeterminate(true);
@@ -801,14 +809,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 boolean sel = providerBox.isSelected();
                 for (JFXCheckBox mcb : modelBoxes) mcb.setSelected(sel);
             });
-            // A bare control dropped into a ComponentList renders CENTERED (its row wrapper is a
-            // center-aligned StackPane). Wrap the provider header in a full-width HBox + growing
-            // spacer so the checkbox/name sit on the LEFT, exactly like the model rows below.
-            javafx.scene.layout.Region phSpacer = new javafx.scene.layout.Region();
-            HBox.setHgrow(phSpacer, javafx.scene.layout.Priority.ALWAYS);
-            HBox providerHeader = new HBox(8, providerBox, phSpacer);
-            providerHeader.setAlignment(Pos.CENTER_LEFT);
-            card.getContent().add(providerHeader);
+            // Toggling the checkbox selects only; it must not expand/collapse the folder.
+            providerBox.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_CLICKED, javafx.event.Event::consume);
+            folder.setHeaderLeft(providerBox);
 
             for (AiModelEntry entry : profile.getModels()) {
                 JFXCheckBox mcb = new JFXCheckBox(entry.getDisplayName());
@@ -819,26 +822,28 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
                 HBox row = new HBox(8, mcb, spacer, result);
                 row.setAlignment(Pos.CENTER_LEFT);
-                row.setPadding(new Insets(2, 4, 2, 24));
-                card.getContent().add(row);
+                folder.getContent().add(row);
                 modelBoxes.add(mcb);
                 rows.add(new TestRow(profile, entry.getId(), mcb, result, row));
-                mcb.selectedProperty().addListener((o, ov, nv) -> updateProviderBox(providerBox, modelBoxes));
+                mcb.selectedProperty().addListener((o, ov, nv) -> {
+                    updateProviderBox(providerBox, modelBoxes);
+                    updateMasterBox(selectAll, rows);
+                });
             }
             if (profile.getModels().isEmpty()) {
                 Label none = new Label("（无模型，先用 🔄 加载）");
                 none.getStyleClass().add("subtitle-label");
-                none.setPadding(new Insets(2, 4, 2, 24));
                 HBox noneRow = new HBox(none);
                 noneRow.setAlignment(Pos.CENTER_LEFT);
-                card.getContent().add(noneRow);
+                folder.getContent().add(noneRow);
                 providerBox.setSelected(false);
             }
             updateProviderBox(providerBox, modelBoxes);
-            treeBox.getChildren().add(card);
+            tree.getContent().add(folder);
         }
+        updateMasterBox(selectAll, rows);
 
-        ScrollPane sp = new ScrollPane(treeBox);
+        ScrollPane sp = new ScrollPane(tree);
         sp.setFitToWidth(true);
         sp.getStyleClass().add("edge-to-edge");
         FXUtils.setLimitHeight(sp, 360);
@@ -889,6 +894,27 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             providerBox.setSelected(true);
         } else {
             providerBox.setIndeterminate(true);
+        }
+    }
+
+    /// Drives the master "全选" tri-state from the aggregate of all model rows:
+    /// ✓ all selected / — some selected (indeterminate) / □ none.
+    private static void updateMasterBox(CheckBox master, List<TestRow> rows) {
+        if (rows.isEmpty()) {
+            master.setIndeterminate(false);
+            master.setSelected(false);
+            return;
+        }
+        int selected = 0;
+        for (TestRow r : rows) if (r.checkBox.isSelected()) selected++;
+        if (selected == 0) {
+            master.setIndeterminate(false);
+            master.setSelected(false);
+        } else if (selected == rows.size()) {
+            master.setIndeterminate(false);
+            master.setSelected(true);
+        } else {
+            master.setIndeterminate(true);
         }
     }
 
