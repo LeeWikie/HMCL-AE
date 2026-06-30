@@ -3721,6 +3721,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         interaction.getContent().add(shortcut);
 
+        LineToggleButton enterSend = new LineToggleButton();
+        enterSend.setTitle("回车发送");
+        enterSend.setSubtitle("开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送");
+        enterSend.selectedProperty().bindBidirectional(aiSettings.sendOnEnterProperty());
+        interaction.getContent().add(enterSend);
+
+        LineToggleButton autoScroll = new LineToggleButton();
+        autoScroll.setTitle("自动滚动到底部");
+        autoScroll.setSubtitle("有新消息时自动滚到底（手动上滑时暂停）");
+        autoScroll.selectedProperty().bindBidirectional(aiSettings.autoScrollEnabledProperty());
+        interaction.getContent().add(autoScroll);
+
         return List.of(
                 ComponentList.createComponentListTitle("显示"), display,
                 ComponentList.createComponentListTitle("用量"), usage,

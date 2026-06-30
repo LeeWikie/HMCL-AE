@@ -1832,10 +1832,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         });
         chatList.getContent().add(replyLang);
 
-        // 流式输出
-        chatList.getContent().add(toggleRow("流式输出",
-                "开启后逐字显示模型回复（关闭则一次性返回）", aiSettings.streamProperty()));
-
         // 默认推理强度
         LineSelectButton<String> reasoning = new LineSelectButton<>();
         reasoning.setTitle("默认推理强度");
@@ -1878,12 +1874,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // 自动命名会话
         chatList.getContent().add(toggleRow("自动命名会话",
                 "首轮对话后让模型生成简短标题（替代截取首句）", aiSettings.autoTitleEnabledProperty()));
-        // 自动滚动到底部
-        chatList.getContent().add(toggleRow("自动滚动到底部",
-                "有新消息时自动滚到底（手动上滑时暂停）", aiSettings.autoScrollEnabledProperty()));
-        // 回车发送
-        chatList.getContent().add(toggleRow("回车发送",
-                "开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送", aiSettings.sendOnEnterProperty()));
+        // 流式输出 / 自动滚动 / 回车发送 等聊天行为已移至「聊天设置」抽屉的「交互」区，不在全局重复。
 
         // ============ 2) AI 能力与行为 ============
         // 自定义指令 (built first so it can be placed in the group)
