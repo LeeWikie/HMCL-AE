@@ -25,6 +25,7 @@ import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXComboBox;
 import com.jfoenix.controls.JFXDialogLayout;
 import com.jfoenix.controls.JFXPasswordField;
+import javafx.scene.control.Hyperlink;
 import org.jackhuang.hmcl.ui.construct.HintPane;
 import com.jfoenix.controls.JFXSlider;
 import com.jfoenix.controls.JFXTextField;
@@ -359,6 +360,26 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         editProfile(profile);
     }
 
+    /// A one-tap provider preset for the add/edit dialog: protocolIndex 0=OpenAI Completions,
+    /// 1=OpenAI Reasoning, 2=Anthropic. consoleUrl backs the "获取 API Key" link.
+    private record ProviderPreset(String label, int protocolIndex, String endpoint, String consoleUrl) {}
+
+    /// Popular providers, China-reachable ones first (target audience can sign up + pay without a VPN).
+    /// Data from the provider-preset research; endpoints are OpenAI-compatible base URLs.
+    private static final List<ProviderPreset> PROVIDER_PRESETS = List.of(
+            new ProviderPreset("DeepSeek 深度求索", 0, "https://api.deepseek.com/v1", "https://platform.deepseek.com/api_keys"),
+            new ProviderPreset("智谱 GLM (BigModel)", 0, "https://open.bigmodel.cn/api/paas/v4", "https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
+            new ProviderPreset("阿里 通义千问 (百炼)", 0, "https://dashscope.aliyuncs.com/compatible-mode/v1", "https://bailian.console.aliyun.com/?tab=model#/api-key"),
+            new ProviderPreset("硅基流动 SiliconFlow", 0, "https://api.siliconflow.cn/v1", "https://cloud.siliconflow.cn/account/ak"),
+            new ProviderPreset("月之暗面 Kimi", 0, "https://api.moonshot.cn/v1", "https://platform.moonshot.cn/console/api-keys"),
+            new ProviderPreset("火山方舟 / 豆包", 0, "https://ark.cn-beijing.volces.com/api/v3", "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey"),
+            new ProviderPreset("百度 文心一言 (千帆)", 0, "https://qianfan.baidubce.com/v2", "https://console.bce.baidu.com/iam/#/iam/apikey/list"),
+            new ProviderPreset("MiniMax", 0, "https://api.minimaxi.com/v1", "https://platform.minimaxi.com/user-center/basic-information/interface-key"),
+            new ProviderPreset("OpenRouter", 0, "https://openrouter.ai/api/v1", "https://openrouter.ai/keys"),
+            new ProviderPreset("Google Gemini", 0, "https://generativelanguage.googleapis.com/v1beta/openai/", "https://aistudio.google.com/apikey"),
+            new ProviderPreset("OpenAI / ChatGPT", 0, "https://api.openai.com/v1", "https://platform.openai.com/api-keys"),
+            new ProviderPreset("Anthropic Claude", 2, "https://api.anthropic.com", "https://console.anthropic.com/settings/keys"));
+
     private void editProfile(AiProviderProfile profile) {
         JFXTextField nameField = new JFXTextField(profile.getDisplayName());
         nameField.setPromptText("配置名称");
@@ -369,14 +390,51 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         JFXTextField endpointField = new JFXTextField(profile.getEndpoint());
         endpointField.setPromptText("https://api.example.com/v1");
         MaskedKeyField apiKey = new MaskedKeyField(profile.getApiKey(), "sk-...");
+
+        // "获取 API Key" link under the key field — jumps to the selected preset's console.
+        final String[] consoleUrl = { null };
+        Hyperlink getKeyLink = new Hyperlink();
+        getKeyLink.getStyleClass().add("subtitle-label");
+        getKeyLink.setVisible(false);
+        getKeyLink.setManaged(false);
+        getKeyLink.setOnAction(e -> {
+            if (consoleUrl[0] != null && !consoleUrl[0].isBlank()) FXUtils.openLink(consoleUrl[0]);
+        });
+        VBox apiKeyCell = new VBox(2, apiKey.node, getKeyLink);
+
+        // Quick preset: 3 protocols pinned on top, then popular providers (China-direct first).
+        // Picking a provider auto-fills its endpoint + protocol and reveals the 获取 API Key link.
+        JFXComboBox<String> presetBox = new JFXComboBox<>();
+        presetBox.setMaxWidth(Double.MAX_VALUE);
+        presetBox.setVisibleRowCount(8);
+        presetBox.getItems().add("— 选择协议 / 服务商快速填写 —");
+        presetBox.getItems().addAll("协议:OpenAI Completions", "协议:OpenAI Reasoning", "协议:Anthropic");
+        for (ProviderPreset p : PROVIDER_PRESETS) presetBox.getItems().add(p.label());
+        presetBox.getSelectionModel().selectFirst();
+        presetBox.getSelectionModel().selectedIndexProperty().addListener((o, ov, nv) -> {
+            int idx = nv.intValue();
+            if (idx >= 1 && idx <= 3) {
+                protocolBox.getSelectionModel().select(idx - 1);
+            } else if (idx >= 4 && idx - 4 < PROVIDER_PRESETS.size()) {
+                ProviderPreset p = PROVIDER_PRESETS.get(idx - 4);
+                endpointField.setText(p.endpoint());
+                protocolBox.getSelectionModel().select(p.protocolIndex());
+                consoleUrl[0] = p.consoleUrl();
+                getKeyLink.setText("获取 " + p.label() + " 的 API Key →");
+                getKeyLink.setVisible(true);
+                getKeyLink.setManaged(true);
+            }
+        });
+
         JFXCheckBox enabledBox = new JFXCheckBox("启用");
         enabledBox.setSelected(profile.isEnabled());
 
         VBox body = new VBox(12, formGrid(
+                "快速预设", presetBox,
                 "名称", nameField,
                 "协议", protocolBox,
                 "Endpoint", endpointField,
-                "API Key", apiKey.node), enabledBox);
+                "API Key", apiKeyCell), enabledBox);
         FXUtils.setLimitWidth(body, 480);
 
         DialogPane dialog = new DialogPane() {
