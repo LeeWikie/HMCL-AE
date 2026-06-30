@@ -28,7 +28,7 @@ import org.jackhuang.hmcl.ui.FXUtils;
 import org.jackhuang.hmcl.ui.animation.AnimationUtils;
 
 public class JFXRadioButtonSkin extends RadioButtonSkin {
-    private static final double PADDING = 15.0;
+    private static final double PADDING = 6.0;  // was 15: a 15px rippler box made the hit area ~44px tall vs the 14px dot, so clicks bled onto adjacent options
 
     private boolean invalid = true;
     private final JFXRippler rippler;

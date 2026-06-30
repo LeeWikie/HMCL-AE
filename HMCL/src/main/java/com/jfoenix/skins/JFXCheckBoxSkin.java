@@ -42,7 +42,7 @@ public class JFXCheckBoxSkin extends CheckBoxSkin {
     private final StackPane box = new StackPane();
     private final StackPane mark = new StackPane();
     private final double lineThick = 2.0;
-    private final double padding = 10.0;
+    private final double padding = 5.0;  // was 10: shrink the oversized rippler/hit box (was ~38px vs the 18px box) so clicks don't bleed onto adjacent options
     private final JFXRippler rippler;
     private final AnchorPane container = new AnchorPane();
     private final double labelOffset = -8.0;
