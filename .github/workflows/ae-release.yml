@@ -50,11 +50,28 @@ jobs:
         id: collect
         run: |
           mkdir -p dist
-          cp HMCL/build/libs/HMCL-*.jar HMCL/build/libs/HMCL-*.exe HMCL/build/libs/HMCL-*.sh dist/ 2>/dev/null || true
-          # .deb is only produced on some setups; include it if present.
-          cp HMCL/build/libs/HMCL-*.deb dist/ 2>/dev/null || true
+          V='${{ github.event.inputs.version }}'
+          # CI stamps the build as <version>.unofficial-<sha>; rename to a clean HMCL-<version>.<ext>
+          # and (re)generate sha256 so the release has tidy, matching filenames + checksums.
+          for ext in jar exe sh deb; do
+            src=$(ls HMCL/build/libs/HMCL-*."$ext" 2>/dev/null | head -1) || true
+            if [ -n "$src" ] && [ -f "$src" ]; then
+              out="dist/HMCL-$V.$ext"
+              cp "$src" "$out"
+              sha256sum "$out" | awk '{print $1}' > "$out.sha256"
+            fi
+          done
           echo "Built files:"
           ls -la dist/
+
+      - name: Clean stale release assets
+        run: |
+          # Remove any previously-uploaded assets for this tag so renamed/old-named files don't linger.
+          for a in $(gh release view "${{ github.event.inputs.tag }}" --json assets --jq '.assets[].name'); do
+            gh release delete-asset "${{ github.event.inputs.tag }}" "$a" -y || true
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to GitHub release
         run: gh release upload "${{ github.event.inputs.tag }}" dist/* --clobber
