@@ -138,24 +138,49 @@ public final class LangChain4jModelFactory {
 
     /// Builds a LangChain4j Anthropic ChatModel from the given configuration.
     public ChatModel buildAnthropicChatModel(LlmConfig config) {
-        return dev.langchain4j.model.anthropic.AnthropicChatModel.builder()
+        var builder = dev.langchain4j.model.anthropic.AnthropicChatModel.builder()
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
                 .temperature(config.getTemperature())
                 .maxTokens(config.getMaxTokens())
-                .timeout(config.getTimeout())
-                .build();
+                .timeout(config.getTimeout());
+        String base = extractAnthropicBaseUrl(config.getEndpoint());
+        if (base != null && !base.isBlank()) {
+            builder.baseUrl(base);
+        }
+        return builder.build();
     }
 
     /// Builds a LangChain4j Anthropic StreamingChatModel from the given configuration.
     public StreamingChatModel buildAnthropicStreamingChatModel(LlmConfig config) {
-        return dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.builder()
+        var builder = dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.builder()
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
                 .temperature(config.getTemperature())
                 .maxTokens(config.getMaxTokens())
-                .timeout(config.getTimeout())
-                .build();
+                .timeout(config.getTimeout());
+        String base = extractAnthropicBaseUrl(config.getEndpoint());
+        if (base != null && !base.isBlank()) {
+            builder.baseUrl(base);
+        }
+        return builder.build();
+    }
+
+    /// Maps a configured Anthropic endpoint to the base URL the Anthropic client expects.
+    ///
+    /// The Anthropic client appends `messages` to its base URL (default `https://api.anthropic.com/v1/`),
+    /// while HMCL stores the normalized full endpoint (e.g. `.../v1/messages`). Strip a trailing
+    /// `/messages` so a user-configured proxy/relay/regional endpoint is actually honoured instead of
+    /// being silently ignored. Returns `null` for a blank endpoint (keep the client default).
+    static String extractAnthropicBaseUrl(String endpoint) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return null;
+        }
+        String e = endpoint.trim();
+        if (e.endsWith("/messages")) {
+            return e.substring(0, e.length() - "messages".length());
+        }
+        return e;
     }
 
     /// Extracts the base URL from a full chat-completions endpoint.

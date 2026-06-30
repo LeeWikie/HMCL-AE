@@ -49,6 +49,26 @@ public final class LangChain4jModelFactoryTest {
                 LangChain4jModelFactory.extractBaseUrl("https://custom.provider.io/api/generate"));
     }
 
+    /// Anthropic base URL: strip the trailing /messages the client re-appends, so a user-configured
+    /// proxy/relay endpoint is honoured instead of being silently dropped.
+    @Test
+    public void testExtractAnthropicBaseUrlStripsMessages() {
+        assertEquals("https://relay.example.com/v1/",
+                LangChain4jModelFactory.extractAnthropicBaseUrl("https://relay.example.com/v1/messages"));
+        assertEquals("https://api.anthropic.com/v1/",
+                LangChain4jModelFactory.extractAnthropicBaseUrl("https://api.anthropic.com/v1/messages"));
+    }
+
+    /// A blank Anthropic endpoint yields null so the client keeps its built-in default.
+    @Test
+    public void testExtractAnthropicBaseUrlBlankIsNull() {
+        assertNull(LangChain4jModelFactory.extractAnthropicBaseUrl(""));
+        assertNull(LangChain4jModelFactory.extractAnthropicBaseUrl(null));
+        assertNull(LangChain4jModelFactory.extractAnthropicBaseUrl("   "));
+        assertEquals("https://host/custom",
+                LangChain4jModelFactory.extractAnthropicBaseUrl("https://host/custom"));
+    }
+
     /// Verifies that a chat model can be built from a minimal LlmConfig
     /// without throwing.
     @Test

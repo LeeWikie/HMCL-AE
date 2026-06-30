@@ -225,16 +225,34 @@ public final class WorldBackupManager {
             throw new IOException("Backup '" + backupId + "' of world '" + world + "' was not found at: " + snapshot);
         }
 
-        // 1) Safety: snapshot the current world before overwriting it.
+        // 1) Stage the chosen snapshot into a temp dir FIRST, so a copy failure can never destroy the
+        //    live world (we only delete the world once the new copy is fully staged).
+        Path staging = worldDir.resolveSibling("." + world + ".restoring");
+        if (Files.exists(staging)) {
+            deleteTree(staging);
+        }
+        long[] counters = copyTree(snapshot, staging);
+
+        // 2) Safety: snapshot the current world before overwriting it. Pruning is DISABLED here
+        //    (retentionCount 0) so this safety backup can never evict the snapshot being restored.
         @Nullable String safetyId = null;
         if (Files.isDirectory(worldDir)) {
-            BackupResult safety = createBackup(instance, world, retentionCount);
+            BackupResult safety = createBackup(instance, world, 0);
             safetyId = safety.id();
             deleteTree(worldDir);
         }
 
-        // 2) Copy the chosen snapshot into place.
-        long[] counters = copyTree(snapshot, worldDir);
+        // 3) Swap the staged copy into place (a rename within saves/ is atomic on the same filesystem;
+        //    fall back to copy+delete if the platform refuses the move).
+        try {
+            Files.move(staging, worldDir);
+        } catch (IOException moveFailed) {
+            copyTree(staging, worldDir);
+            deleteTree(staging);
+        }
+
+        // 4) Apply retention only AFTER the restore has fully succeeded.
+        prune(backupRoot, retentionCount);
         return new RestoreResult(worldDir, safetyId, (int) counters[0]);
     }
 
