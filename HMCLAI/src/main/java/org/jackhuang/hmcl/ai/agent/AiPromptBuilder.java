@@ -162,8 +162,6 @@ public final class AiPromptBuilder {
         blocks.add(DISCIPLINE);
         blocks.add("");
         blocks.add(PLAYBOOKS);
-        blocks.add("");
-        blocks.add(buildRuntimeContext());
 
         if (planMode.getAsBoolean()) {
             blocks.add("");
@@ -208,6 +206,11 @@ public final class AiPromptBuilder {
             blocks.add("");
             blocks.add("用户自定义指令（务必遵守）:\n" + custom);
         }
+
+        // Runtime context (free disk / selected instance) is the most volatile part of the prompt, so
+        // it goes LAST — everything above forms a longer, stabler prefix the provider can prompt-cache.
+        blocks.add("");
+        blocks.add(buildRuntimeContext());
 
         return String.join("\n", blocks);
     }
