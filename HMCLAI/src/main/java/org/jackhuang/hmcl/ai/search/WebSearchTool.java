@@ -54,7 +54,8 @@ public final class WebSearchTool implements ToolSpec {
 
         SearchClient client = buildClient();
         if (client == null) {
-            return ToolResult.failure("No search client configured for provider: " + config.getProvider());
+            return ToolResult.failure("搜索提供商「" + config.getProvider() + "」暂未接入。"
+                    + "目前已接入的是 Tavily 和 SearXNG —— 请到 AI 设置 > 联网搜索 改用其中之一并填好接口地址与 Key。");
         }
 
         try {

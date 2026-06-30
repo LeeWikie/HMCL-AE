@@ -1111,8 +1111,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         LineSelectButton<SearchProvider> provider = new LineSelectButton<>();
         provider.setTitle("搜索服务商");
-        provider.setSubtitle("选择搜索服务提供商");
-        provider.setItems(List.of(SearchProvider.TAVILY, SearchProvider.SEARXNG, SearchProvider.EXA, SearchProvider.BOCHA, SearchProvider.ZHIPU, SearchProvider.LOCAL));
+        provider.setSubtitle("目前已接入 Tavily 与 SearXNG（其余服务商接入中）");
+        provider.setItems(List.of(SearchProvider.TAVILY, SearchProvider.SEARXNG));
         provider.setNullSafeConverter(SearchProvider::getDisplayName);
         SearchProvider current = SearchProvider.fromId(searchConfig.getProvider().toUpperCase());
         provider.setValue(current != null ? current : SearchProvider.TAVILY);
@@ -1182,7 +1182,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 try {
                     SearchResponse response = switch (testProvider) {
                         case "searxng" -> new SearxngSearchClient(testEndpoint, testApiKey).search(query, testMaxResults);
-                        default -> new TavilySearchClient(testEndpoint, testApiKey).search(query, testMaxResults);
+                        case "tavily" -> new TavilySearchClient(testEndpoint, testApiKey).search(query, testMaxResults);
+                        default -> throw new UnsupportedOperationException(
+                                "搜索服务商「" + testProvider + "」暂未接入,无法测试");
                     };
                     Platform.runLater(() -> {
                         Controllers.showToast("测试搜索成功：" + response.results().size() + " 条结果");
