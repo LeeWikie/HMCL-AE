@@ -75,9 +75,18 @@ public final class BochaSearchClient implements SearchClient {
             throw new RuntimeException("Bocha 搜索返回 " + response.statusCode() + ": " + response.body());
         }
 
-        Map<String, Object> root = GSON.fromJson(response.body(),
-                new TypeToken<Map<String, Object>>() {}.getType());
+        return parseResults(response.body());
+    }
+
+    /// Parses a Bocha web-search JSON response. Bocha wraps results in
+    /// {@code {code, data:{webPages:{value:[{name,url,snippet,summary}]}}}}; a flatter shape (no
+    /// {@code data} envelope) is tolerated. Package-private so it can be unit-tested without a network call.
+    static SearchResponse parseResults(String json) {
         List<SearchResult> results = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return new SearchResponse(results, "bocha");
+        }
+        Map<String, Object> root = GSON.fromJson(json, new TypeToken<Map<String, Object>>() {}.getType());
         if (root == null) {
             return new SearchResponse(results, "bocha");
         }
