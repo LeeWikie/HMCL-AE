@@ -1553,7 +1553,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // it is added to the list later to keep the original row order.
         LineToggleButton slimBackup = new LineToggleButton();
         slimBackup.setTitle("精简备份");
-        slimBackup.setSubtitle("备份时跳过图片、知识库等大文件，仅保留聊天记录和设置");
+        slimBackup.setSubtitle("备份时跳过图片等大文件，仅保留聊天记录和设置");
         slimBackup.setSelected(true);
 
         LineButton backup = new LineButton();
@@ -1572,14 +1572,73 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         list.getContent().add(slimBackup);
 
-        LineButton fileExport = new LineButton();
-        fileExport.setTitle("导出为文件");
-        fileExport.setSubtitle("导出全部 HMCL-AE 数据（含图片/知识库）到 zip");
-        fileExport.setTrailingIcon(SVG.FOLDER_OPEN);
-        fileExport.setOnAction(e -> exportBackup(false, "hmcl-ae-export.zip"));
-        list.getContent().add(fileExport);
+        LineButton sessionExport = new LineButton();
+        sessionExport.setTitle("导出全部会话");
+        sessionExport.setSubtitle("把所有对话导出为 Markdown / JSON / 纯文本（在保存对话框里选格式）");
+        sessionExport.setTrailingIcon(SVG.FOLDER_OPEN);
+        sessionExport.setOnAction(e -> exportAllSessions());
+        list.getContent().add(sessionExport);
 
         return list;
+    }
+
+    /// Exports ALL conversations to a single file; format follows the chosen extension (.md/.json/.txt).
+    private void exportAllSessions() {
+        FileChooser fc = new FileChooser();
+        fc.setTitle("导出全部会话");
+        fc.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("Markdown (*.md)", "*.md"),
+                new FileChooser.ExtensionFilter("JSON (*.json)", "*.json"),
+                new FileChooser.ExtensionFilter("纯文本 (*.txt)", "*.txt"));
+        fc.setInitialFileName("hmcl-ae-conversations.md");
+        java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
+        if (chosen == null) return;
+        Path target = chosen.toPath();
+        String lower = chosen.getName().toLowerCase();
+        String fmt = lower.endsWith(".json") ? "json" : lower.endsWith(".txt") ? "txt" : "md";
+        try {
+            org.jackhuang.hmcl.ai.AiSessionStore store =
+                    new org.jackhuang.hmcl.ai.AiSessionStore(SettingsManager.localConfigDirectory());
+            store.load();
+            java.util.List<org.jackhuang.hmcl.ai.AiSession> sessions = store.listSessions();
+            String content;
+            if ("json".equals(fmt)) {
+                Path src = SettingsManager.localConfigDirectory().resolve(org.jackhuang.hmcl.ai.AiSessionStore.FILE_NAME);
+                content = Files.exists(src) ? Files.readString(src, StandardCharsets.UTF_8) : "{}";
+            } else {
+                content = formatSessions(sessions, "md".equals(fmt));
+            }
+            Files.writeString(target, content, StandardCharsets.UTF_8);
+            Controllers.showToast("已导出 " + sessions.size() + " 个会话到 " + target);
+        } catch (IOException ex) {
+            Controllers.showToast("导出失败：" + ex.getMessage());
+        }
+    }
+
+    private static String formatSessions(java.util.List<org.jackhuang.hmcl.ai.AiSession> sessions, boolean markdown) {
+        StringBuilder sb = new StringBuilder();
+        for (org.jackhuang.hmcl.ai.AiSession s : sessions) {
+            if (sb.length() > 0) sb.append(markdown ? "\n\n---\n\n" : "\n\n==============================\n\n");
+            String title = s.getTitle() == null || s.getTitle().isBlank() ? "(未命名会话)" : s.getTitle();
+            sb.append(markdown ? "# " + title + "\n\n" : title + "\n\n");
+            for (org.jackhuang.hmcl.ai.llm.LlmMessage m : s.getMessages()) {
+                String role = roleLabel(m.getRole());
+                String text = m.getContent() == null ? "" : m.getContent();
+                if (markdown) {
+                    sb.append("**").append(role).append("**:\n\n").append(text).append("\n\n");
+                } else {
+                    sb.append(role).append(": ").append(text).append("\n\n");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String roleLabel(String role) {
+        if ("user".equals(role)) return "用户";
+        if ("assistant".equals(role)) return "助手";
+        if ("system".equals(role)) return "系统";
+        return role == null ? "" : role;
     }
 
     /// Prompts for a destination and writes an AE data backup (item 1 备份 / 3 导出).
@@ -1640,7 +1699,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         list.getContent().add(logDir);
 
         LineButton skillsDir = new LineButton();
-        skillsDir.setTitle("知识库 / 技能目录");
+        skillsDir.setTitle("技能目录");
         skillsDir.setSubtitle(SKILLS_DIR.toString());
         skillsDir.setTrailingIcon(SVG.FOLDER_OPEN);
         skillsDir.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
@@ -1651,13 +1710,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private Node buildCleanupSettingsList() {
         ComponentList list = new ComponentList();
-
-        LineButton knowledgeFiles = new LineButton();
-        knowledgeFiles.setTitle("知识库文件");
-        knowledgeFiles.setSubtitle(SKILLS_DIR.toString());
-        knowledgeFiles.setTrailingIcon(SVG.FOLDER_OPEN);
-        knowledgeFiles.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
-        list.getContent().add(knowledgeFiles);
 
         LineButton clearCache = new LineButton();
         clearCache.setTitle("清除缓存");
