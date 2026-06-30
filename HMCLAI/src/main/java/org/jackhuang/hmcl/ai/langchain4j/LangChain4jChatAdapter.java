@@ -219,6 +219,13 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// failing call (see {@link #DUP_CALL_LIMIT}).
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
                             java.util.Map<String, Integer> callCounts) {
+        streamTurn(conversation, callback, cycle, callCounts, 0);
+    }
+
+    /// @param attempt how many times this cycle's request has already failed transiently and been
+    ///                retried before any token streamed (0 on first try); see {@link #MAX_STREAM_RETRIES}.
+    private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
+                            java.util.Map<String, Integer> callCounts, int attempt) {
         if (callback.isCancelled()) {
             return; // user pressed Stop — abort instead of issuing another model call / tool cycle
         }
@@ -237,10 +244,14 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             requestBuilder.toolSpecifications(toolAdapter.buildToolSpecifications());
         }
 
+        // Tracks whether any token has streamed yet: a transient error before the first token can be
+        // retried transparently (nothing to roll back), but a mid-stream error must never be retried.
+        final java.util.concurrent.atomic.AtomicBoolean tokenSeen = new java.util.concurrent.atomic.AtomicBoolean(false);
         streamingChatModel.chat(requestBuilder.build(), new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String token) {
                 if (token != null && !token.isEmpty()) {
+                    tokenSeen.set(true);
                     callback.onToken(token);
                 }
             }
@@ -291,9 +302,34 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
             @Override
             public void onError(Throwable error) {
-                callback.onError(wrapError(error));
+                LlmException wrapped = wrapError(error);
+                // Transparent retry for transient failures (429 / 5xx / connection / timeout) that
+                // happened BEFORE any token streamed, bounded by MAX_STREAM_RETRIES with backoff.
+                if (!tokenSeen.get() && attempt < MAX_STREAM_RETRIES && isRetryable(wrapped)
+                        && !callback.isCancelled()) {
+                    try {
+                        Thread.sleep(500L * (1L << attempt)); // 0.5s, then 1s
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        callback.onError(wrapped);
+                        return;
+                    }
+                    streamTurn(conversation, callback, cycle, callCounts, attempt + 1);
+                    return;
+                }
+                callback.onError(wrapped);
             }
         });
+    }
+
+    private static final int MAX_STREAM_RETRIES = 2; // up to 3 attempts total for a pre-token transient error
+
+    /// Whether a failure is worth a transparent retry: rate limits (429), server-side errors (5xx),
+    /// and connection/timeout failures (status 0, no HTTP response). Client errors (400/401/403/404)
+    /// are NOT retried — they won't succeed on a re-send.
+    private static boolean isRetryable(LlmException e) {
+        int s = e.getStatusCode();
+        return s == 0 || s == 429 || s == 500 || s == 502 || s == 503 || s == 504;
     }
 
     /// Sends a non-streaming request via the LangChain4j chat model and
