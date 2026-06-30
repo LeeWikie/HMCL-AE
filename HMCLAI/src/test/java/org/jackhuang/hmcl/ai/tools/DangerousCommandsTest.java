@@ -46,6 +46,16 @@ public final class DangerousCommandsTest {
     }
 
     @Test
+    void rmLongOptionsAreFlagged() {
+        // GNU long options were previously missed by the short-flag-only pattern.
+        assertTrue(DangerousCommands.isDangerous("rm --recursive --force /home/user/data"));
+        assertTrue(DangerousCommands.isDangerous("rm --force --recursive /"));
+        assertTrue(DangerousCommands.isDangerous("rm --recursive dir"));
+        // a single-file rm with no recursive/force flag is not flagged
+        assertFalse(DangerousCommands.isDangerous("rm notes.txt"));
+    }
+
+    @Test
     void benignCommandsAreNotFlagged() {
         assertFalse(DangerousCommands.isDangerous("ls -la"));
         assertFalse(DangerousCommands.isDangerous("echo hello world"));

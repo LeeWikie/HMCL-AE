@@ -183,6 +183,12 @@ public final class LangChain4jToolAdapter {
             return ToolExecutionResultMessage.from(request,
                     "Error: tool '" + request.name() + "' not found");
         }
+        // A disabled tool (plan-mode read-only gating, or an MCP server marked unavailable) must not
+        // run even if the model calls it by name from stale context — get() alone doesn't gate this.
+        if (registry.isDisabled(request.name())) {
+            return ToolExecutionResultMessage.from(request,
+                    "Error: tool '" + request.name() + "' is currently disabled and cannot be called.");
+        }
 
         String text;
         try {
@@ -193,8 +199,11 @@ public final class LangChain4jToolAdapter {
                     ? spec.getPermission() : ToolPermission.CONTROLLED_WRITE;
             boolean dangerousShell = false;
             if ("shell".equals(tool.getName())) {
-                Object cmd = parameters.containsKey("command")
-                        ? parameters.get("command") : parameters.get("query");
+                // Scan EVERY alias ShellTool actually reads (command, query, input) — otherwise a
+                // dangerous command supplied via the 'input' alias slips past the always-on gate.
+                Object cmd = parameters.containsKey("command") ? parameters.get("command")
+                        : parameters.containsKey("query") ? parameters.get("query")
+                        : parameters.get("input");
                 if (cmd != null && DangerousCommands.isDangerous(cmd.toString())) {
                     perm = ToolPermission.DANGEROUS_WRITE;
                     dangerousShell = true;

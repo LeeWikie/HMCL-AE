@@ -30,7 +30,7 @@ public final class DangerousCommands {
     }
 
     private static final Pattern[] PATTERNS = {
-            Pattern.compile("(?i)\\brm\\s+(-\\S+\\s+)*-?[rf]"),       // rm -rf / rm -r / rm -f
+            Pattern.compile("(?i)\\brm\\s+(?:-\\S+\\s+)*(?:-[a-z]*[rf]|--(?:recursive|force|no-preserve-root))"), // rm -rf/-r/-f and --recursive/--force
             Pattern.compile("(?i)\\brmdir\\s+/s"),                     // Windows rmdir /s
             Pattern.compile("(?i)\\bdel\\s+.*\\s/[sfq]"),             // del /s /f /q
             Pattern.compile("(?i)\\bRemove-Item\\b.*-Recurse"),       // PowerShell recursive delete

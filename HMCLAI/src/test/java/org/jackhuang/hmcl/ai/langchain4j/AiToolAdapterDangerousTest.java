@@ -74,6 +74,19 @@ public final class AiToolAdapterDangerousTest {
     }
 
     @Test
+    void dangerousCommandViaInputAliasAlsoForcesConfirm() {
+        AtomicInteger confirms = new AtomicInteger();
+        ToolConfirmHandler handler = (name, summary) -> { confirms.incrementAndGet(); return true; };
+        LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), yolo(), handler, handler);
+        // ShellTool reads command/query/input; a dangerous command via the 'input' alias must NOT bypass the gate.
+        ToolExecutionRequest req = ToolExecutionRequest.builder()
+                .name("shell").arguments("{\"input\":\"format C:\"}").build();
+        ToolExecutionResultMessage result = adapter.execute(req);
+        assertEquals(1, confirms.get(), "a dangerous command via the 'input' alias must also prompt in YOLO");
+        assertTrue(result.text().contains("ran"));
+    }
+
+    @Test
     void decliningADangerousCommandBlocksIt() {
         ToolConfirmHandler deny = (name, summary) -> false;
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), yolo(), deny, deny);
