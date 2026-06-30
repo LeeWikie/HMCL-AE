@@ -801,7 +801,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 boolean sel = providerBox.isSelected();
                 for (JFXCheckBox mcb : modelBoxes) mcb.setSelected(sel);
             });
-            card.getContent().add(providerBox);
+            // A bare control dropped into a ComponentList renders CENTERED (its row wrapper is a
+            // center-aligned StackPane). Wrap the provider header in a full-width HBox + growing
+            // spacer so the checkbox/name sit on the LEFT, exactly like the model rows below.
+            javafx.scene.layout.Region phSpacer = new javafx.scene.layout.Region();
+            HBox.setHgrow(phSpacer, javafx.scene.layout.Priority.ALWAYS);
+            HBox providerHeader = new HBox(8, providerBox, phSpacer);
+            providerHeader.setAlignment(Pos.CENTER_LEFT);
+            card.getContent().add(providerHeader);
 
             for (AiModelEntry entry : profile.getModels()) {
                 JFXCheckBox mcb = new JFXCheckBox(entry.getDisplayName());
@@ -822,7 +829,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 Label none = new Label("（无模型，先用 🔄 加载）");
                 none.getStyleClass().add("subtitle-label");
                 none.setPadding(new Insets(2, 4, 2, 24));
-                card.getContent().add(none);
+                HBox noneRow = new HBox(none);
+                noneRow.setAlignment(Pos.CENTER_LEFT);
+                card.getContent().add(noneRow);
                 providerBox.setSelected(false);
             }
             updateProviderBox(providerBox, modelBoxes);
