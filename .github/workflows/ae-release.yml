@@ -1,0 +1,62 @@
+name: AE Release
+
+# Build HMCL-AE on CI and attach the artifacts to a GitHub release.
+# Manually triggered: pick the tag (must already exist) and the version number to stamp into the build.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing git tag to release (e.g. v0.2.1-beta)'
+        required: true
+      version:
+        description: 'Version number stamped into the artifacts (e.g. 0.2.1-beta)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          java-package: 'jdk+fx'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Build artifacts
+        run: ./gradlew :HMCL:makeExecutables --no-daemon --parallel --stacktrace
+        env:
+          VERSION_ROOT: ${{ github.event.inputs.version }}
+          MICROSOFT_AUTH_ID: ${{ secrets.MICROSOFT_AUTH_ID }}
+          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+
+      - name: Collect artifacts
+        id: collect
+        run: |
+          mkdir -p dist
+          cp HMCL/build/libs/HMCL-*.jar HMCL/build/libs/HMCL-*.exe HMCL/build/libs/HMCL-*.sh dist/ 2>/dev/null || true
+          # .deb is only produced on some setups; include it if present.
+          cp HMCL/build/libs/HMCL-*.deb dist/ 2>/dev/null || true
+          echo "Built files:"
+          ls -la dist/
+
+      - name: Upload to GitHub release
+        run: gh release upload "${{ github.event.inputs.tag }}" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
