@@ -25,6 +25,7 @@ import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXComboBox;
 import com.jfoenix.controls.JFXDialogLayout;
 import com.jfoenix.controls.JFXPasswordField;
+import org.jackhuang.hmcl.ui.construct.HintPane;
 import com.jfoenix.controls.JFXSlider;
 import com.jfoenix.controls.JFXTextField;
 import javafx.application.Platform;
@@ -978,11 +979,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // Honest gate: MCP can connect and list a server's tools, but those tools are NOT yet wired
         // into the assistant's tool loop — the agent can't call them. Say so plainly instead of
         // letting users configure something that silently does nothing in chat.
-        Label experimentalBanner = new Label("⚠️ 实验性:MCP 服务器目前可以连接并查看其提供的工具，"
+        HintPane experimentalBanner = new HintPane(org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.WARNING);
+        experimentalBanner.setText("实验性:MCP 服务器目前可以连接并查看其提供的工具，"
                 + "但这些工具尚未接入 AI 对话——助手暂时无法调用它们。此页仅供预览，正式接入仍在开发中。");
-        experimentalBanner.setWrapText(true);
-        experimentalBanner.setStyle("-fx-text-fill: #8a6d00; -fx-padding: 10 14 10 14; "
-                + "-fx-background-color: rgba(255,193,7,0.18); -fx-background-radius: 8;");
         root.getChildren().add(experimentalBanner);
 
         ComponentList list = new ComponentList();
