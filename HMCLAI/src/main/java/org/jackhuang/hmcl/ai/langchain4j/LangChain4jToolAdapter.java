@@ -191,11 +191,13 @@ public final class LangChain4jToolAdapter {
             // Safety policy: block or confirm dangerous operations before running them.
             ToolPermission perm = (tool instanceof ToolSpec spec)
                     ? spec.getPermission() : ToolPermission.CONTROLLED_WRITE;
+            boolean dangerousShell = false;
             if ("shell".equals(tool.getName())) {
                 Object cmd = parameters.containsKey("command")
                         ? parameters.get("command") : parameters.get("query");
                 if (cmd != null && DangerousCommands.isDangerous(cmd.toString())) {
                     perm = ToolPermission.DANGEROUS_WRITE;
+                    dangerousShell = true;
                 }
             }
             AiExecutionPolicy.Decision decision = policy.check(perm);
@@ -211,6 +213,16 @@ public final class LangChain4jToolAdapter {
                     return ToolExecutionResultMessage.from(request,
                             "Error: the user declined to confirm this operation. Do not retry it; "
                                     + "suggest an alternative or ask what they would prefer.");
+                }
+            } else if (dangerousShell && confirmHandler != null) {
+                // A dangerous shell command (format / dd / mkfs / fork bomb / recursive delete, incl.
+                // base64-encoded) ALWAYS requires explicit confirmation — even in YOLO, where the
+                // policy would otherwise auto-allow. The ONLY bypass is the developer "dangerously
+                // skip permissions" toggle, which nulls confirmHandler (so this branch is skipped).
+                if (!confirmHandler.confirm(tool.getName(), summarizeForConfirm(tool.getName(), parameters))) {
+                    return ToolExecutionResultMessage.from(request,
+                            "Error: the user declined to confirm this dangerous command. Do not retry it; "
+                                    + "suggest a safer alternative or ask what they would prefer.");
                 }
             }
 
