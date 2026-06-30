@@ -120,7 +120,7 @@ public final class InstallModTool implements Tool {
         // timeout and applies the standard game-version / version-id selection).
         RemoteAddon.Version selected;
         try {
-            selected = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionName);
+            selected = ContentToolSupport.resolveVersion(repository, id, gameVersion, versionName, loader);
         } catch (Exception e) {
             return ToolResult.failure("Failed to resolve mod '" + id + "': " + AbstractContentSearchTool.messageOf(e));
         }

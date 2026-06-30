@@ -312,12 +312,17 @@ public final class AiJobManager {
         if (job == null) {
             return false;
         }
+        // Transition status FIRST, then read the future and interrupt. Combined with submit()
+        // publishing job.future BEFORE re-checking the status, this guarantees at least one side
+        // always interrupts the worker — closing the TOCTOU window where cancel() reported success
+        // yet the work ran to completion (holding a worker thread).
+        boolean transitioned = complete(job, Status.CANCELLED, ToolResult.failure("Job cancelled."), "Job cancelled.");
         Future<?> future = job.future;
         if (future != null) {
             // Interrupt the worker; the resulting exception is absorbed by runJob.
             future.cancel(true);
         }
-        return complete(job, Status.CANCELLED, ToolResult.failure("Job cancelled."), "Job cancelled.");
+        return transitioned;
     }
 
     /// Registers a listener fired (off the FX thread) when a job reaches a terminal state.

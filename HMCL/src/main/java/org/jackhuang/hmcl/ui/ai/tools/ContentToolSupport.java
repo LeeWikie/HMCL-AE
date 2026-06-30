@@ -459,6 +459,15 @@ final class ContentToolSupport {
     /// Resolves the addon and selects the best matching version for installation.
     static RemoteAddon.Version resolveVersion(RemoteAddonRepository repository, String id,
                                               @Nullable String gameVersion, @Nullable String versionId) throws Exception {
+        return resolveVersion(repository, id, gameVersion, versionId, null);
+    }
+
+    /// As above, plus an optional mod-loader filter applied on the auto-pick path. A multi-loader
+    /// project publishes Fabric+Forge+NeoForge files for the same MC version, so without this the
+    /// newest file may be the wrong loader and crash the instance.
+    static RemoteAddon.Version resolveVersion(RemoteAddonRepository repository, String id,
+                                              @Nullable String gameVersion, @Nullable String versionId,
+                                              @Nullable org.jackhuang.hmcl.addon.mod.ModLoaderType loader) throws Exception {
         DownloadProvider provider = downloadProvider();
         RemoteAddon addon = callWithTimeout(() -> repository.getModById(provider, id), 60, "Lookup");
         if (addon == null || addon == RemoteAddon.BROKEN) {
@@ -492,6 +501,17 @@ final class ContentToolSupport {
                 throw new IOException("No version of '" + addon.title() + "' supports game version " + gameVersion + ".");
             }
             candidates = filtered;
+        }
+
+        if (loader != null) {
+            List<RemoteAddon.Version> byLoader = candidates.stream()
+                    .filter(v -> v.loaders() != null && v.loaders().contains(loader))
+                    .collect(Collectors.toList());
+            if (byLoader.isEmpty()) {
+                throw new IOException("No version of '" + addon.title() + "' supports loader " + loader
+                        + (gameVersion != null ? " for game version " + gameVersion : "") + ".");
+            }
+            candidates = byLoader;
         }
 
         return candidates.stream()

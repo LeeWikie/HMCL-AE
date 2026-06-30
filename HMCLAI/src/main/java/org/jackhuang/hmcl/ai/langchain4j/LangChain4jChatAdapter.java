@@ -422,6 +422,25 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         if (error instanceof CancellationException) {
             return new LlmException("Request cancelled", 0, error);
         }
-        return new LlmException("AI request failed: " + error.getMessage(), 0, error);
+        return new LlmException("AI request failed: " + error.getMessage(), extractStatus(error), error);
+    }
+
+    /// Best-effort HTTP status from langchain4j's exception hierarchy (walking the cause chain).
+    /// langchain4j throws its OWN exception types, not HMCL's LlmException, so without this every
+    /// failure looked like status 0 and isRetryable's 429/5xx allowlist was dead (every pre-token
+    /// error, even a 401/400, got retried). 0 means unknown/network (genuinely retryable).
+    private static int extractStatus(Throwable error) {
+        Throwable t = error;
+        for (int i = 0; t != null && i < 10; i++, t = t.getCause()) {
+            if (t instanceof dev.langchain4j.exception.HttpException) {
+                return ((dev.langchain4j.exception.HttpException) t).statusCode();
+            }
+            if (t instanceof dev.langchain4j.exception.AuthenticationException) return 401;
+            if (t instanceof dev.langchain4j.exception.RateLimitException) return 429;
+            if (t instanceof dev.langchain4j.exception.ModelNotFoundException) return 404;
+            if (t instanceof dev.langchain4j.exception.InvalidRequestException) return 400;
+            if (t instanceof dev.langchain4j.exception.InternalServerException) return 500;
+        }
+        return 0;
     }
 }
