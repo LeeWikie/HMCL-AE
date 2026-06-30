@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import javafx.application.Platform;
 import org.jackhuang.hmcl.auth.offline.OfflineAccount;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.setting.Accounts;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -51,27 +52,12 @@ public final class AddOfflineAccountTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String resolved = String.valueOf(parameters.getOrDefault("username", "")).trim();
-        if (resolved.isEmpty()) {
-            // Weak models frequently send the name under the wrong key (query / name / input) instead
-            // of "username" — accept the common aliases so a single param-name slip isn't a hard fail.
-            for (String alt : new String[]{"name", "query", "input", "value", "account", "player"}) {
-                Object v = parameters.get(alt);
-                if (v != null && !String.valueOf(v).trim().isEmpty()) {
-                    resolved = String.valueOf(v).trim();
-                    break;
-                }
-            }
-        }
-        // Some models pass the value as "username=Steve"; strip a leading key= prefix.
-        int eq = resolved.indexOf('=');
-        if (eq > 0 && resolved.substring(0, eq).trim().matches("(?i)username|name|player|account")) {
-            resolved = resolved.substring(eq + 1).trim();
-        }
-        if (resolved.isEmpty()) {
+        // Robust resolution: weak models often put the name under the wrong key (query/input/…) or
+        // as "username=Steve". ToolParams handles canonical → aliases → generic keys → sole value.
+        final String username = ToolParams.string(parameters, "username", "name", "player", "account");
+        if (username.isEmpty()) {
             return ToolResult.failure("username is required.");
         }
-        final String username = resolved;
         Object selectObj = parameters.getOrDefault("select", Boolean.TRUE);
         boolean select = !(selectObj instanceof Boolean) || (Boolean) selectObj;
 

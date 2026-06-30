@@ -21,6 +21,7 @@ import javafx.application.Platform;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -58,15 +59,12 @@ public final class CopyToClipboardTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String text = InstanceToolSupport.string(parameters, "text");
-        if (text == null) {
-            text = InstanceToolSupport.string(parameters, "query");
-        }
-        if (text == null) {
+        String resolved = ToolParams.string(parameters, "text", "content", "message", "str", "clipboard");
+        if (resolved.isEmpty()) {
             return ToolResult.failure("Parameter 'text' is required and must not be empty.");
         }
 
-        final String payload = text;
+        final String payload = resolved;
         AtomicReference<Throwable> error = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
 

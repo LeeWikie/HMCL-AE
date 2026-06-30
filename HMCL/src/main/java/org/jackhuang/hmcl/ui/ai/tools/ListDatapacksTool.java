@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
@@ -62,11 +63,10 @@ public final class ListDatapacksTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object worldObj = parameters.get("world");
-        if (!(worldObj instanceof String) || ((String) worldObj).trim().isEmpty()) {
+        final String world = ToolParams.string(parameters, "world", "save", "folder", "saveName", "name");
+        if (world.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }
-        String world = ((String) worldObj).trim();
 
         Profile profile;
         try {

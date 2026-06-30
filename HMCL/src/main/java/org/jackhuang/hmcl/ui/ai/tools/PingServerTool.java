@@ -21,6 +21,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.util.ServerAddress;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -71,14 +72,10 @@ public final class PingServerTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object addressObj = parameters.get("address");
-        if (!(addressObj instanceof String) || ((String) addressObj).trim().isEmpty()) {
-            addressObj = parameters.get("query");
-        }
-        if (!(addressObj instanceof String) || ((String) addressObj).trim().isEmpty()) {
+        String raw = ToolParams.string(parameters, "address", "host", "server", "ip", "addr", "url");
+        if (raw.isEmpty()) {
             return ToolResult.failure("Parameter 'address' (host or host:port) is required.");
         }
-        String raw = ((String) addressObj).trim();
 
         String host;
         int port;

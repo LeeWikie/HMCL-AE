@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -61,11 +62,10 @@ public final class CreateWorldBackupTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object worldObj = parameters.get("world");
-        if (!(worldObj instanceof String) || ((String) worldObj).trim().isEmpty()) {
+        String world = ToolParams.string(parameters, "world", "save", "folder", "saveName", "name");
+        if (world.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }
-        String world = ((String) worldObj).trim();
 
         Object instanceObj = parameters.get("instance");
         String instance = instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()

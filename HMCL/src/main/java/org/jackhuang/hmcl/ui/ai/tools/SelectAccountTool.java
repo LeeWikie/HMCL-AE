@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import javafx.application.Platform;
 import org.jackhuang.hmcl.auth.Account;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.setting.Accounts;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -50,10 +51,11 @@ public final class SelectAccountTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String username = String.valueOf(parameters.getOrDefault("username", "")).trim();
-        if (username.isEmpty()) {
+        String resolved = ToolParams.string(parameters, "username", "name", "player", "account");
+        if (resolved.isEmpty()) {
             return ToolResult.failure("username is required.");
         }
+        final String username = resolved;
         try {
             CompletableFuture<String> future = new CompletableFuture<>();
             Runnable task = () -> {
