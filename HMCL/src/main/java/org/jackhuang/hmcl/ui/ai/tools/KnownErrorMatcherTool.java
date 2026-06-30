@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.CrashReportAnalyzer;
 
@@ -83,21 +84,10 @@ public final class KnownErrorMatcherTool implements Tool {
     ///         describing what went wrong
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object raw = parameters.get("text");
-        if (raw == null) {
-            raw = parameters.get("log");
-        }
-        if (raw == null) {
-            raw = parameters.get("query"); // tool schema currently advertises a single param
-        }
-        if (!(raw instanceof String)) {
+        String log = ToolParams.string(parameters, "text", "log", "crash", "error", "content", "logText");
+        if (log.isEmpty()) {
             return ToolResult.failure("Missing or invalid 'text' parameter: "
                     + "a non-empty crash/log string is required (you may also use 'log').");
-        }
-
-        String log = ((String) raw).trim();
-        if (log.isEmpty()) {
-            return ToolResult.failure("Cannot analyze empty log text.");
         }
 
         Set<CrashReportAnalyzer.Result> matched;

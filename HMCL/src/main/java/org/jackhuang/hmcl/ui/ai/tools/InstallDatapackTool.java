@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
@@ -63,17 +64,15 @@ public final class InstallDatapackTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object worldObj = parameters.get("world");
-        if (!(worldObj instanceof String) || ((String) worldObj).trim().isEmpty()) {
+        String world = ToolParams.strict(parameters, "world", "save", "folder", "saveName");
+        if (world.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }
-        String world = ((String) worldObj).trim();
 
-        Object sourceObj = parameters.get("source");
-        if (!(sourceObj instanceof String) || ((String) sourceObj).trim().isEmpty()) {
+        String sourceText = ToolParams.strict(parameters, "source", "path", "file", "zip", "datapack");
+        if (sourceText.isEmpty()) {
             return ToolResult.failure("Parameter 'source' (the local path of the .zip datapack) is required.");
         }
-        String sourceText = ((String) sourceObj).trim();
 
         Path source;
         try {

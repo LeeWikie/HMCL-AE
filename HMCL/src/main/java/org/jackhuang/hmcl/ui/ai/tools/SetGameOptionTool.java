@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
@@ -64,17 +65,15 @@ public final class SetGameOptionTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object keyObj = parameters.get("key");
-        if (!(keyObj instanceof String) || ((String) keyObj).trim().isEmpty()) {
+        String key = ToolParams.strict(parameters, "key", "option", "setting", "name");
+        if (key.isEmpty()) {
             return ToolResult.failure("Parameter 'key' is required.");
         }
-        String key = ((String) keyObj).trim();
 
-        Object valueObj = parameters.get("value");
-        if (valueObj == null) {
+        String value = ToolParams.strict(parameters, "value", "val", "setting_value");
+        if (value.isEmpty()) {
             return ToolResult.failure("Parameter 'value' is required.");
         }
-        String value = String.valueOf(valueObj);
 
         Profile profile;
         try {

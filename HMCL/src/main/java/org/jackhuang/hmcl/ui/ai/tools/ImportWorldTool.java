@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
@@ -78,11 +79,10 @@ public final class ImportWorldTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        Object zipObj = parameters.get("zip");
-        if (!(zipObj instanceof String) || ((String) zipObj).trim().isEmpty()) {
+        String zipText = ToolParams.string(parameters, "zip", "path", "file", "archive", "source");
+        if (zipText.isEmpty()) {
             return ToolResult.failure("Parameter 'zip' (the local path of the .zip world archive) is required.");
         }
-        String zipText = ((String) zipObj).trim();
 
         Path zipPath;
         try {

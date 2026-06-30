@@ -19,6 +19,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.glavo.nbt.tag.Tag;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -71,9 +72,9 @@ public final class TransferInventoryTool implements Tool {
             String world = NbtToolSupport.str(parameters, "world");
             Path worldDir = NbtToolSupport.resolveWorldDir(savesDir, world);
 
-            String from = NbtToolSupport.str(parameters, "from");
-            String to = NbtToolSupport.str(parameters, "to");
-            if (from == null || to == null) {
+            String from = ToolParams.strict(parameters, "from", "source", "fromPlayer", "src");
+            String to = ToolParams.strict(parameters, "to", "target", "toPlayer", "dest");
+            if (from.isEmpty() || to.isEmpty()) {
                 return ToolResult.failure("Both 'from' and 'to' (UUID or username) are required.");
             }
             boolean includeEnderChest = asBool(parameters.get("includeEnderChest"));

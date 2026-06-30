@@ -65,6 +65,23 @@ public final class ToolParams {
         return stripKeyPrefix(v, canonical, aliases);
     }
 
+    /// Like {@link #string} but WITHOUT the generic-dump-key / sole-value fallbacks. Use for a tool
+    /// with SEVERAL required params, where those fallbacks could grab a value meant for another param
+    /// (e.g. set_game_option's key + value). Resolves canonical → aliases → strips a key= prefix.
+    public static String strict(Map<String, Object> params, String canonical, String... aliases) {
+        if (params == null || params.isEmpty()) {
+            return "";
+        }
+        String v = raw(params, canonical);
+        if (v.isEmpty()) {
+            for (String a : aliases) {
+                v = raw(params, a);
+                if (!v.isEmpty()) break;
+            }
+        }
+        return stripKeyPrefix(v, canonical, aliases);
+    }
+
     private static String raw(Map<String, Object> p, String key) {
         Object o = p.get(key);
         return o == null ? "" : String.valueOf(o).trim();

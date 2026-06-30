@@ -21,6 +21,7 @@ import org.jackhuang.hmcl.addon.LocalAddonFile.AddonUpdate;
 import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.mod.LocalModFile;
 import org.jackhuang.hmcl.addon.mod.ModManager;
+import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
@@ -131,8 +132,7 @@ public final class UpdateModTool implements ToolSpec {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String query = String.valueOf(parameters.getOrDefault("mod",
-                parameters.getOrDefault("query", ""))).trim();
+        String query = ToolParams.string(parameters, "mod", "name", "id", "modId", "query");
         if (query.isEmpty()) {
             return ToolResult.failure("Missing required parameter: mod (a substring of the mod file/display name or id).");
         }
