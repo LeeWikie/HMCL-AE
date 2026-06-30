@@ -26,6 +26,7 @@ import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXPopup;
 import com.jfoenix.controls.JFXProgressBar;
 import com.jfoenix.controls.JFXRadioButton;
+import com.jfoenix.controls.JFXTextArea;
 import com.jfoenix.controls.JFXTextField;
 import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
@@ -2231,7 +2232,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         boolean isUser = "user".equals(role);
         if (isUser) {
             JFXButton edit = smallIcon(SVG.EDIT, i18n("ai.msg.edit"),
-                    () -> editUserMessage(index, content));
+                    () -> startInlineEdit(bubble, index, content));
             bar.getChildren().add(edit);
         }
 
@@ -2330,19 +2331,66 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         loadSessionMessages(cur);
     }
 
-    /// Edit a user message: drop it and everything after, then load its text into the input
-    /// box so the user can revise and resend (the agent rebuilds context from the session).
-    private void editUserMessage(int index, String content) {
+    /// Inline-edit a user message: turn its bubble into an editable box with 取消/确定, hiding that
+    /// message's action bar. 取消 restores the conversation untouched; 确定 truncates from this
+    /// message and resends the revised text so the agent regenerates from here. (Previously this
+    /// deleted the message + its reply and dumped the text back into the composer — wrong.)
+    private void startInlineEdit(Node bubble, int index, String content) {
         if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) {
             return;
         }
-        cur.truncateFrom(index);
-        persistStore();
-        loadSessionMessages(cur);
-        inputField.setText(content == null ? "" : content);
-        inputField.requestFocus();
+        var children = messageList.getChildren();
+        int pos = children.indexOf(bubble);
+        if (pos < 0) {
+            return;
+        }
+
+        JFXTextArea editor = new JFXTextArea(content == null ? "" : content);
+        editor.setWrapText(true);
+        int lines = content == null ? 1 : content.split("\n", -1).length;
+        editor.setPrefRowCount(Math.min(10, Math.max(2, lines)));
+        editor.setMaxWidth(480);
+        editor.getStyleClass().add("ai-inline-edit");
+
+        JFXButton cancel = new JFXButton("取消");
+        cancel.getStyleClass().add("ai-inline-edit-cancel");
+        JFXButton confirm = new JFXButton("确定");
+        confirm.getStyleClass().add("ai-inline-edit-confirm");
+        HBox btnRow = new HBox(8, cancel, confirm);
+        btnRow.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox editBox = new VBox(6, editor, btnRow);
+        editBox.setMaxWidth(480);
+        editBox.getStyleClass().add("ai-inline-edit-box");
+        HBox wrapper = new HBox(editBox);
+        wrapper.setAlignment(Pos.CENTER_RIGHT);
+        wrapper.setPadding(new Insets(2, 16, 2, 16));
+
+        // Hide this message's action bar (the row right after the bubble) while editing.
+        Node actionRow = (pos + 1 < children.size()) ? children.get(pos + 1) : null;
+        if (actionRow != null) {
+            actionRow.setVisible(false);
+            actionRow.setManaged(false);
+        }
+        children.set(pos, wrapper);
+        editor.requestFocus();
+        editor.positionCaret(editor.getText().length());
+
+        cancel.setOnAction(e -> loadSessionMessages(cur));
+        confirm.setOnAction(e -> {
+            String edited = editor.getText() == null ? "" : editor.getText().trim();
+            if (edited.isEmpty()) {
+                loadSessionMessages(cur);
+                return;
+            }
+            cur.truncateFrom(index);
+            persistStore();
+            loadSessionMessages(cur);
+            inputField.setText(edited);
+            sendMessage();
+        });
     }
 
     /// Regenerate from a user message: drop it and everything after, then resend it as-is.
@@ -2569,6 +2617,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     exitStreamingState();
                     persistStore();
+                    // Re-render the finished conversation so the just-completed messages get their
+                    // action icons (copy/edit/resend/branch/delete) immediately — live-streamed
+                    // bubbles are rendered without an action bar; only the reload path attaches one.
+                    if (sessionStore.getCurrentSession() == streamSession) {
+                        loadSessionMessages(streamSession);
+                    }
                     maybeAutoTitle(agent, streamSession);
                 });
             }
