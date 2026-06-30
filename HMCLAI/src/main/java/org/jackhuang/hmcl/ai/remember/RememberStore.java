@@ -13,8 +13,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/// File-based global memory store (hermes style: one markdown file per fact,
-/// frontmatter metadata, flat directory, no embedding model).
+/// File-based global memory store: one markdown file per fact, frontmatter
+/// metadata, flat directory, no embedding model.
 ///
 /// Layout: `{memDir}/` contains `.md` files each with YAML-like frontmatter:
 /// ```markdown
@@ -28,7 +28,7 @@ import java.util.stream.Stream;
 ///
 /// Recall (search) is done via full-text grep over the directory; no vector DB.
 /// Each fact is a self-contained `.md` file so it's human-browsable and
-/// git-trackable. This mirrors what claude-code's `memory/` directory does.
+/// git-trackable — a plain on-disk memory folder.
 @NotNullByDefault
 public final class RememberStore {
 

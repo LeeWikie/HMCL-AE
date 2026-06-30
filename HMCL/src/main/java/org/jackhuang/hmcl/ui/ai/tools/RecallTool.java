@@ -28,8 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 /// Retrieves facts previously stored via the remember tool, by full-text search
-/// over the file-based memory store (no embedding model — pure text match,
-/// hermes-style).
+/// over the file-based memory store (no embedding model — pure text match).
 @NotNullByDefault
 public final class RecallTool implements Tool {
 

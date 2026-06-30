@@ -49,7 +49,7 @@ import java.util.stream.Stream;
 /// This is **NOT** an incremental / deduplicating / git-style engine. Each
 /// snapshot is an independent full copy, so disk usage grows linearly with the
 /// number of retained snapshots and snapshots share no storage. A future
-/// iteration could switch to a fastback-style content-addressed / incremental
+/// iteration could switch to a content-addressed / incremental
 /// store (chunk dedup, hard-linked unchanged files, or an embedded git repo)
 /// without changing the tool surface.
 ///

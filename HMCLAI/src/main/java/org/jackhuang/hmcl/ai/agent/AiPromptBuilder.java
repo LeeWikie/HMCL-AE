@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 
-/// Assembles a deliberately small system prompt (Pi-style): a short persona, concise
+/// Assembles a deliberately small system prompt: a short persona, concise
 /// tool-selection guidance, the Minecraft/HMCL conventions the agent needs, and the
 /// concrete runtime paths — then lets the model drive the tool loop itself.
 @NotNullByDefault

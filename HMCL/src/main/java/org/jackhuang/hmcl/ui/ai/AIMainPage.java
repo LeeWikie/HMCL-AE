@@ -447,7 +447,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Registers all AI tools in the shared tool registry.
     private void registerTools() {
-        // Generic, Claude-Code-style toolset: read / write / edit / grep / glob / shell /
+        // General-purpose toolset: read / write / edit / grep / glob / shell /
         // web_fetch. Narrow bespoke wrappers (crash analysis, log reader, mod toggle, file
         // backup) are intentionally dropped — that knowledge belongs in the system prompt,
         // which teaches the agent which files/paths to use with these generic tools.
@@ -506,7 +506,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetSkinTool());
         // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
-        // Global memory (hermes-style file-based store; remember/recall across conversations).
+        // Global memory (file-based store; remember/recall across conversations).
         rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
         if (aiSettings.isMemoryEnabled()) {

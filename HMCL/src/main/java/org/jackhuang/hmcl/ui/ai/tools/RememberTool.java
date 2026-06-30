@@ -12,7 +12,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-/// AI tool to store a fact into the global memory store (hermes-style file-based memory).
+/// AI tool to store a fact into the global memory store (file-based memory).
 ///
 /// The model can call `remember` with a title, content, and optional tags so it
 /// persists information across conversations. On recall, the store does full-text

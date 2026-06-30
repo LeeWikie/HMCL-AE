@@ -34,8 +34,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 
-/// A curated prompt / preset library, the launcher equivalent of the "assistants" or
-/// "prompt library" panels in desktop LLM clients (e.g. Cherry Studio). Users (or the
+/// A curated prompt / preset library: reusable instruction templates, like the "assistants" or
+/// "prompt library" panels common in desktop LLM clients. Users (or the
 /// project) drop reusable instruction templates as `.md`/`.txt` files into
 /// `{localConfigDir}/ai-prompts/`; the agent can then list them and pull one in to follow
 /// a known workflow — for example a saved "diagnose my crash" or "set up a modpack"

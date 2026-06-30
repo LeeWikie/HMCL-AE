@@ -36,8 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /// Exports a chat session to a self-contained Markdown file under
-/// `{localConfigDir}/ai-exports/`, mirroring desktop LLM clients (e.g. Cherry Studio)
-/// that let users save a conversation for sharing or archival.
+/// `{localConfigDir}/ai-exports/`, so users can save a conversation for sharing or archival.
 ///
 /// The launcher's own session storage ([`AiSessionStore`]) is reused as the source of
 /// truth, so the export always matches what the user sees in the chat list — no copy of
