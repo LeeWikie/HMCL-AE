@@ -2375,9 +2375,52 @@
 /* ---- AI Input Bar ---- */
 
 .ai-input-bar {
-    -fx-background-color: transparent;
+    /* No -fx-background-color: a Region with a (even transparent) background is mouse-pickable across
+       its whole bounds, so the bar's tall padding/gutters would eat clicks over the conversation above
+       the field. A null background is click-through; the top divider border still paints. */
     -fx-border-color: -monet-outline-variant;
     -fx-border-width: 1 0 0 0;
+}
+
+/* Background-tasks pull-up (compact, collapsible, unfurls upward above the composer). */
+.ai-jobs-pane {
+    -fx-background-color: -monet-surface-container-low-transparent-80;
+    -fx-background-radius: 8;
+}
+.ai-jobs-header {
+    -fx-padding: 4 8 4 8;
+    -fx-cursor: hand;
+    -fx-background-radius: 8;
+}
+.ai-jobs-header:hover {
+    -fx-background-color: -monet-surface-container-highest-transparent-50;
+}
+.ai-jobs-title {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+.ai-jobs-count {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-primary;
+}
+.ai-jobs-list {
+    -fx-padding: 0 8 0 8;
+}
+.ai-job-row {
+    -fx-padding: 3 2 3 2;
+}
+.ai-job-cat {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface;
+}
+.ai-job-count {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+.ai-job-cancel-btn {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-error;
+    -fx-padding: 1 6 1 6;
 }
 
 .ai-input-field {

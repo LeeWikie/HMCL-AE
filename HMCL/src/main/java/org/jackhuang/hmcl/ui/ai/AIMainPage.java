@@ -346,9 +346,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     @Nullable
     private VBox fileChipArea;
-    /// Live "background tasks" panel above the composer (running jobs + cancel buttons).
+    /// Live "background tasks" pull-up above the composer: a thin header (后台任务 + running count)
+    /// that unfurls upward into a compact per-category job list.
     @Nullable
     private VBox jobsPane;
+    private VBox jobsListContainer;
+    private Label jobsCountLabel;
+    private javafx.scene.Node jobsToggleIcon;
+    private boolean jobsExpanded = false;
+    @Nullable
+    private Timeline jobsAnimation;
     /// Consecutive auto-continue turns without a real user message; capped to stop a runaway
     /// background-job ↔ auto-continue loop from silently burning tokens. Reset on a real user send.
     private static final int AUTO_CONTINUE_LIMIT = 5;
@@ -881,6 +888,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         messagesArea.setOnDragDropped(this::handleDragDropped);
 
         statusLabel.setVisible(false);
+        // Don't reserve a layout slot while hidden — otherwise its padded height sits as an invisible
+        // band between the conversation and the composer (it stays managed even when invisible).
+        statusLabel.managedProperty().bind(statusLabel.visibleProperty());
         statusLabel.getStyleClass().add("ai-typing-indicator");
 
         toolActivityBox.getStyleClass().add("ai-tool-activity");
@@ -1304,8 +1314,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         askPanel.getStyleClass().add("ai-ask-panel");
         askPanel.setVisible(false);
         askPanel.setManaged(false);
-        // Live background-tasks panel (running jobs + cancel), shown above the composer only when busy.
-        jobsPane = new VBox(4);
+        // Background-tasks pull-up: a thin header above the composer (后台任务 + running count) that
+        // unfurls UPWARD into a compact per-category list when clicked. Only shown when busy.
+        jobsListContainer = new VBox(2);
+        jobsListContainer.getStyleClass().add("ai-jobs-list");
+        FXUtils.setOverflowHidden(jobsListContainer);
+        FXUtils.setLimitHeight(jobsListContainer, 0);
+        jobsListContainer.setManaged(false);
+        jobsListContainer.setVisible(false);
+
+        jobsToggleIcon = SVG.KEYBOARD_ARROW_UP.createIcon(16);
+        jobsToggleIcon.setMouseTransparent(true);
+        Label jobsTitle = new Label("后台任务");
+        jobsTitle.getStyleClass().add("ai-jobs-title");
+        Region jobsSpacer = new Region();
+        HBox.setHgrow(jobsSpacer, Priority.ALWAYS);
+        jobsCountLabel = new Label();
+        jobsCountLabel.getStyleClass().add("ai-jobs-count");
+        HBox jobsHeader = new HBox(6, jobsToggleIcon, jobsTitle, jobsSpacer, jobsCountLabel);
+        jobsHeader.getStyleClass().add("ai-jobs-header");
+        jobsHeader.setAlignment(Pos.CENTER_LEFT);
+        FXUtils.onClicked(jobsHeader, this::toggleJobsPane);
+
+        jobsPane = new VBox(2, jobsListContainer, jobsHeader);  // list above header → unfurls upward
         jobsPane.getStyleClass().add("ai-jobs-pane");
         jobsPane.setVisible(false);
         jobsPane.setManaged(false);
@@ -2618,32 +2649,102 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (jobsPane == null) {
             return;
         }
-        jobsPane.getChildren().clear();
         AiSession current = sessionStore.getCurrentSession();
         java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> jobList = current != null
                 ? org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().listBySession(current.getId())
                 : java.util.Collections.emptyList();
-        int running = 0;
+
+        // Group by tool name (category): track running/total per category, collect running ids to cancel.
+        java.util.LinkedHashMap<String, int[]> stats = new java.util.LinkedHashMap<>();          // cat -> [running,total]
+        java.util.LinkedHashMap<String, java.util.List<String>> runningIds = new java.util.LinkedHashMap<>();
+        int totalRunning = 0;
         for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job : jobList) {
-            if (job.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING) {
-                continue;
+            String cat = job.getToolName();
+            int[] s = stats.computeIfAbsent(cat, k -> new int[2]);
+            s[1]++;
+            if (job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING) {
+                s[0]++;
+                totalRunning++;
+                runningIds.computeIfAbsent(cat, k -> new java.util.ArrayList<>()).add(job.getId());
             }
-            running++;
-            Label label = new Label("⏳ " + job.getLabel());
-            label.setMaxWidth(Double.MAX_VALUE);
-            HBox.setHgrow(label, Priority.ALWAYS);
+        }
+
+        jobsListContainer.getChildren().clear();
+        for (java.util.Map.Entry<String, int[]> e : stats.entrySet()) {
+            int run = e.getValue()[0], total = e.getValue()[1];
+            if (run == 0) {
+                continue;   // only show categories with active work
+            }
+            Label name = new Label(e.getKey());
+            name.getStyleClass().add("ai-job-cat");
+            name.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(name, Priority.ALWAYS);
+            Label count = new Label(run + "/" + total);
+            count.getStyleClass().add("ai-job-count");
             JFXButton cancelBtn = new JFXButton("取消");
             cancelBtn.getStyleClass().add("ai-job-cancel-btn");
-            String id = job.getId();
-            cancelBtn.setOnAction(e -> org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().cancel(id));
-            HBox row = new HBox(8, label, cancelBtn);
+            java.util.List<String> ids = runningIds.getOrDefault(e.getKey(), java.util.Collections.emptyList());
+            cancelBtn.setOnAction(ev -> ids.forEach(id -> org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().cancel(id)));
+            HBox row = new HBox(8, name, count, cancelBtn);
             row.setAlignment(Pos.CENTER_LEFT);
             row.getStyleClass().add("ai-job-row");
-            jobsPane.getChildren().add(row);
+            jobsListContainer.getChildren().add(row);
         }
-        boolean any = running > 0;
+
+        boolean any = totalRunning > 0;
         jobsPane.setVisible(any);
         jobsPane.setManaged(any);
+        jobsCountLabel.setText(totalRunning + " 运行中");
+        if (!any) {
+            // Nothing running → collapse and reset so the next busy spell starts compact.
+            jobsExpanded = false;
+            if (jobsAnimation != null) jobsAnimation.stop();
+            FXUtils.setLimitHeight(jobsListContainer, 0);
+            jobsListContainer.setManaged(false);
+            jobsListContainer.setVisible(false);
+            jobsToggleIcon.setRotate(0);
+        } else if (jobsExpanded && jobsListContainer.isManaged()) {
+            // Keep the unfurled height in sync as jobs come and go.
+            Platform.runLater(() -> {
+                double w = jobsListContainer.getWidth() > 0 ? jobsListContainer.getWidth() : jobsPane.getWidth();
+                FXUtils.setLimitHeight(jobsListContainer, jobsListContainer.prefHeight(w));
+            });
+        }
+    }
+
+    /// Toggles the background-tasks pull-up open/closed with a height + chevron animation.
+    private void toggleJobsPane() {
+        jobsExpanded = !jobsExpanded;
+        if (jobsAnimation != null) {
+            jobsAnimation.stop();
+        }
+        if (jobsExpanded) {
+            jobsListContainer.setManaged(true);
+            jobsListContainer.setVisible(true);
+            Platform.runLater(() -> {
+                jobsListContainer.applyCss();
+                double w = jobsListContainer.getWidth() > 0 ? jobsListContainer.getWidth() : jobsPane.getWidth();
+                animateJobsList(jobsListContainer.prefHeight(w), -180);
+            });
+        } else {
+            animateJobsList(0, 0);
+        }
+    }
+
+    private void animateJobsList(double targetHeight, double iconRotate) {
+        javafx.animation.Interpolator ease = javafx.animation.Interpolator.EASE_BOTH;
+        jobsAnimation = new Timeline(new KeyFrame(javafx.util.Duration.millis(180),
+                new javafx.animation.KeyValue(jobsListContainer.minHeightProperty(), targetHeight, ease),
+                new javafx.animation.KeyValue(jobsListContainer.prefHeightProperty(), targetHeight, ease),
+                new javafx.animation.KeyValue(jobsListContainer.maxHeightProperty(), targetHeight, ease),
+                new javafx.animation.KeyValue(jobsToggleIcon.rotateProperty(), iconRotate, ease)));
+        jobsAnimation.setOnFinished(e -> {
+            if (!jobsExpanded) {
+                jobsListContainer.setManaged(false);
+                jobsListContainer.setVisible(false);
+            }
+        });
+        jobsAnimation.play();
     }
 
     /// Entry point for other parts of the launcher (e.g. the game crash window) to hand the AI a
