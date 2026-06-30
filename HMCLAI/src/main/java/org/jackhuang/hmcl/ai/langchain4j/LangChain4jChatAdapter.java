@@ -197,6 +197,23 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// {@link #DUP_CALL_LIMIT} times this turn, in which case a synthetic BLOCKED result is
     /// returned so the conversation still has one result per tool-use (API requirement) while
     /// telling the model to stop repeating itself.
+    /// Opening of a leaked tool-call special token: a `<` followed by a fullwidth (U+FF5C) or ascii
+    /// vertical bar. Some models (notably deepseek in streaming mode) emit their tool-call tokens
+    /// (e.g. `<｜DSML｜tool_calls>…<｜DSML｜invoke name="glob">…`) into the TEXT content instead of
+    /// returning structured tool calls langchain4j can run, dumping raw markup into the chat.
+    private static final java.util.regex.Pattern LEAKED_TOOL_MARKUP =
+            java.util.regex.Pattern.compile("<\\s*[\\uFF5C|]");
+
+    /// Returns the user-facing prose before any leaked tool-call markup (the markup is trailing
+    /// garbage the model appended after its real text), or the input unchanged if none is present.
+    static String stripLeakedToolMarkup(String s) {
+        if (s == null || s.isEmpty()) {
+            return s == null ? "" : s;
+        }
+        java.util.regex.Matcher m = LEAKED_TOOL_MARKUP.matcher(s);
+        return m.find() ? s.substring(0, m.start()).strip() : s;
+    }
+
     private ToolExecutionResultMessage executeWithLoopGuard(ToolExecutionRequest req,
                                                             java.util.Map<String, Integer> callCounts) {
         String fingerprint = req.name() + "|" + (req.arguments() == null ? "" : req.arguments());
@@ -230,7 +247,8 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             return; // user pressed Stop — abort instead of issuing another model call / tool cycle
         }
         if (cycle >= maxToolCycles) {
-            callback.onComplete("");
+            callback.onComplete("（已连续调用工具 " + maxToolCycles
+                    + " 轮仍未完成，已停止以避免无限空转。建议：换种说法或补充信息，必要时在右上角换一个更强的模型；也可在「高级」里调整工具调用轮数上限。）");
             return;
         }
 
@@ -296,7 +314,14 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     return;
                 }
 
-                String content = aiMessage != null && aiMessage.text() != null ? aiMessage.text() : "";
+                String raw = aiMessage != null && aiMessage.text() != null ? aiMessage.text() : "";
+                String content = stripLeakedToolMarkup(raw);
+                if (content.isEmpty() && !raw.isEmpty()) {
+                    // The whole reply was leaked tool-call markup the provider never parsed into real
+                    // calls — tell the user instead of dumping raw <｜…｜> tokens into the chat.
+                    content = "（当前模型本轮以文本形式输出了工具调用，但接口未将其解析为真正的调用，因此无法执行。"
+                            + "建议在右上角换一个能稳定进行函数调用的模型，或换种说法重试。）";
+                }
                 callback.onComplete(content);
             }
 
@@ -357,9 +382,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
             if (aiMessage == null) return "";
 
-            // If no tool calls, return the text response
+            // If no tool calls, return the text response (stripped of any leaked tool-call markup).
             if (!aiMessage.hasToolExecutionRequests()) {
-                return aiMessage.text() != null ? aiMessage.text() : "";
+                return stripLeakedToolMarkup(aiMessage.text() != null ? aiMessage.text() : "");
             }
 
             // Add assistant message (with tool requests) to conversation
