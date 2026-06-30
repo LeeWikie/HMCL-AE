@@ -2234,7 +2234,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Forks the conversation into a new session containing everything up to {@code index}.
+    /// Message-edit actions (branch/regenerate/edit/resend/delete) mutate and truncate the session;
+    /// running one while a response is streaming corrupts the in-flight history (orphaned reply,
+    /// dropped resend). Block them until the user stops the current response.
+    private boolean blockedWhileStreaming() {
+        if (isStreaming()) {
+            Controllers.showToast("请先停止当前回复，再编辑/重发/删除消息");
+            return true;
+        }
+        return false;
+    }
+
     private void branchFrom(int index) {
+        if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) return;
         AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + " ✦");
@@ -2246,6 +2258,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Regenerate the AI response from a given assistant message index: drop the assistant
     /// and everything after it, then resend the preceding user message.
     private void regenerateFrom(int index) {
+        if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) {
             return;
@@ -2271,6 +2284,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Deletes a single message from the session and re-renders, so it disappears from context.
     private void deleteMessageAt(int index) {
+        if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) {
             return;
@@ -2283,6 +2297,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Edit a user message: drop it and everything after, then load its text into the input
     /// box so the user can revise and resend (the agent rebuilds context from the session).
     private void editUserMessage(int index, String content) {
+        if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) {
             return;
@@ -2296,6 +2311,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Regenerate from a user message: drop it and everything after, then resend it as-is.
     private void resendUserMessage(int index, String content) {
+        if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) {
             return;
