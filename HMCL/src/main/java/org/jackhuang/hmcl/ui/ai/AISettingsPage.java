@@ -24,6 +24,7 @@ import com.jfoenix.controls.JFXButton;
 import com.jfoenix.controls.JFXCheckBox;
 import com.jfoenix.controls.JFXComboBox;
 import com.jfoenix.controls.JFXDialogLayout;
+import com.jfoenix.controls.JFXPasswordField;
 import com.jfoenix.controls.JFXSlider;
 import com.jfoenix.controls.JFXTextField;
 import javafx.application.Platform;
@@ -366,8 +367,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         protocolBox.setMaxWidth(Double.MAX_VALUE);
         JFXTextField endpointField = new JFXTextField(profile.getEndpoint());
         endpointField.setPromptText("https://api.example.com/v1");
-        JFXTextField apiKeyField = new JFXTextField(profile.getApiKey());
-        apiKeyField.setPromptText("sk-...");
+        MaskedKeyField apiKey = new MaskedKeyField(profile.getApiKey(), "sk-...");
         JFXCheckBox enabledBox = new JFXCheckBox("启用");
         enabledBox.setSelected(profile.isEnabled());
 
@@ -375,7 +375,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 "名称", nameField,
                 "协议", protocolBox,
                 "Endpoint", endpointField,
-                "API Key", apiKeyField), enabledBox);
+                "API Key", apiKey.node), enabledBox);
         FXUtils.setLimitWidth(body, 480);
 
         DialogPane dialog = new DialogPane() {
@@ -389,7 +389,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     default -> AiProtocolFamily.OPENAI_COMPLETIONS.getId();
                 });
                 profile.setEndpoint(endpointField.getText() != null ? endpointField.getText().trim() : "");
-                profile.setApiKey(apiKeyField.getText() != null ? apiKeyField.getText().trim() : "");
+                profile.setApiKey(apiKey.getText().trim());
                 profile.setEnabled(enabledBox.isSelected());
                 // Provider config no longer holds model/pricing — those live in 模型配置.
                 // Commit only now (on save), and make the just-configured profile active.
@@ -793,11 +793,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         HBox searchRow = new HBox(10, search, selectAll);
         searchRow.setAlignment(Pos.CENTER_LEFT);
 
-        VBox tree = new VBox(8);
+        ComponentList tree = new ComponentList();
         for (AiProviderProfile profile : providers) {
             List<JFXCheckBox> modelBoxes = new ArrayList<>();
+            // Native collapsible folder: provider name = sublist title, tri-state checkbox = leading
+            // control; model rows are the indented children.
+            ComponentSublist folder = new ComponentSublist();
+            folder.setTitle(displayProfileName(profile));
 
-            // Provider-folder header: [tri-state checkbox] name ........... [arrow]; click to fold.
             JFXCheckBox providerBox = new JFXCheckBox();
             providerBox.setAllowIndeterminate(true);
             providerBox.setSelected(true);
@@ -807,19 +810,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             });
             // Clicking the checkbox selects only; it must not toggle the fold.
             providerBox.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_CLICKED, javafx.event.Event::consume);
+            folder.setLeading(providerBox);
 
-            Label nameLabel = new Label(displayProfileName(profile));
-            nameLabel.getStyleClass().add("title-label");
-            javafx.scene.layout.Region headSpacer = new javafx.scene.layout.Region();
-            HBox.setHgrow(headSpacer, javafx.scene.layout.Priority.ALWAYS);
-            javafx.scene.Node arrow = SVG.KEYBOARD_ARROW_DOWN.createIcon(18);
-            arrow.setMouseTransparent(true);
-            HBox header = new HBox(10, providerBox, nameLabel, headSpacer, arrow);
-            header.setAlignment(Pos.CENTER_LEFT);
-            header.setPadding(new Insets(10, 16, 10, 16));
-            header.setCursor(javafx.scene.Cursor.HAND);
-
-            VBox childrenBox = new VBox();
             for (AiModelEntry entry : profile.getModels()) {
                 JFXCheckBox mcb = new JFXCheckBox(entry.getDisplayName());
                 mcb.setSelected(true);
@@ -829,8 +821,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
                 HBox row = new HBox(8, mcb, spacer, result);
                 row.setAlignment(Pos.CENTER_LEFT);
-                row.setPadding(new Insets(8, 16, 8, 40));
-                childrenBox.getChildren().add(row);
+                // Give the child rows real height so the model isn't squished against the font.
+                row.setPadding(new Insets(10, 16, 10, 16));
+                folder.getContent().add(row);
                 modelBoxes.add(mcb);
                 rows.add(new TestRow(profile, entry.getId(), mcb, result, row));
                 mcb.selectedProperty().addListener((o, ov, nv) -> {
@@ -841,25 +834,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             if (profile.getModels().isEmpty()) {
                 Label none = new Label("（无模型，先用 🔄 加载）");
                 none.getStyleClass().add("subtitle-label");
-                none.setPadding(new Insets(8, 16, 8, 40));
-                childrenBox.getChildren().add(none);
+                none.setPadding(new Insets(10, 16, 10, 16));
+                folder.getContent().add(none);
                 providerBox.setSelected(false);
             }
-
-            // Fold/unfold via visibility — no height animation/clip, so nothing leaks and rows keep
-            // their full height. Starts expanded; click the header to collapse a provider on demand.
-            final boolean[] expanded = {true};
-            header.setOnMouseClicked(e -> {
-                expanded[0] = !expanded[0];
-                childrenBox.setVisible(expanded[0]);
-                childrenBox.setManaged(expanded[0]);
-                arrow.setRotate(expanded[0] ? 0 : -90);
-            });
-
             updateProviderBox(providerBox, modelBoxes);
-            VBox folderCard = new VBox(header, childrenBox);
-            folderCard.getStyleClass().add("card");
-            tree.getChildren().add(folderCard);
+            tree.getContent().add(folder);
         }
         updateMasterBox(selectAll, rows);
 
@@ -935,6 +915,42 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             master.setSelected(true);
         } else {
             master.setIndeterminate(true);
+        }
+    }
+
+    /// A password-masked API-key field with a reveal (eye) toggle. Default masked; click the eye to
+    /// show/hide. {@link #node} goes into the form; read the value via {@link #getText()}.
+    private static final class MaskedKeyField {
+        final HBox node;
+        private final JFXPasswordField masked;
+
+        MaskedKeyField(String value, String prompt) {
+            masked = new JFXPasswordField();
+            masked.setText(value == null ? "" : value);
+            masked.setPromptText(prompt);
+            JFXTextField shown = new JFXTextField();
+            shown.setPromptText(prompt);
+            shown.textProperty().bindBidirectional(masked.textProperty());
+            shown.setManaged(false);
+            shown.setVisible(false);
+            javafx.scene.layout.StackPane stack = new javafx.scene.layout.StackPane(masked, shown);
+            JFXButton eye = new JFXButton();
+            eye.setGraphic(SVG.VISIBILITY.createIcon(18));
+            eye.setOnAction(e -> {
+                boolean show = !shown.isVisible();
+                shown.setVisible(show);
+                shown.setManaged(show);
+                masked.setVisible(!show);
+                masked.setManaged(!show);
+                eye.setGraphic((show ? SVG.VISIBILITY_OFF : SVG.VISIBILITY).createIcon(18));
+            });
+            node = new HBox(4, stack, eye);
+            node.setAlignment(Pos.CENTER_LEFT);
+            HBox.setHgrow(stack, javafx.scene.layout.Priority.ALWAYS);
+        }
+
+        String getText() {
+            return masked.getText() == null ? "" : masked.getText();
         }
     }
 
