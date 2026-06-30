@@ -3614,8 +3614,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label headerLabel = new Label(i18n("ai.chat.settings"));
         headerLabel.getStyleClass().add("ai-chat-settings-header-title");
 
-        JFXButton closeBtn = new JFXButton("\u2715");
-        closeBtn.getStyleClass().add("ai-chat-settings-close-btn");
+        JFXButton closeBtn = new JFXButton();
+        closeBtn.setGraphic(SVG.CLOSE.createIcon(18));
+        closeBtn.getStyleClass().add("jfx-tool-bar-button");  // native round-ripple icon button
         closeBtn.setOnAction(e -> hideChatSettingsDrawer());
 
         HBox header = new HBox(headerLabel, closeBtn);

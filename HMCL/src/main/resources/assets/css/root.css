@@ -2608,15 +2608,16 @@
 /* ---- AI Chat Settings Drawer ---- */
 
 .ai-chat-settings-drawer {
-    -fx-background-color: -monet-surface-container-lowest;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0 0 0 1;
+    /* Material raised side-sheet: tonal surface + elevation shadow + rounded inner edge,
+       instead of the old flat lowest-tone panel with a hairline left border. */
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 16 0 0 16;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 18, 0.14, -4, 0);
 }
 
 .ai-chat-settings-header {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0 0 1 0;
+    /* Elevation (not a hard divider) separates the header; blend with the sheet surface. */
+    -fx-background-color: transparent;
 }
 
 .ai-chat-settings-header-title {
