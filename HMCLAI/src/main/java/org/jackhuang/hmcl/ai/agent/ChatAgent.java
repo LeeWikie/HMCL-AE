@@ -315,8 +315,14 @@ public final class ChatAgent {
             @Override public void onComplete(String c) {
                 String f = c != null && full.isEmpty() ? c : full.toString();
                 if (cancelled != null && cancelled.getAsBoolean()) {
-                    // The user stopped this turn: drop the unwanted assistant reply instead of
-                    // persisting it (the request itself already happened and can't be un-billed).
+                    // The user stopped this turn. KEEP whatever the assistant already produced so the
+                    // conversation stays coherent — dropping it left two consecutive user messages and
+                    // the model forgot the work it had just started (so a following "继续" had no
+                    // context). Persist the partial text, marked as interrupted; roles keep alternating.
+                    String partial = f == null ? "" : f.strip();
+                    session.addMessage(new LlmMessage("assistant",
+                            partial.isEmpty() ? "（本回合已被用户中断，未产出内容）"
+                                    : partial + "\n\n（本回合已被用户中断）"));
                     return;
                 }
                 LlmMessage aiMessage = new LlmMessage("assistant", f);

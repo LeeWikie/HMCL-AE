@@ -3079,6 +3079,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         exitStreamingState();
         setStatus(null);
         persistStore();
+        // The agent thread writes the interrupted partial reply into the session just after it
+        // observes the cancel flag; persist once more on the next pulse so that partial reaches disk.
+        Platform.runLater(this::persistStore);
     }
 
     private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,
