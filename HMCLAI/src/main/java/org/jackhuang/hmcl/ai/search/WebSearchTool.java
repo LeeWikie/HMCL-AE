@@ -78,6 +78,7 @@ public final class WebSearchTool implements ToolSpec {
         return switch (provider.toLowerCase()) {
             case "tavily" -> new TavilySearchClient(endpoint, apiKey);
             case "searxng" -> new SearxngSearchClient(endpoint, apiKey);
+            case "bocha" -> new BochaSearchClient(apiKey); // fixed endpoint, China-reachable
             default -> null;
         };
     }

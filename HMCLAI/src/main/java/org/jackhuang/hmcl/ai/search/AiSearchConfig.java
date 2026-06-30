@@ -7,8 +7,11 @@ import com.google.gson.annotations.SerializedName;
 @NotNullByDefault
 public final class AiSearchConfig {
 
+    // Default to Bocha: a China-reachable search API (no proxy needed on the mainland), better for
+    // the target audience than Tavily (US, requires a proxy). Bocha's endpoint is fixed, so the
+    // user only needs to supply an API key.
     @SerializedName("provider")
-    private String provider = "tavily";
+    private String provider = "bocha";
 
     @SerializedName("endpoint")
     private String endpoint = "https://api.tavily.com/search";
