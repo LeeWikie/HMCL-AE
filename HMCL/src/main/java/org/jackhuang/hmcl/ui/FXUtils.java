@@ -1618,18 +1618,11 @@ public final class FXUtils {
             clipMaxY = Math.min(clipMaxY, window.getY() + window.getHeight());
         }
 
-        // 3. Constrain by parent ScrollPanes to handle clipping within the UI layout
-        Node parent = root.getParent();
-        while (parent != null) {
-            if (parent instanceof ScrollPane) {
-                Bounds spBounds = parent.localToScreen(parent.getBoundsInLocal());
-                if (spBounds != null) {
-                    clipMinY = Math.max(clipMinY, spBounds.getMinY());
-                    clipMaxY = Math.min(clipMaxY, spBounds.getMaxY());
-                }
-            }
-            parent = parent.getParent();
-        }
+        // NOTE: do NOT constrain by parent ScrollPane viewports here. A JFXPopup is a separate
+        // top-level window that is NOT clipped by the ScrollPane, so clamping available space to the
+        // scroll viewport made every selector that wasn't near the top of its viewport think there
+        // was no room below and flip to opening UPWARD (overlapping the rows above) — the reported
+        // "select box jumps to the wrong place" regression. Screen + window bounds are sufficient.
 
         double itemScreenY = screenBounds.getMinY();
         double itemScreenMaxY = screenBounds.getMaxY();
@@ -1661,11 +1654,13 @@ public final class FXUtils {
         // Add some margin for safety
         menuHeight += 20;
 
-        // Logic: if there isn't enough space below, AND there is more space above, open upwards.
-        if (availableSpaceBelow < menuHeight && availableSpaceAbove > availableSpaceBelow) {
-            return JFXPopup.PopupVPosition.BOTTOM;  // Show menu above the button, expanding upward
+        // Open UPWARD only when there is genuinely not enough room below AND enough room above;
+        // otherwise open downward (the default). The previous relative test (below < above) flipped
+        // almost any control not near the very top to open upward, overlapping the rows above it.
+        if (availableSpaceAbove > menuHeight && availableSpaceBelow < menuHeight) {
+            return JFXPopup.PopupVPosition.BOTTOM;  // not enough room below → expand upward
         } else {
-            return JFXPopup.PopupVPosition.TOP;     // Show menu below the button, expanding downward
+            return JFXPopup.PopupVPosition.TOP;     // default → expand downward below the anchor
         }
     }
 
