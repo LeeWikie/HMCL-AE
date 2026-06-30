@@ -2157,7 +2157,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     }
 
     private List<AiToolCatalog.Descriptor> buildToolDescriptors() {
-        return AiToolCatalog.descriptorsForRegistry(mcpToolRegistry);
+        // Use the LIVE tool registry (all real registered tools), not the empty MCP registry — so the
+        // permission UI reflects what actually exists instead of phantom/renamed entries.
+        return AiToolCatalog.descriptorsForRegistry(Controllers.getAiMainPage().getToolRegistry());
     }
 
     private static String displayProfileName(AiProviderProfile profile) {

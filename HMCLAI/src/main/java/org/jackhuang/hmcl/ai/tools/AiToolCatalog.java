@@ -43,22 +43,13 @@ public final class AiToolCatalog {
         PLANNED
     }
 
+    /// Intentionally empty: the live {@link ToolRegistry} is the single source of truth for what
+    /// tools actually exist, so {@link #descriptorsForRegistry} derives the whole list from real,
+    /// registered tools. The previous hard-coded list had drifted (renamed/phantom tools like
+    /// {@code analyze_crash}, {@code read_file}, {@code mod_toggle}) and made the permission UI
+    /// show tools that don't exist while omitting the real ones.
     public static List<Descriptor> builtInDescriptors() {
-        return List.of(
-                new Descriptor("analyze_crash", "分析粘贴的 Minecraft crash report 文本", ToolSource.LOCAL, ToolPermission.READ_ONLY, CapabilityStatus.AVAILABLE),
-                new Descriptor("file_backup", "备份或恢复指定文件；当前仍需要调用方提供安全路径", ToolSource.FILESYSTEM, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.AVAILABLE),
-                new Descriptor("mod_toggle", "列出、启用或禁用 mods 目录中的 jar；当前仍需要调用方提供 modsDir", ToolSource.FILESYSTEM, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.AVAILABLE),
-                new Descriptor("read_minecraft_log", "读取 Minecraft latest.log 与 HMCL 日志尾部", ToolSource.FILESYSTEM, ToolPermission.READ_ONLY, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("resolve_game_context", "解析当前实例的 mods/logs/crash-reports/config 等目录", ToolSource.FILESYSTEM, ToolPermission.READ_ONLY, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("read_file", "在允许根目录内列目录或读取文本文件", ToolSource.FILESYSTEM, ToolPermission.READ_ONLY, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("list_crash_reports", "列出当前实例 crash-reports 目录下最近的崩溃报告", ToolSource.FILESYSTEM, ToolPermission.READ_ONLY, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("web_search", "执行联网搜索并返回标题、链接与摘要", ToolSource.SEARCH, ToolPermission.EXTERNAL_NETWORK, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("mcp.*", "来自 MCP 服务器的动态工具，按服务器 allowlist 暴露", ToolSource.MCP, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("skill.*", "SKILL.md 技能包声明的工作流与知识能力", ToolSource.SKILL, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.REQUIRES_CONTEXT),
-                new Descriptor("write_text_file_safe", "带路径白名单和备份的文本写入", ToolSource.FILESYSTEM, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.PLANNED),
-                new Descriptor("backup_directory", "备份目录以支持批量变更回滚", ToolSource.FILESYSTEM, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.PLANNED),
-                new Descriptor("restore_backup", "从 HMCL-AE 备份恢复文件或目录", ToolSource.FILESYSTEM, ToolPermission.CONTROLLED_WRITE, CapabilityStatus.PLANNED)
-        );
+        return List.of();
     }
 
     public static List<Descriptor> descriptorsForRegistry(ToolRegistry registry) {

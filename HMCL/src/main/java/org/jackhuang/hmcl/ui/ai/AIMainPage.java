@@ -178,6 +178,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private final Map<String, ChatAgent> agentCache = new HashMap<>();
     private final ToolRegistry toolRegistry = new ToolRegistry();
+
+    /// The live registry of all registered agent tools — the single source of truth the settings
+    /// page reads to show the real tool/permission list (instead of a stale hard-coded catalog).
+    public ToolRegistry getToolRegistry() {
+        return toolRegistry;
+    }
+
     private final GameContextTool gameContextTool = new GameContextTool();
     /// Skill registry shared with the chat agent's prompt — seeded with built-in skills
     /// (config-hmcl-ae, …) and refreshed from .hmcl/ai-skills so the agent's system prompt
