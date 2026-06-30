@@ -1813,36 +1813,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private Node buildGeneralTab() {
         VBox root = createSettingsRoot();
-        ComponentList list = new ComponentList();
 
-        LineToggleButton titleNaming = new LineToggleButton();
-        titleNaming.setTitle(i18n("ai.settings.title_naming"));
-        titleNaming.setSubtitle(i18n("ai.settings.title_naming.desc"));
-        titleNaming.selectedProperty().bindBidirectional(aiSettings.titleNamingEnabledProperty());
-        list.getContent().add(titleNaming);
+        // ============ 1) 对话与模型 — everyday, always visible ============
+        ComponentList chatList = new ComponentList();
 
-        LineSelectButton<String> titleNamingModel = new LineSelectButton<>();
-        titleNamingModel.setTitle(i18n("ai.settings.title_naming_model"));
-        titleNamingModel.setSubtitle("为空时使用当前默认模型");
-        List<String> modelChoices = buildModelChoices(true);
-        titleNamingModel.setItems(modelChoices);
-        titleNamingModel.setNullSafeConverter(value -> value.isEmpty() ? "Auto" : value);
-        titleNamingModel.setValue(aiSettings.getTitleNamingModelId().isEmpty() ? "" : aiSettings.getTitleNamingModelId());
-        titleNamingModel.valueProperty().addListener((obs, old, value) -> {
-            if (value != null) {
-                aiSettings.titleNamingModelIdProperty().set(value);
-                saveAiSettings();
-            }
-        });
-        list.getContent().add(titleNamingModel);
-
-        LineToggleButton crashAnalysis = new LineToggleButton();
-        crashAnalysis.setTitle(i18n("ai.settings.auto_crash_analysis"));
-        crashAnalysis.setSubtitle(i18n("ai.settings.auto_crash_analysis.desc"));
-        crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
-        list.getContent().add(crashAnalysis);
-
-        // ---- 回复语言 ----
+        // 回复语言
         LineSelectButton<String> replyLang = new LineSelectButton<>();
         replyLang.setTitle("回复语言");
         replyLang.setSubtitle("auto=跟随用户语言；也可强制中文/英文");
@@ -1855,13 +1830,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 saveAiSettings();
             }
         });
-        list.getContent().add(replyLang);
+        chatList.getContent().add(replyLang);
 
-        // ---- 流式输出 ----
-        list.getContent().add(toggleRow("流式输出",
+        // 流式输出
+        chatList.getContent().add(toggleRow("流式输出",
                 "开启后逐字显示模型回复（关闭则一次性返回）", aiSettings.streamProperty()));
 
-        // ---- 默认推理强度 ----
+        // 默认推理强度
         LineSelectButton<String> reasoning = new LineSelectButton<>();
         reasoning.setTitle("默认推理强度");
         reasoning.setSubtitle("仅对支持 reasoning 的模型生效");
@@ -1875,14 +1850,43 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 saveAiSettings();
             }
         });
-        list.getContent().add(reasoning);
+        chatList.getContent().add(reasoning);
 
-        // ---- 自动调用记忆 ----
-        list.getContent().add(toggleRow("自动调用记忆",
-                "每次对话开始时，把全局记忆里的条目注入系统提示（限 1.5KB）",
-                aiSettings.autoRecallMemoryProperty()));
+        // AI 标题命名
+        LineToggleButton titleNaming = new LineToggleButton();
+        titleNaming.setTitle(i18n("ai.settings.title_naming"));
+        titleNaming.setSubtitle(i18n("ai.settings.title_naming.desc"));
+        titleNaming.selectedProperty().bindBidirectional(aiSettings.titleNamingEnabledProperty());
+        chatList.getContent().add(titleNaming);
 
-        // ---- 自定义指令 ----
+        // 标题命名模型
+        LineSelectButton<String> titleNamingModel = new LineSelectButton<>();
+        titleNamingModel.setTitle(i18n("ai.settings.title_naming_model"));
+        titleNamingModel.setSubtitle("为空时使用当前默认模型");
+        List<String> modelChoices = buildModelChoices(true);
+        titleNamingModel.setItems(modelChoices);
+        titleNamingModel.setNullSafeConverter(value -> value.isEmpty() ? "Auto" : value);
+        titleNamingModel.setValue(aiSettings.getTitleNamingModelId().isEmpty() ? "" : aiSettings.getTitleNamingModelId());
+        titleNamingModel.valueProperty().addListener((obs, old, value) -> {
+            if (value != null) {
+                aiSettings.titleNamingModelIdProperty().set(value);
+                saveAiSettings();
+            }
+        });
+        chatList.getContent().add(titleNamingModel);
+
+        // 自动命名会话
+        chatList.getContent().add(toggleRow("自动命名会话",
+                "首轮对话后让模型生成简短标题（替代截取首句）", aiSettings.autoTitleEnabledProperty()));
+        // 自动滚动到底部
+        chatList.getContent().add(toggleRow("自动滚动到底部",
+                "有新消息时自动滚到底（手动上滑时暂停）", aiSettings.autoScrollEnabledProperty()));
+        // 回车发送
+        chatList.getContent().add(toggleRow("回车发送",
+                "开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送", aiSettings.sendOnEnterProperty()));
+
+        // ============ 2) AI 能力与行为 ============
+        // 自定义指令 (built first so it can be placed in the group)
         LineButton customInstructions = new LineButton();
         customInstructions.setTitle("自定义指令");
         customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
@@ -1895,17 +1899,59 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
             handler.resolve();
         }, aiSettings.getCustomInstructions()));
-        list.getContent().add(customInstructions);
 
-        // ---- 高级选项（折叠，默认收起）：审批模式 + 高危确认 + 执行参数调优 ----
+        // 自动崩溃分析
+        LineToggleButton crashAnalysis = new LineToggleButton();
+        crashAnalysis.setTitle(i18n("ai.settings.auto_crash_analysis"));
+        crashAnalysis.setSubtitle(i18n("ai.settings.auto_crash_analysis.desc"));
+        crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
+
+        ComponentSublist abilitySub = new ComponentSublist();
+        abilitySub.setTitle("AI 能力与行为");
+        abilitySub.setHasSubtitle(true);
+        abilitySub.setDescription("让 AI 能联网、记忆、运行命令，以及主动帮你做的事");
+        abilitySub.getContent().setAll(
+                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
+                        aiSettings.webAccessEnabledProperty()),
+                toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
+                        aiSettings.memoryEnabledProperty()),
+                toggleRow("自动调用记忆", "每次对话开始时，把全局记忆里的条目注入系统提示（限 1.5KB）",
+                        aiSettings.autoRecallMemoryProperty()),
+                crashAnalysis,
+                customInstructions,
+                toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",
+                        aiSettings.shellToolEnabledProperty()));
+        ComponentList abilityCard = new ComponentList();
+        abilityCard.getContent().add(abilitySub);
+
+        // ============ 3) 我的数据与安全 ============
+        ComponentSublist dataSub = new ComponentSublist();
+        dataSub.setTitle("我的数据与安全");
+        dataSub.setHasSubtitle(true);
+        dataSub.setDescription("保护你的存档与文件");
+        dataSub.getContent().setAll(
+                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
+                        aiSettings.fileWriteConfirmEnabledProperty()),
+                toggleRow("删除到系统回收站", "AI 删除世界等内容时移入系统回收站（可还原）而非永久删除；关闭则直接永久删除",
+                        aiSettings.deleteToRecycleBinProperty()),
+                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
+                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
+                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
+                        aiSettings.autoBackupBeforeNbtEditProperty()));
+        ComponentList dataCard = new ComponentList();
+        dataCard.getContent().add(dataSub);
+
+        // ============ 4) 高级与开发者（折叠，默认收起）：进阶执行参数 + 危险开关 ============
         ComponentSublist advancedSub = new ComponentSublist();
-        advancedSub.setTitle("高级选项");
+        advancedSub.setTitle("高级与开发者");
         advancedSub.setHasSubtitle(true);
-        advancedSub.setDescription("审批模式、危险确认与工具循环/上下文/超时等执行参数（进阶用户）");
+        advancedSub.setDescription("⚠ 进阶/高风险：审批模式、执行参数与危险开关。不清楚作用请勿改动");
         advancedSub.getContent().setAll(
                 buildApprovalModeRow(),
                 toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
                         aiSettings.criticalConfirmEnabledProperty()),
+                toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
+                        aiSettings.nbtToolsEnabledProperty()),
                 toggleRow("上下文接近上限自动压缩", "对话接近模型上下文窗口 90% 时自动压缩历史，防止溢出报错",
                         aiSettings.autoCompactEnabledProperty()),
                 sliderRow("工具调用轮数上限", "单次回复内最多连续调用工具的次数（防失控）",
@@ -1915,78 +1961,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 sliderRow("工具结果长度上限", "单个工具结果回传模型的最大字符数，0=不限",
                         aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
                 sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
-                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"));
-        ComponentList advancedCard = new ComponentList();
-        advancedCard.getContent().add(advancedSub);
-
-        // ---- 安全（折叠）：工具开关与写入确认（审批模式/高危确认已移到「高级选项」）----
-        ComponentSublist safetySub = new ComponentSublist();
-        safetySub.setTitle("安全");
-        safetySub.setHasSubtitle(true);
-        safetySub.setDescription("工具开关与写入确认");
-        safetySub.getContent().setAll(
-                toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",
-                        aiSettings.shellToolEnabledProperty()),
-                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
-                        aiSettings.webAccessEnabledProperty()),
-                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
-                        aiSettings.fileWriteConfirmEnabledProperty()),
-                toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
-                        aiSettings.memoryEnabledProperty()),
-                toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
-                        aiSettings.nbtToolsEnabledProperty()),
-                toggleRow("删除到系统回收站", "AI 删除世界等内容时移入系统回收站（可还原）而非永久删除；关闭则直接永久删除",
-                        aiSettings.deleteToRecycleBinProperty()));
-        ComponentList safetyCard = new ComponentList();
-        safetyCard.getContent().add(safetySub);
-
-        // ---- 开发者选项（折叠，默认收起）：核弹级开关，带强警告副标题 ----
-        ComponentSublist developerSub = new ComponentSublist();
-        developerSub.setTitle("开发者选项");
-        developerSub.setHasSubtitle(true);
-        developerSub.setDescription("⚠ 高风险：仅供开发者测试，可能造成不可恢复的数据损坏");
-        developerSub.getContent().setAll(
+                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"),
                 buildDangerouslySkipRow(),
                 toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
                         aiSettings.toolCallLoggingEnabledProperty()));
-        ComponentList developerCard = new ComponentList();
-        developerCard.getContent().add(developerSub);
-
-        // ---- 界面与交互（折叠）----
-        ComponentSublist uiSub = new ComponentSublist();
-        uiSub.setTitle("界面与交互");
-        uiSub.setHasSubtitle(true);
-        uiSub.setDescription("滚动与输入行为");
-        uiSub.getContent().setAll(
-                toggleRow("自动滚动到底部", "有新消息时自动滚到底（手动上滑时暂停）",
-                        aiSettings.autoScrollEnabledProperty()),
-                toggleRow("回车发送", "开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送",
-                        aiSettings.sendOnEnterProperty()),
-                toggleRow("自动命名会话", "首轮对话后让模型生成简短标题（替代截取首句）",
-                        aiSettings.autoTitleEnabledProperty()));
-        ComponentList uiCard = new ComponentList();
-        uiCard.getContent().add(uiSub);
-
-        // ---- 世界备份（折叠）----
-        ComponentSublist backupSub = new ComponentSublist();
-        backupSub.setTitle("世界备份");
-        backupSub.setHasSubtitle(true);
-        backupSub.setDescription("AI 世界备份引擎：版本化时间戳全量备份 + 保留 N 份（暂非增量/git）");
-        backupSub.getContent().setAll(
-                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
-                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
-                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
-                        aiSettings.autoBackupBeforeNbtEditProperty()));
-        ComponentList backupCard = new ComponentList();
-        backupCard.getContent().add(backupSub);
+        ComponentList advancedCard = new ComponentList();
+        advancedCard.getContent().add(advancedSub);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle(i18n("ai.settings.global")), list,
-                ComponentList.createComponentListTitle("安全"), safetyCard,
-                ComponentList.createComponentListTitle("高级选项"), advancedCard,
-                ComponentList.createComponentListTitle("世界备份"), backupCard,
-                ComponentList.createComponentListTitle("界面与交互"), uiCard,
-                ComponentList.createComponentListTitle("开发者选项"), developerCard);
+                ComponentList.createComponentListTitle("对话与模型"), chatList,
+                ComponentList.createComponentListTitle("AI 能力与行为"), abilityCard,
+                ComponentList.createComponentListTitle("我的数据与安全"), dataCard,
+                ComponentList.createComponentListTitle("高级与开发者"), advancedCard);
         return wrapScroll(root);
     }
 
