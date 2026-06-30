@@ -100,14 +100,6 @@ public final class AiPromptBuilder {
             "8. Catastrophic operations (deleting a world/instance, editing save/NBT data, deleting backups) trigger an extra RED safety confirmation and should be preceded by a backup. Treat these with maximum caution: read/verify before writing, explain the risk plainly, never proceed if the user hesitates.",
             "9. Long tasks run in the BACKGROUND. Installs, downloads, modpack export and backups return immediately with a job id (e.g. 'task #3') instead of blocking — this is intentional so the chat stays usable. When you get a job id: do NOT claim the task is finished. Either continue with other useful work the user asked for, or, when you need the outcome, call check_job(jobId) to see if it has SUCCEEDED/FAILED (poll once in a while, don't spin). Use list_jobs to see all jobs and cancel_job to stop one. Only report success AFTER check_job confirms it. You may pass background=false on a tool call if you genuinely need its result inline before doing anything else.");
 
-    private static final String PLAYBOOKS = String.join("\n",
-            "Operating playbooks (follow end-to-end with tools; never hand the user manual steps you can do yourself):",
-            "[Fresh install + mods] e.g. \"装个最新版+Sodium全家桶\": 1) list_instances. 2) list_game_versions to get REAL versions (never guess from memory). 3) search_mods for the requested mod(s) to get real options/compatibility. 4) ask the user with REAL options: which version (from list_game_versions), which loader (Fabric for the Sodium family), which addons (multi, from search_mods); pick sensible defaults and ask only what matters. 5) install_loader(gameVersion, loader) to create the instance; tell the user it may take a while. 6) install_mod for each chosen mod, passing instance = the just-installed instance name so files land in the right place (see Version isolation). 7) verify (read/glob the mods dir) and tell the user it's ready (offer launch_instance).",
-            "[Add mods to an existing instance]: 1) list_instances; ask which instance if ambiguous. 2) search_mods; ask which to install (multi, real options) if unspecified. 3) install_mod with instance = that instance. 4) verify + report.",
-            "[Diagnose a crash / \"游戏崩溃了\"]: 1) read logs/latest.log and the newest file in crash-reports/ (glob then read). If the user gave the error only as a SCREENSHOT, use list_screenshots then ocr_image to turn it into text first. 2) match_known_errors on that text. 3) explain the cause in plain language + the concrete fix; if you can perform the fix (toggle a mod, change memory, install a mod) do it (confirm anything destructive).",
-            "[Log in / switch account / \"登录/换账号\"]: 1) list_accounts to see what exists and which is active. 2) For a Microsoft (genuine/online) account: call microsoft_login — it opens HMCL's native sign-in dialog; tell the user to finish signing in there, then list_accounts to confirm. 3) For an offline account: add_offline_account(username). 4) To switch the active one: select_account(username). NEVER try to perform login via shell or by editing files.",
-            "Version isolation: the runtime context states the selected instance and whether isolation is ON. ON => that instance's mods/saves/config live under versions/<name>/; OFF => they are SHARED in the base .minecraft across all versions. Before installing mods, know which it is and pass the target instance to install_mod. If isolation is OFF, warn that version-specific mods will be shared across versions.");
-
     /// Injected when the user has switched on "plan mode" — read-only investigation plus an
     /// approval step before any write. Re-read on every {@link #build()} so toggling takes
     /// effect on the next turn without rebuilding the agent.
@@ -160,8 +152,6 @@ public final class AiPromptBuilder {
         blocks.add(CONVENTIONS);
         blocks.add("");
         blocks.add(DISCIPLINE);
-        blocks.add("");
-        blocks.add(PLAYBOOKS);
 
         if (planMode.getAsBoolean()) {
             blocks.add("");
@@ -176,7 +166,8 @@ public final class AiPromptBuilder {
         String skillSummary = skillRegistry.summarizeEnabled();
         if (!skillSummary.startsWith("(no")) {
             blocks.add("");
-            blocks.add("Enabled skills (domain workflows you can follow):\n" + skillSummary);
+            blocks.add("Domain skills — when a task matches one of these, READ its SKILL.md (path shown) "
+                    + "for the full step-by-step playbook BEFORE acting on a multi-step request:\n" + skillSummary);
         }
 
         AiExecutionPolicy policy = new AiExecutionPolicy(
