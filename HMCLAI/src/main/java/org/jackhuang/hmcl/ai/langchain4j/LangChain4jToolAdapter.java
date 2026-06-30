@@ -199,14 +199,17 @@ public final class LangChain4jToolAdapter {
                     ? spec.getPermission() : ToolPermission.CONTROLLED_WRITE;
             boolean dangerousShell = false;
             if ("shell".equals(tool.getName())) {
-                // Scan EVERY alias ShellTool actually reads (command, query, input) — otherwise a
-                // dangerous command supplied via the 'input' alias slips past the always-on gate.
-                Object cmd = parameters.containsKey("command") ? parameters.get("command")
-                        : parameters.containsKey("query") ? parameters.get("query")
-                        : parameters.get("input");
-                if (cmd != null && DangerousCommands.isDangerous(cmd.toString())) {
-                    perm = ToolPermission.DANGEROUS_WRITE;
-                    dangerousShell = true;
+                // Scan EVERY alias ShellTool actually reads (command, query, input) and flag if ANY is
+                // dangerous. Must NOT use containsKey-chaining: ShellTool resolves via null-coalescing,
+                // so {"command":null,"input":"format C:"} would otherwise read the present-but-null
+                // "command", see cmd==null, and slip the dangerous command past the gate.
+                for (String alias : new String[]{"command", "query", "input"}) {
+                    Object v = parameters.get(alias);
+                    if (v != null && DangerousCommands.isDangerous(v.toString())) {
+                        perm = ToolPermission.DANGEROUS_WRITE;
+                        dangerousShell = true;
+                        break;
+                    }
                 }
             }
             AiExecutionPolicy.Decision decision = policy.check(perm);

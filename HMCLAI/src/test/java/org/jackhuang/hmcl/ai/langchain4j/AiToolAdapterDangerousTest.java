@@ -87,6 +87,19 @@ public final class AiToolAdapterDangerousTest {
     }
 
     @Test
+    void presentButNullCommandKeyWithDangerousInputStillConfirms() {
+        AtomicInteger confirms = new AtomicInteger();
+        ToolConfirmHandler handler = (name, summary) -> { confirms.incrementAndGet(); return true; };
+        LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), yolo(), handler, handler);
+        // {"command":null,"input":"format C:"} — the gate must scan ALL aliases (not containsKey-chain),
+        // matching ShellTool's null-coalescing, so a present-but-null command can't smuggle a dangerous input.
+        ToolExecutionRequest req = ToolExecutionRequest.builder()
+                .name("shell").arguments("{\"command\":null,\"input\":\"format C:\"}").build();
+        ToolExecutionResultMessage result = adapter.execute(req);
+        assertEquals(1, confirms.get(), "present-but-null command + dangerous input must still prompt in YOLO");
+    }
+
+    @Test
     void decliningADangerousCommandBlocksIt() {
         ToolConfirmHandler deny = (name, summary) -> false;
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), yolo(), deny, deny);

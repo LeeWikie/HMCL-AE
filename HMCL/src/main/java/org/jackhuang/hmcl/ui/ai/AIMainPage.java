@@ -1347,22 +1347,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 return;
             }
             String[] levels = {"none", "low", "medium", "high", "xhigh", "max"};
+            String cur = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
             VBox popup = new VBox(2);
             popup.getStyleClass().add("ai-model-picker");
             popup.setPadding(new Insets(4));
+            popup.setPrefWidth(150);  // compact: a 6-item effort picker shouldn't be a full nav-width menu
             for (String level : levels) {
-                AdvancedListItem item = new AdvancedListItem();
-                item.setTitle(level);
-                item.getStyleClass().add("navigation-drawer-item");
-                item.setActive(level.equals(aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort()));
-                item.setOnAction(ev -> {
+                Label lbl = new Label(level);
+                lbl.setMaxWidth(Double.MAX_VALUE);
+                lbl.setPadding(new Insets(6, 14, 6, 12));  // small row height, not the big nav-drawer item
+                if (level.equals(cur)) {
+                    lbl.getStyleClass().add("title-label");  // highlight the active level
+                }
+                org.jackhuang.hmcl.ui.construct.RipplerContainer row = new org.jackhuang.hmcl.ui.construct.RipplerContainer(lbl);
+                FXUtils.onClicked(row, () -> {
                     aiSettings.reasoningEffortProperty().set(level);
                     FXUtils.installFastTooltip(thinkBtn, "思考: " + level);
                     if (thinkingPopup != null) {
                         thinkingPopup.hide();
                     }
                 });
-                popup.getChildren().add(item);
+                popup.getChildren().add(row);
             }
             thinkingPopup = new JFXPopup(popup);
             JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, thinkingPopup);
