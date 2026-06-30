@@ -129,6 +129,10 @@ final class ComponentSublistWrapper extends VBox implements NoPaddingComponent {
                         heightTransitionPending = false;
                         if (this.expanded) {
                             setContentHeight(computeContentHeight(sublist));
+                        } else {
+                            // Pin the collapsed height to exactly 0 (parity with the no-animation
+                            // branch) so no sliver of content leaks below the collapsed header.
+                            setContentHeight(0);
                         }
                     });
 
@@ -187,11 +191,6 @@ final class ComponentSublistWrapper extends VBox implements NoPaddingComponent {
         updateObservedContentNodes(sublist);
 
         this.getChildren().add(header);
-
-        // Optionally start expanded (e.g. selection dialogs) by firing the header once it's on-scene.
-        if (sublist.isInitiallyExpanded()) {
-            Platform.runLater(header::fire);
-        }
     }
 
     /// Keeps dynamic child layout changes reflected in the expanded container height.

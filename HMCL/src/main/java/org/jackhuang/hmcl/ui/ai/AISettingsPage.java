@@ -796,13 +796,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList tree = new ComponentList();
         for (AiProviderProfile profile : providers) {
             List<JFXCheckBox> modelBoxes = new ArrayList<>();
-            // Collapsible "provider folder" (提供商夹): tri-state checkbox + name on the LEFT of the
-            // header (not a centered bare row), model rows as indented children. Starts expanded so
-            // the models are visible to pick; collapse a provider when you don't need its detail.
+            // Collapsible "provider folder" (提供商夹), built the native way: provider name as the
+            // sublist title, tri-state checkbox as the leading control; model rows are the indented
+            // children. Same idiom the rest of HMCL settings use, so it gets native header height/style.
             ComponentSublist folder = new ComponentSublist();
-            folder.setInitiallyExpanded(true);
+            folder.setTitle(displayProfileName(profile));
 
-            JFXCheckBox providerBox = new JFXCheckBox(displayProfileName(profile));
+            JFXCheckBox providerBox = new JFXCheckBox();
             providerBox.setAllowIndeterminate(true);
             providerBox.setSelected(true);
             providerBox.setOnAction(e -> {
@@ -811,7 +811,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             });
             // Toggling the checkbox selects only; it must not expand/collapse the folder.
             providerBox.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_CLICKED, javafx.event.Event::consume);
-            folder.setHeaderLeft(providerBox);
+            folder.setLeading(providerBox);
 
             for (AiModelEntry entry : profile.getModels()) {
                 JFXCheckBox mcb = new JFXCheckBox(entry.getDisplayName());

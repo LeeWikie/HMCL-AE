@@ -228,17 +228,4 @@ public class ComponentSublist extends Control implements NoPaddingComponent {
     public void setTip(String tip) {
         this.tip.set(tip);
     }
-
-    private boolean initiallyExpanded = false;
-
-    /// Whether this sublist starts expanded when first shown (default: collapsed). When set, the
-    /// wrapper fires its header once on init — useful for selection dialogs where the children must
-    /// be visible by default.
-    public boolean isInitiallyExpanded() {
-        return initiallyExpanded;
-    }
-
-    public void setInitiallyExpanded(boolean initiallyExpanded) {
-        this.initiallyExpanded = initiallyExpanded;
-    }
 }
