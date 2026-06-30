@@ -690,10 +690,12 @@ public final class Controllers {
     }
 
     public static void navigate(Node node) {
+        if (decorator == null) return; // no main-window decorator (e.g. invoked from a standalone window)
         decorator.navigate(node, ContainerAnimations.NAVIGATION, Motion.SHORT4, Motion.EASE);
     }
 
     public static void navigateForward(Node node) {
+        if (decorator == null) return;
         decorator.navigate(node, ContainerAnimations.FORWARD, Motion.SHORT4, Motion.EASE);
     }
 

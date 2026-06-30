@@ -51,10 +51,27 @@ public final class AddOfflineAccountTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String username = String.valueOf(parameters.getOrDefault("username", "")).trim();
-        if (username.isEmpty()) {
+        String resolved = String.valueOf(parameters.getOrDefault("username", "")).trim();
+        if (resolved.isEmpty()) {
+            // Weak models frequently send the name under the wrong key (query / name / input) instead
+            // of "username" — accept the common aliases so a single param-name slip isn't a hard fail.
+            for (String alt : new String[]{"name", "query", "input", "value", "account", "player"}) {
+                Object v = parameters.get(alt);
+                if (v != null && !String.valueOf(v).trim().isEmpty()) {
+                    resolved = String.valueOf(v).trim();
+                    break;
+                }
+            }
+        }
+        // Some models pass the value as "username=Steve"; strip a leading key= prefix.
+        int eq = resolved.indexOf('=');
+        if (eq > 0 && resolved.substring(0, eq).trim().matches("(?i)username|name|player|account")) {
+            resolved = resolved.substring(eq + 1).trim();
+        }
+        if (resolved.isEmpty()) {
             return ToolResult.failure("username is required.");
         }
+        final String username = resolved;
         Object selectObj = parameters.getOrDefault("select", Boolean.TRUE);
         boolean select = !(selectObj instanceof Boolean) || (Boolean) selectObj;
 
