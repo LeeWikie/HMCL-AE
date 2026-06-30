@@ -97,7 +97,7 @@ public final class EmojiImages {
         while (i < text.length()) {
             int cp = text.codePointAt(i);
             int charCount = Character.charCount(cp);
-            if (isEmojiBase(cp)) {
+            if (isEmojiBase(cp) || isKeycapStart(text, i, cp)) {
                 int clusterEnd = consumeCluster(text, i);
                 String cluster = text.substring(i, clusterEnd);
                 String filename = toFilename(cluster);
@@ -165,7 +165,9 @@ public final class EmojiImages {
             i += Character.charCount(cp);
             if (cp == 0xFE0F) continue;
             if (!first) sb.append('_');
-            sb.append(Integer.toHexString(cp));
+            // Zero-pad to ≥4 hex digits (Noto convention): keeps 5-digit pictographs unchanged
+            // (1f9cb) but makes ASCII keycap bases match Noto's name (0031, not 31).
+            sb.append(String.format("%04x", cp));
             first = false;
         }
         return sb.toString();
@@ -223,6 +225,20 @@ public final class EmojiImages {
     /// Conservative emoji-base detection: pictographs, dingbats, misc symbols, flags and
     /// cards. Deliberately excludes the arrow/general-symbol ranges that the launcher UI
     /// uses, so enabling colour emoji never turns UI glyphs into images.
+    /// A keycap emoji (0️⃣-9️⃣, #️⃣, *️⃣) is an ASCII digit/#/* base followed by an optional U+FE0F
+    /// then the combining enclosing keycap U+20E3. Recognised ONLY in that full sequence so plain
+    /// digits/#/* in ordinary text are never turned into images.
+    private static boolean isKeycapStart(String text, int i, int cp) {
+        if (cp != 0x23 && cp != 0x2A && !(cp >= 0x30 && cp <= 0x39)) {
+            return false;
+        }
+        int j = i + 1; // base is a single BMP char
+        if (j < text.length() && text.charAt(j) == 0xFE0F) {
+            j++;
+        }
+        return j < text.length() && text.charAt(j) == 0x20E3;
+    }
+
     private static boolean isEmojiBase(int cp) {
         return (cp >= 0x1F300 && cp <= 0x1FAFF)   // symbols & pictographs (incl. supplemental/extended)
                 || (cp >= 0x1F000 && cp <= 0x1F0FF) // mahjong/dominoes/cards
