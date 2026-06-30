@@ -100,7 +100,7 @@ public class JFXRadioButtonSkin extends RadioButtonSkin {
         double labelHeight = Math.min(radioButton.prefHeight(labelWidth), h);
         double maxHeight = Math.max(contHeight, labelHeight);
         double xOffset = computeXOffset(w, labelWidth + contWidth, radioButton.getAlignment().getHpos()) + x;
-        double yOffset = computeYOffset(h, maxHeight, radioButton.getAlignment().getVpos()) + x;
+        double yOffset = computeYOffset(h, maxHeight, radioButton.getAlignment().getVpos()) + y;
         if (this.invalid) {
             this.initializeComponents();
             this.invalid = false;

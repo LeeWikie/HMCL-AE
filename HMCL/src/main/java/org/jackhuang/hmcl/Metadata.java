@@ -33,8 +33,10 @@ public final class Metadata {
     private Metadata() {
     }
 
-    public static final String NAME = "HMCL";
-    public static final String FULL_NAME = "Hello Minecraft! Launcher";
+    // Rebranded fork identity (GPLv3 §7(c): a modified version must be distinguished by name/version).
+    // Upstream copyright/attribution is preserved in the About page (GPLv3 §7(b)).
+    public static final String NAME = "HMCL-AE";
+    public static final String FULL_NAME = "HMCL-AE";
     public static final String VERSION = System.getProperty("hmcl.version.override", JarUtils.getAttribute("hmcl.version", "@develop@"));
 
     public static final String TITLE = NAME + " " + VERSION;

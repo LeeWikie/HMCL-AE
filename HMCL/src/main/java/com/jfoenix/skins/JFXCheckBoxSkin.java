@@ -149,7 +149,7 @@ public class JFXCheckBoxSkin extends CheckBoxSkin {
         double labelHeight = Math.min(checkBox.prefHeight(labelWidth), h);
         double maxHeight = Math.max(boxHeight, labelHeight);
         double xOffset = computeXOffset(w, labelWidth + boxWidth, checkBox.getAlignment().getHpos()) + x;
-        double yOffset = computeYOffset(h, maxHeight, checkBox.getAlignment().getVpos()) + x;
+        double yOffset = computeYOffset(h, maxHeight, checkBox.getAlignment().getVpos()) + y;
         if (this.invalid) {
             if (this.getSkinnable().isSelected()) {
                 this.playSelectAnimation(true);
