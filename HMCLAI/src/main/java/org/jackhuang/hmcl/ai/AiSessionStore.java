@@ -157,7 +157,18 @@ public final class AiSessionStore {
         data.sessions = snapshot;
 
         String json = GSON.toJson(data, STORE_TYPE);
-        Files.writeString(filePath, json, StandardCharsets.UTF_8);
+        // Atomic write: stage to a temp sibling then move into place, so a crash / full disk / power
+        // loss mid-write can never leave a truncated or empty store (which would lose ALL conversations).
+        Files.createDirectories(filePath.getParent());
+        Path tmp = filePath.resolveSibling(filePath.getFileName().toString() + ".tmp");
+        Files.writeString(tmp, json, StandardCharsets.UTF_8);
+        try {
+            Files.move(tmp, filePath,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(tmp, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     /// Creates a new session, adds it to the store, sets it as current, and

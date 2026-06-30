@@ -89,27 +89,63 @@ public final class WebFetchTool implements ToolSpec {
             return ToolResult.failure("Only http(s) URLs are supported: " + url);
         }
 
+        URI initial;
+        try {
+            initial = URI.create(url);
+        } catch (RuntimeException e) {
+            return ToolResult.failure("Invalid URL: " + e.getMessage());
+        }
+        // SSRF guard: the agent ingests untrusted text (logs, web pages, mod/MCP manifests); a
+        // prompt-injection could point web_fetch at localhost / LAN / cloud-metadata. Refuse any
+        // non-public target, and re-check on every redirect hop (we follow redirects manually).
+        String blocked = blockedReason(initial);
+        if (blocked != null) {
+            return ToolResult.failure("Refused to fetch a non-public/internal address (SSRF guard): " + blocked);
+        }
+
         try {
             HttpClient client = HttpClient.newBuilder()
                     // Honour HMCL's globally-configured proxy (JDK HttpClient ignores the
                     // default ProxySelector otherwise) — without this web_fetch bypasses the
                     // user's proxy and fails for many sites, especially in CN.
                     .proxy(java.net.ProxySelector.getDefault())
-                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .followRedirects(HttpClient.Redirect.NEVER) // follow manually so each hop is re-validated
                     .connectTimeout(Duration.ofSeconds(15))
                     .build();
-            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(25))
-                    .header("User-Agent", "HMCL-AE")
-                    .GET()
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            String body = response.body();
+            URI current = initial;
+            HttpResponse<String> response = null;
+            for (int hop = 0; hop < 5; hop++) {
+                HttpRequest request = HttpRequest.newBuilder(current)
+                        .timeout(Duration.ofSeconds(25))
+                        .header("User-Agent", "HMCL-AE")
+                        .GET()
+                        .build();
+                response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                int sc = response.statusCode();
+                if (sc < 300 || sc >= 400) {
+                    break;
+                }
+                java.util.Optional<String> loc = response.headers().firstValue("Location");
+                if (loc.isEmpty()) {
+                    break;
+                }
+                URI next = current.resolve(loc.get());
+                String scheme = next.getScheme();
+                if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                    return ToolResult.failure("Refused redirect to a non-http(s) URL: " + next);
+                }
+                String redirectBlocked = blockedReason(next);
+                if (redirectBlocked != null) {
+                    return ToolResult.failure("Refused to follow a redirect to a non-public/internal address (SSRF guard): " + redirectBlocked);
+                }
+                current = next;
+            }
+            String body = response == null ? "" : response.body();
             if (body == null) body = "";
             if (body.length() > MAX_CHARS) {
                 body = body.substring(0, MAX_CHARS) + "\n…(truncated)";
             }
-            return ToolResult.success("HTTP " + response.statusCode() + "\n" + body);
+            return ToolResult.success("HTTP " + (response == null ? 0 : response.statusCode()) + "\n" + body);
         } catch (java.io.IOException e) {
             return ToolResult.failure("Fetch failed: " + e.getMessage());
         } catch (InterruptedException e) {
@@ -118,5 +154,39 @@ public final class WebFetchTool implements ToolSpec {
         } catch (RuntimeException e) {
             return ToolResult.failure("Invalid URL: " + e.getMessage());
         }
+    }
+
+    /// Returns a human-readable reason if the URI's host resolves to a non-public address that must
+    /// not be fetched (loopback, any-local, link-local incl. 169.254.169.254 cloud-metadata,
+    /// site-local RFC1918, IPv6 unique-local, or multicast), or {@code null} if the host is public.
+    /// Package-private for unit testing.
+    static String blockedReason(URI uri) {
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()) {
+            return "missing host in URL";
+        }
+        try {
+            java.net.InetAddress[] addrs = java.net.InetAddress.getAllByName(host);
+            for (java.net.InetAddress addr : addrs) {
+                if (addr.isLoopbackAddress() || addr.isAnyLocalAddress()
+                        || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
+                        || addr.isMulticastAddress() || isUniqueLocalIpv6(addr)) {
+                    return host + " -> " + addr.getHostAddress();
+                }
+            }
+        } catch (java.net.UnknownHostException e) {
+            return "cannot resolve host " + host;
+        }
+        return null;
+    }
+
+    /// IPv6 unique-local address fc00::/7 (Java's isSiteLocalAddress only covers the deprecated
+    /// fec0::/10 site-local range, so check ULA explicitly).
+    private static boolean isUniqueLocalIpv6(java.net.InetAddress addr) {
+        if (!(addr instanceof java.net.Inet6Address)) {
+            return false;
+        }
+        byte[] b = addr.getAddress();
+        return b.length == 16 && (b[0] & 0xfe) == 0xfc;
     }
 }
