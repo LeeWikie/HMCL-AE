@@ -236,22 +236,57 @@ public final class WorldBackupManager {
         // 2) Safety: snapshot the current world before overwriting it. Pruning is DISABLED here
         //    (retentionCount 0) so this safety backup can never evict the snapshot being restored.
         @Nullable String safetyId = null;
+        @Nullable Path replaced = null;
         if (Files.isDirectory(worldDir)) {
             BackupResult safety = createBackup(instance, world, 0);
             safetyId = safety.id();
-            deleteTree(worldDir);
+            // Set the live world ASIDE with a single rename instead of deleting it: a rename has
+            // no half-deleted state, and if anything below fails the original world is renamed
+            // straight back. The old delete-then-move flow could leave saves/ without the world
+            // (or with half of it) after a crash or a locked file, with no automatic recovery.
+            replaced = worldDir.resolveSibling("." + world + ".replaced");
+            if (Files.exists(replaced)) {
+                deleteTree(replaced);
+            }
+            try {
+                Files.move(worldDir, replaced);
+            } catch (IOException moveFailed) {
+                deleteTree(staging); // clean up; the live world is untouched
+                throw new IOException("World '" + world + "' is in use (is the game running?) — restore aborted; "
+                        + "the current world was NOT touched. Close the world/game and retry.", moveFailed);
+            }
         }
 
         // 3) Swap the staged copy into place (a rename within saves/ is atomic on the same filesystem;
-        //    fall back to copy+delete if the platform refuses the move).
+        //    fall back to copy+delete if the platform refuses the move). On failure, roll the
+        //    original world back into place before propagating.
         try {
-            Files.move(staging, worldDir);
-        } catch (IOException moveFailed) {
-            copyTree(staging, worldDir);
-            deleteTree(staging);
+            try {
+                Files.move(staging, worldDir);
+            } catch (IOException moveFailed) {
+                copyTree(staging, worldDir);
+                deleteTree(staging);
+            }
+        } catch (IOException swapFailed) {
+            if (replaced != null) {
+                try {
+                    if (Files.exists(worldDir)) {
+                        deleteTree(worldDir); // partial copy from the failed fallback
+                    }
+                    Files.move(replaced, worldDir); // roll the original back
+                } catch (IOException rollbackFailed) {
+                    throw new IOException("Restore failed AND rollback failed — the original world is preserved at "
+                            + replaced + " (rename it back to '" + world + "' to recover).", swapFailed);
+                }
+            }
+            throw swapFailed;
         }
 
-        // 4) Apply retention only AFTER the restore has fully succeeded.
+        // 4) The staged copy is fully in place — only now drop the set-aside original, and apply
+        //    retention only AFTER the restore has fully succeeded.
+        if (replaced != null && Files.exists(replaced)) {
+            deleteTree(replaced);
+        }
         prune(backupRoot, retentionCount);
         return new RestoreResult(worldDir, safetyId, (int) counters[0]);
     }

@@ -406,12 +406,36 @@ public final class ChatAgent {
         });
     }
 
+    /// Fraction of the context window the REQUEST may fill (the rest is head-room for the reply).
+    private static final double REQUEST_BUDGET_RATIO = 0.8;
+
     private List<LlmMessage> buildMessages() {
         List<LlmMessage> all = new ArrayList<>();
         String prompt = promptBuilder != null ? promptBuilder.build() : FALLBACK_SYSTEM_PROMPT;
         all.add(new LlmMessage("system", prompt));
-        all.addAll(session.getMessages());
+        all.addAll(trimToRequestBudget(session.getMessages(), prompt.length()));
         return Collections.unmodifiableList(all);
+    }
+
+    /// Returns the NEWEST tail of {@code history} that fits the request token budget
+    /// (context window × {@value #REQUEST_BUDGET_RATIO}, minus the system prompt), never
+    /// fewer than the last two messages. This is a request-scope view only: the stored
+    /// session keeps its full history — an earlier design pruned the session itself and
+    /// persisted the truncated list, permanently deleting the earliest messages from disk.
+    private List<LlmMessage> trimToRequestBudget(List<LlmMessage> history, int promptChars) {
+        int budgetTokens = (int) (resolveContextWindow() * REQUEST_BUDGET_RATIO);
+        long budgetChars = (long) budgetTokens * CHARS_PER_TOKEN - promptChars;
+        long chars = 0;
+        int start = 0;
+        for (int i = history.size() - 1; i >= 0; i--) {
+            String c = history.get(i).getContent();
+            chars += c != null ? c.length() : 0;
+            if (chars > budgetChars && history.size() - i > 2) {
+                start = i + 1;
+                break;
+            }
+        }
+        return start == 0 ? history : history.subList(start, history.size());
     }
 
     public void clearSession() { session.clear(); }

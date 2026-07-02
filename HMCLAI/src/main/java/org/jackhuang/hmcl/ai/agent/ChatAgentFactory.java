@@ -138,9 +138,11 @@ public final class ChatAgentFactory {
             adapter.setAgentLimits(settings.getMaxToolCycles(),
                     settings.getMaxContextMessages(), settings.getToolResultMaxChars());
         }
-        ChatAgent agent = new ChatAgent(client, session, settings, promptBuilder);
-        session.setContextBudget(settings.getContextWindow());
-        return agent;
+        // NOTE: the context-window budget is applied at request-build time inside
+        // ChatAgent.buildMessages — the session itself always keeps the FULL history
+        // (an earlier design pruned the stored session, permanently deleting the
+        // user's earliest messages from disk whenever a small window was configured).
+        return new ChatAgent(client, session, settings, promptBuilder);
     }
 
     /// Tests the connection to the configured LLM endpoint with a lightweight

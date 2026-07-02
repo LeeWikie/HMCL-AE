@@ -116,6 +116,11 @@ public final class AiSessionStore {
         }
 
         StoreData data = GSON.fromJson(json, STORE_TYPE);
+        if (data == null) {
+            // Empty / whitespace / literal-null file (e.g. truncated by a pre-atomic-write crash):
+            // nothing to load, but not an error either. Same guard as AiSettings.load.
+            return;
+        }
         sessions.clear();
 
         if (data.sessions != null) {
@@ -131,6 +136,34 @@ public final class AiSessionStore {
                 currentSessionId = sessions.keySet().iterator().next();
             } else {
                 currentSessionId = null;
+            }
+        }
+    }
+
+    /// Loads sessions, and when the store file EXISTS but cannot be read or parsed, sets the
+    /// damaged file aside as `ai-sessions.json.corrupt-<timestamp>` before returning — so the
+    /// caller may safely continue (and later {@link #save()}) without a subsequent save
+    /// overwriting the only copy of the user's entire conversation history.
+    ///
+    /// @return `null` when the store loaded fine (or no file existed); otherwise the path the
+    ///         corrupt file was moved to (or the original path if even the move failed), so the
+    ///         UI can tell the user where their old history is preserved.
+    @org.jetbrains.annotations.Nullable
+    public synchronized Path loadOrQuarantine() {
+        try {
+            load();
+            return null;
+        } catch (Exception e) {
+            String stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                    .format(java.time.LocalDateTime.now());
+            Path quarantine = filePath.resolveSibling(filePath.getFileName() + ".corrupt-" + stamp);
+            try {
+                Files.move(filePath, quarantine);
+                return quarantine;
+            } catch (IOException moveFailure) {
+                // Could not set it aside (locked?). Report the original path; save() may still
+                // overwrite it, but the caller at least gets to warn the user first.
+                return filePath;
             }
         }
     }

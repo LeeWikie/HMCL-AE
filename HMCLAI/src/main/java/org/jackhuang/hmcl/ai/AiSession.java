@@ -31,24 +31,17 @@ import java.util.UUID;
 /// Conversation session that stores message history alongside stable metadata.
 ///
 /// Each session carries a unique {@link #id}, a user-editable {@link #title},
-/// and creation/update timestamps. The message list is auto-pruned to keep the
-/// estimated token count within the configured budget (default 100K tokens,
-/// Older messages are dropped first when the budget is exceeded.
+/// and creation/update timestamps.
 ///
-/// Token estimation uses a simple character-count heuristic (~4 chars per token),
-/// which is conservative but sufficient for context window management.
+/// The session stores the FULL history: fitting the conversation into the model's
+/// context window is a REQUEST-scope concern handled when the prompt is built
+/// (see {@code ChatAgent.buildMessages}). An earlier design pruned this list itself
+/// on every add and the truncated list was then persisted — permanently deleting the
+/// user's earliest messages from disk whenever a small context window was configured.
 ///
 /// Sessions are serializable to JSON via Gson for use with {@link AiSessionStore}.
 @NotNullByDefault
 public final class AiSession {
-
-    /// Maximum estimated tokens to retain in context (100K default).
-    private volatile int maxContextTokens = 100_000;
-
-    /// Rough chars-per-token heuristic used for pruning decisions.
-    private static final int CHARS_PER_TOKEN = 4;
-    /// Safety margin: reserve ~20% of context for the response.
-    private static final double BUDGET_RATIO = 0.8;
 
     @SerializedName("id")
     private final String id;
@@ -86,20 +79,17 @@ public final class AiSession {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.messages.addAll(messages);
-        pruneByTokenBudget();
     }
 
     /// Private copy constructor used by {@link #copyForStore()} to snapshot a session for
-    /// serialization. Copies every field verbatim — including {@code maxContextTokens} and the
-    /// full message list — WITHOUT re-pruning, so the saved JSON matches the live state exactly.
-    /// Callers must hold {@code other}'s monitor (see {@link #copyForStore()}) so the message
-    /// copy is consistent with concurrent mutators.
+    /// serialization. Copies every field verbatim — including the full message list — so the
+    /// saved JSON matches the live state exactly. Callers must hold {@code other}'s monitor
+    /// (see {@link #copyForStore()}) so the message copy is consistent with concurrent mutators.
     private AiSession(AiSession other) {
         this.id = other.id;
         this.title = other.title;
         this.createdAt = other.createdAt;
         this.updatedAt = other.updatedAt;
-        this.maxContextTokens = other.maxContextTokens;
         this.messages = new ArrayList<>(other.messages);
     }
 
@@ -131,17 +121,10 @@ public final class AiSession {
         return updatedAt;
     }
 
-    /// Sets the maximum context token budget for this session, typically
-    /// derived from the model's context window size (e.g. 128000 for GPT-4o).
-    public void setContextBudget(int modelContextWindow) {
-        this.maxContextTokens = (int) (modelContextWindow * BUDGET_RATIO);
-    }
-
-    /// Appends a message to the session history. If the estimated token count
-    /// exceeds the context budget, oldest messages are pruned.
+    /// Appends a message to the session history. The full history is kept — fitting the
+    /// conversation into the model's context window happens at request-build time, never here.
     public synchronized void addMessage(LlmMessage message) {
         messages.add(message);
-        pruneByTokenBudget();
         this.updatedAt = Instant.now();
     }
 
@@ -195,22 +178,5 @@ public final class AiSession {
     /// other synchronized mutators.
     synchronized AiSession copyForStore() {
         return new AiSession(this);
-    }
-
-    /// Prunes oldest messages until the estimated token count is within the budget.
-    private void pruneByTokenBudget() {
-        while (estimateTokens() > maxContextTokens && messages.size() > 2) {
-            messages.remove(0); // drop oldest
-        }
-    }
-
-    /// Estimates total tokens by summing per-message char counts divided by 4.
-    private int estimateTokens() {
-        int chars = 0;
-        for (LlmMessage m : messages) {
-            String c = m.getContent();
-            if (c != null) chars += c.length();
-        }
-        return chars / CHARS_PER_TOKEN;
     }
 }

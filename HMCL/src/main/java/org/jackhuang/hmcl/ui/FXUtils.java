@@ -1654,10 +1654,13 @@ public final class FXUtils {
         // Add some margin for safety
         menuHeight += 20;
 
-        // Open UPWARD only when there is genuinely not enough room below AND enough room above;
-        // otherwise open downward (the default). The previous relative test (below < above) flipped
-        // almost any control not near the very top to open upward, overlapping the rows above it.
-        if (availableSpaceAbove > menuHeight && availableSpaceBelow < menuHeight) {
+        // Open UPWARD only when there is genuinely not enough room below AND either enough room
+        // above or at least MORE room above (when NEITHER side fits, pick the side that truncates
+        // less — a JFXPopup has autoFix disabled and no scrollbar, so whatever runs off the screen
+        // is simply unreachable). The previous relative test (below < above) flipped almost any
+        // control not near the very top to open upward, overlapping the rows above it.
+        if (availableSpaceBelow < menuHeight
+                && (availableSpaceAbove > menuHeight || availableSpaceAbove > availableSpaceBelow)) {
             return JFXPopup.PopupVPosition.BOTTOM;  // not enough room below → expand upward
         } else {
             return JFXPopup.PopupVPosition.TOP;     // default → expand downward below the anchor

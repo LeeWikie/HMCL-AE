@@ -1180,7 +1180,19 @@ public final class AiSettings {
         }
 
         String json = GSON.toJson(data);
-        Files.writeString(filePath, json, StandardCharsets.UTF_8);
+        // Atomic write (same pattern as AiSessionStore.save): stage to a temp sibling then move
+        // into place, so a crash / full disk / power loss mid-write can never leave a truncated
+        // ai-settings.json — which would silently reset EVERY provider profile and API key the
+        // next time anything saved over it.
+        Path tmp = filePath.resolveSibling(filePath.getFileName().toString() + ".tmp");
+        Files.writeString(tmp, json, StandardCharsets.UTF_8);
+        try {
+            Files.move(tmp, filePath,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            Files.move(tmp, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
     }
 
     /// Returns a deep copy of the profiles list with API keys Base64-encoded

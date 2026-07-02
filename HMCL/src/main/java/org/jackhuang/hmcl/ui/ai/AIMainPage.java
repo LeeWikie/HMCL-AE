@@ -417,9 +417,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         modelLibPreload.start();
 
         this.sessionStore = new AiSessionStore(SettingsManager.localConfigDirectory());
-        try {
-            sessionStore.load();
-        } catch (Exception ignored) {
+        // On a corrupt/unreadable store the damaged file is set aside (never overwritten by the
+        // save below) and the user is told where it went; previously the load failure was
+        // swallowed and the empty store was saved right over the whole conversation history.
+        java.nio.file.Path corruptSessionStore = sessionStore.loadOrQuarantine();
+        if (corruptSessionStore != null) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning(
+                    "[AI] session store was corrupt; preserved at " + corruptSessionStore);
+            final String preservedAt = corruptSessionStore.toString();
+            Platform.runLater(() -> addSystemMessage(
+                    "会话记录文件损坏，未能加载历史对话。原文件已保留为：" + preservedAt
+                            + "（不会被覆盖，如需找回可以把它发给 AI 修复）。"));
         }
 
         this.chatSettings = loadChatSettings();
@@ -3180,7 +3188,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void persistStore() {
         try {
             sessionStore.save();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            // Persistence failures must at least be observable — a silently swallowed save left
+            // the user believing the conversation was on disk when it only lived in memory.
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save session store", e);
         }
     }
 
