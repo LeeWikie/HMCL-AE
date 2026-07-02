@@ -44,15 +44,30 @@ public final class ToolParamsTest {
     }
 
     @Test
-    void stringStripsKeyEqualsPrefix() {
+    void stringStripsKeyEqualsPrefixOnlyOnFallbackPaths() {
+        // Value dumped under a generic key with a baked-in name -> recovered and stripped.
         assertEquals("Steve", ToolParams.string(map("query", "username=Steve"), "username", "name"));
-        assertEquals("Steve", ToolParams.string(map("username", "name=Steve"), "username", "name"));
+        assertEquals("Steve", ToolParams.string(map("whatever", "username=Steve"), "username", "name"));
+        // Value sent under the DECLARED name (or an alias) is taken verbatim — legitimate content
+        // like a config snippet "text=Welcome" must never be mangled.
+        assertEquals("name=Steve", ToolParams.string(map("username", "name=Steve"), "username", "name"));
+        assertEquals("text=Welcome", ToolParams.string(map("text", "text=Welcome"), "text", "content"));
     }
 
     @Test
     void soleValueOnlyWhenUnambiguous() {
         // Two unrelated values present and neither is canonical/alias/generic -> don't guess.
         assertEquals("", ToolParams.string(map("foo", "a", "bar", "b"), "world"));
+    }
+
+    /// Gson parses every JSON number as Double; whole numbers must not grow a ".0" suffix
+    /// (renderDistance:12.0 in options.txt, or looking for a world literally named "123.0").
+    @Test
+    void wholeNumbersRenderWithoutFraction() {
+        assertEquals("12", ToolParams.string(map("value", 12.0d), "value"));
+        assertEquals("123", ToolParams.string(map("world", 123.0d), "world"));
+        assertEquals("-4", ToolParams.strict(map("value", -4.0d), "value"));
+        assertEquals("2.5", ToolParams.string(map("value", 2.5d), "value")); // real fractions kept
     }
 
     @Test
@@ -68,5 +83,25 @@ public final class ToolParamsTest {
         Map<String, Object> p = map("key", "fullscreen", "value", "true");
         assertEquals("fullscreen", ToolParams.strict(p, "key", "option"));
         assertEquals("true", ToolParams.strict(p, "value", "val"));
+    }
+
+    /// primary(): a call carrying ONLY a secondary parameter (backupId/confirm/instance) must not
+    /// have that value stolen as the primary one — that produced "world 'true' was not found"
+    /// errors that sent the model flailing.
+    @Test
+    void primaryIgnoresReservedKeysInFallbacks() {
+        String[] reserved = {"backupId", "instance"};
+        // Normal resolution still works.
+        assertEquals("MyWorld", ToolParams.primary(map("world", "MyWorld"), "world", reserved, "save"));
+        assertEquals("MyWorld", ToolParams.primary(map("save", "MyWorld"), "world", reserved, "save"));
+        assertEquals("MyWorld", ToolParams.primary(map("query", "MyWorld"), "world", reserved, "save"));
+        // A lone secondary param is NOT mistaken for the primary.
+        assertEquals("", ToolParams.primary(map("backupId", "20260629-153000"), "world", reserved, "save"));
+        assertEquals("", ToolParams.primary(map("instance", "1.20.1"), "world", reserved, "save"));
+        // Sole-value recovery still fires for a lone NON-reserved key.
+        assertEquals("MyWorld", ToolParams.primary(map("worldname", "MyWorld"), "world", reserved, "save"));
+        // And a secondary param alongside an unknown key doesn't block recovery of the real value.
+        assertEquals("MyWorld", ToolParams.primary(
+                map("worldname", "MyWorld", "instance", "1.20.1"), "world", reserved, "save"));
     }
 }

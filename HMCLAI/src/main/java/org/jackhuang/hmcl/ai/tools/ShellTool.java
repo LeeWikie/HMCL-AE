@@ -126,7 +126,7 @@ public final class ShellTool implements ToolSpec {
         if (raw == null) raw = parameters.get("input");
         String command = raw == null ? "" : raw.toString().trim();
         if (command.isEmpty()) {
-            return ToolResult.failure("No command provided (pass the command line as 'query').");
+            return ToolResult.failure("No command provided (pass the command line as 'command').");
         }
 
         try {

@@ -40,34 +40,72 @@ public final class ToolParams {
 
     /// Resolves a primary string parameter: the canonical name, then the tool-specific aliases, then
     /// the common generic dump-keys, then — if the map has exactly ONE non-blank value — that sole
-    /// value. Finally strips a leading `key=` prefix the model sometimes bakes into the value.
+    /// value. A leading `key=` prefix the model sometimes bakes into the value is stripped ONLY on
+    /// the generic/sole fallback paths — a value the model sent under the declared name (or an
+    /// alias) is taken verbatim, so legitimate `foo=bar` content is never mangled.
     /// Returns "" if nothing usable is present.
     public static String string(Map<String, Object> params, String canonical, String... aliases) {
         if (params == null || params.isEmpty()) {
             return "";
         }
         String v = raw(params, canonical);
-        if (v.isEmpty()) {
-            for (String a : aliases) {
-                v = raw(params, a);
-                if (!v.isEmpty()) break;
+        if (!v.isEmpty()) {
+            return v;
+        }
+        for (String a : aliases) {
+            v = raw(params, a);
+            if (!v.isEmpty()) {
+                return v;
             }
         }
-        if (v.isEmpty()) {
-            for (String g : GENERIC) {
-                v = raw(params, g);
-                if (!v.isEmpty()) break;
+        for (String g : GENERIC) {
+            v = raw(params, g);
+            if (!v.isEmpty()) {
+                return stripKeyPrefix(v, canonical, aliases);
             }
         }
-        if (v.isEmpty()) {
-            v = soleValue(params);
-        }
-        return stripKeyPrefix(v, canonical, aliases);
+        return stripKeyPrefix(soleValue(params, null), canonical, aliases);
     }
 
-    /// Like {@link #string} but WITHOUT the generic-dump-key / sole-value fallbacks. Use for a tool
-    /// with SEVERAL required params, where those fallbacks could grab a value meant for another param
-    /// (e.g. set_game_option's key + value). Resolves canonical → aliases → strips a key= prefix.
+    /// Like {@link #string} but for a tool that ALSO declares secondary parameters (e.g. a world
+    /// tool with an optional `instance` / `backupId` / `confirm`): the generic and sole-value
+    /// fallbacks ignore entries whose key is one of {@code reservedKeys}, so a call that carries
+    /// ONLY a secondary parameter can never have that value stolen as the primary one (which
+    /// produced misleading "world 'true' was not found" errors that sent the model flailing).
+    public static String primary(Map<String, Object> params, String canonical,
+                                 String[] reservedKeys, String... aliases) {
+        if (params == null || params.isEmpty()) {
+            return "";
+        }
+        String v = raw(params, canonical);
+        if (!v.isEmpty()) {
+            return v;
+        }
+        for (String a : aliases) {
+            v = raw(params, a);
+            if (!v.isEmpty()) {
+                return v;
+            }
+        }
+        java.util.Set<String> reserved = new java.util.HashSet<>();
+        for (String r : reservedKeys) {
+            reserved.add(r.toLowerCase(java.util.Locale.ROOT));
+        }
+        for (String g : GENERIC) {
+            if (reserved.contains(g)) {
+                continue;
+            }
+            v = raw(params, g);
+            if (!v.isEmpty()) {
+                return stripKeyPrefix(v, canonical, aliases);
+            }
+        }
+        return stripKeyPrefix(soleValue(params, reserved), canonical, aliases);
+    }
+
+    /// Like {@link #string} but WITHOUT the generic-dump-key / sole-value fallbacks and WITHOUT any
+    /// value rewriting. Use for a tool with SEVERAL required params, where those fallbacks could
+    /// grab a value meant for a different param (e.g. set_game_option's key + value).
     public static String strict(Map<String, Object> params, String canonical, String... aliases) {
         if (params == null || params.isEmpty()) {
             return "";
@@ -79,20 +117,39 @@ public final class ToolParams {
                 if (!v.isEmpty()) break;
             }
         }
-        return stripKeyPrefix(v, canonical, aliases);
+        return v;
     }
 
     private static String raw(Map<String, Object> p, String key) {
         Object o = p.get(key);
-        return o == null ? "" : String.valueOf(o).trim();
+        return o == null ? "" : valueToString(o);
     }
 
-    /// The single non-blank value if the map has exactly one; otherwise "" (ambiguous — don't guess).
-    private static String soleValue(Map<String, Object> p) {
+    /// Stringifies a raw JSON value. Gson parses every JSON number as Double, which turns an
+    /// integer argument like `12` into `"12.0"` — and a tool would then write `renderDistance:12.0`
+    /// into options.txt or look for a world literally named "123.0". Whole numbers are therefore
+    /// rendered without the fractional part.
+    private static String valueToString(Object o) {
+        if (o instanceof Number) {
+            double d = ((Number) o).doubleValue();
+            if (d == Math.rint(d) && !Double.isInfinite(d) && Math.abs(d) <= 9_007_199_254_740_992.0) {
+                return String.valueOf((long) d);
+            }
+        }
+        return String.valueOf(o).trim();
+    }
+
+    /// The single non-blank value if the map has exactly one (ignoring {@code reserved} keys, which
+    /// belong to other declared parameters); otherwise "" (ambiguous — don't guess).
+    private static String soleValue(Map<String, Object> p, java.util.Set<String> reserved) {
         String only = "";
-        for (Object o : p.values()) {
-            if (o == null) continue;
-            String s = String.valueOf(o).trim();
+        for (Map.Entry<String, Object> e : p.entrySet()) {
+            if (e.getValue() == null) continue;
+            if (reserved != null && e.getKey() != null
+                    && reserved.contains(e.getKey().toLowerCase(java.util.Locale.ROOT))) {
+                continue;
+            }
+            String s = valueToString(e.getValue());
             if (s.isEmpty()) continue;
             if (!only.isEmpty()) return ""; // more than one candidate
             only = s;

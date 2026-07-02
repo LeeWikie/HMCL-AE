@@ -47,7 +47,8 @@ public final class ListWorldBackupsTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        final String world = ToolParams.string(parameters, "world", "save", "folder", "saveName", "name");
+        final String world = ToolParams.primary(parameters, "world",
+                new String[]{"instance"}, "save", "folder", "saveName", "name");
         if (world.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }

@@ -61,7 +61,8 @@ public final class BackupWorldTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String resolved = ToolParams.string(parameters, "world", "save", "folder", "saveName", "name");
+        String resolved = ToolParams.primary(parameters, "world",
+                new String[]{"instance"}, "save", "folder", "saveName", "name");
         if (resolved.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }

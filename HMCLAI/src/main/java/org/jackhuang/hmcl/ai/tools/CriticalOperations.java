@@ -56,9 +56,9 @@ public final class CriticalOperations {
             "transfer_inventory",
             "restore_world_backup");
 
-    /// A shell delete verb (rm / del / rmdir / Remove-Item / unlink / rd).
+    /// A shell delete verb (rm / del / rmdir / Remove-Item and its `ri` alias / unlink / rd).
     private static final Pattern DELETE_VERB = Pattern.compile(
-            "(?i)(\\brm\\b|\\brmdir\\b|\\bunlink\\b|\\bdel\\b|\\berase\\b|\\brd\\b|remove-item|rimraf)");
+            "(?i)(\\brm\\b|\\brmdir\\b|\\bunlink\\b|\\bdel\\b|\\berase\\b|\\brd\\b|\\bri\\b|remove-item|rimraf)");
 
     /// Paths whose deletion is catastrophic: saves, player data, backups, level data, or the
     /// whole .minecraft. Matched only WHEN a delete verb is also present.

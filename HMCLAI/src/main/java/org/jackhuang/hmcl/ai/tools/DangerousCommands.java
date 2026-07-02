@@ -31,9 +31,11 @@ public final class DangerousCommands {
 
     private static final Pattern[] PATTERNS = {
             Pattern.compile("(?i)\\brm\\s+(?:-\\S+\\s+)*(?:-[a-z]*[rf]|--(?:recursive|force|no-preserve-root))"), // rm -rf/-r/-f and --recursive/--force
-            Pattern.compile("(?i)\\brmdir\\s+/s"),                     // Windows rmdir /s
-            Pattern.compile("(?i)\\bdel\\s+.*\\s/[sfq]"),             // del /s /f /q
-            Pattern.compile("(?i)\\bRemove-Item\\b.*-Recurse"),       // PowerShell recursive delete
+            Pattern.compile("(?i)\\b(?:rmdir|rd)\\s+(?:/[a-z]+\\s+)*/s\\b"), // rmdir/rd /s (any switch order, e.g. rd /q /s)
+            Pattern.compile("(?i)\\b(?:del|erase)\\b[^\\r\\n&|;]*/[sfq]\\b"), // del/erase with /s /f /q anywhere (before or after the path)
+            // PowerShell recursive delete: Remove-Item and its built-in aliases (ri/rd/del/erase/rm),
+            // with -Recurse or any unambiguous prefix abbreviation (-r/-re/-rec/…) PowerShell accepts.
+            Pattern.compile("(?i)(?<![\\w-])(?:remove-item|ri|rd|del|erase|rm)\\b[^\\r\\n&|;]*\\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\\b"),
             Pattern.compile("(?i)\\bRemove-Item\\b.*(HKLM|HKCU|HKEY)"),
             Pattern.compile("(?i)\\bformat\\s+[a-z]:"),               // format C:
             Pattern.compile("(?i)\\bmkfs\\b"),
@@ -90,13 +92,16 @@ public final class DangerousCommands {
     }
 
     /// Matches an UNAMBIGUOUS PowerShell encoding flag (`-EncodedCommand` / `-EncodedArguments` and
-    /// the `-enc`..`-encoded` abbreviations) and captures the following base64 token (group 1). The
-    /// single-letter `-e` form is deliberately NOT here: it collides with grep/sed/echo `-e`, so it
-    /// is left to {@link #BARE_BASE64} (match-only, never fail-closed). The flag must start at a
-    /// token boundary so it does not match inside words/paths, and longest spellings come first so
-    /// the alternation prefers the full flag.
+    /// EVERY prefix abbreviation powershell.exe accepts, `-en` .. `-encodedcommand` — PowerShell
+    /// parameter prefix matching means `-EncodedCo` / `-EncodedComman` etc. are all live spellings)
+    /// and captures the following base64 token (group 1). The single-letter `-e` form is
+    /// deliberately NOT here: it collides with grep/sed/echo `-e`, so it is left to
+    /// {@link #BARE_BASE64} (match-only, never fail-closed). The flag must start at a token
+    /// boundary so it does not match inside words/paths, and longest spellings come first so the
+    /// alternation prefers the full flag.
     private static final Pattern ENCODED_FLAG_WITH_ARG = Pattern.compile(
-            "(?i)(?<![A-Za-z0-9])-(?:encodedcommand|encodedarguments|encoded|encode|encod|enco|enc|en)"
+            "(?i)(?<![A-Za-z0-9])-en(?:c(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?"
+                    + "|a(?:r(?:g(?:u(?:m(?:e(?:n(?:t(?:s)?)?)?)?)?)?)?)?)?)?)?)?)?)?"
                     + "(?=\\s|[:=]|$)\\s*[:=]?\\s*[\"']?([A-Za-z0-9+/=]*)");
 
     /// Matches a long "bare" base64 blob (no flag) such as the argument of

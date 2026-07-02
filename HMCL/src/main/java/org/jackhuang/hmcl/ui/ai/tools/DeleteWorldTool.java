@@ -76,7 +76,8 @@ public final class DeleteWorldTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String world = ToolParams.string(parameters, "world", "save", "folder", "saveName", "name");
+        String world = ToolParams.primary(parameters, "world",
+                new String[]{"confirm", "instance"}, "save", "folder", "saveName", "name");
         if (world.isEmpty()) {
             return ToolResult.failure("Parameter 'world' (the save folder name) is required.");
         }

@@ -55,6 +55,39 @@ public final class DangerousCommandsTest {
         assertFalse(DangerousCommands.isDangerous("rm notes.txt"));
     }
 
+    /// Windows-native delete spellings the model naturally emits on a Windows shell (cmd built-ins
+    /// and PowerShell aliases of Remove-Item) — previously all missed.
+    @Test
+    void windowsDeleteSpellingsAreFlagged() {
+        assertTrue(DangerousCommands.isDangerous("rd /s /q D:\\data"));
+        assertTrue(DangerousCommands.isDangerous("cmd /c rd /s /q C:\\Users\\me\\Desktop\\stuff"));
+        assertTrue(DangerousCommands.isDangerous("rd /q /s D:\\data"));           // switch order swapped
+        assertTrue(DangerousCommands.isDangerous("rmdir /s C:\\temp"));
+        assertTrue(DangerousCommands.isDangerous("del /s C:\\backup2"));           // switches before path
+        assertTrue(DangerousCommands.isDangerous("del /q C:\\x"));
+        assertTrue(DangerousCommands.isDangerous("del C:\\x /s"));                 // switches after path
+        assertTrue(DangerousCommands.isDangerous("erase /s C:\\x"));
+        assertTrue(DangerousCommands.isDangerous("ri -Recurse -Force C:\\Users\\me\\Documents"));
+        assertTrue(DangerousCommands.isDangerous("rd -Recurse -Force $env:USERPROFILE\\Documents"));
+        assertTrue(DangerousCommands.isDangerous("del -Recurse -Force C:\\x"));
+        assertTrue(DangerousCommands.isDangerous("Remove-Item -rec -fo C:\\x"));   // prefix abbreviation
+        assertTrue(DangerousCommands.isDangerous("Remove-Item -re C:\\x"));
+        // But plain single-file deletes stay unflagged.
+        assertFalse(DangerousCommands.isDangerous("del C:\\temp\\a.txt"));
+        assertFalse(DangerousCommands.isDangerous("Remove-Item C:\\temp\\a.txt"));
+        assertFalse(DangerousCommands.isDangerous("ri C:\\temp\\a.txt"));
+    }
+
+    /// powershell.exe accepts ANY unambiguous prefix of -EncodedCommand; the fail-closed flag
+    /// detection must cover the middle spellings, not just -enc..-encoded and the full name.
+    @Test
+    void encodedCommandPrefixAbbreviationsAreRecognized() {
+        String encoded = b64Utf16("Remove-Item C:/Users/me/world -Recurse -Force");
+        assertTrue(DangerousCommands.isDangerous("powershell -EncodedCo " + encoded));
+        assertTrue(DangerousCommands.isDangerous("powershell -EncodedCom " + encoded));
+        assertTrue(DangerousCommands.isDangerous("powershell -EncodedComman " + encoded));
+    }
+
     @Test
     void benignCommandsAreNotFlagged() {
         assertFalse(DangerousCommands.isDangerous("ls -la"));

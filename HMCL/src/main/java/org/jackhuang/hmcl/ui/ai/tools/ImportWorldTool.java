@@ -79,7 +79,8 @@ public final class ImportWorldTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String zipText = ToolParams.string(parameters, "zip", "path", "file", "archive", "source");
+        String zipText = ToolParams.primary(parameters, "zip",
+                new String[]{"instance"}, "path", "file", "archive", "source");
         if (zipText.isEmpty()) {
             return ToolResult.failure("Parameter 'zip' (the local path of the .zip world archive) is required.");
         }
