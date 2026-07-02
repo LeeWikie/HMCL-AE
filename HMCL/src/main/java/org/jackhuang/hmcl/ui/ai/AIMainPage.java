@@ -1177,6 +1177,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     // ---- Session management ----
 
     private void createSession() {
+        // If the current session is already brand-new and empty, don't stack another empty one
+        // (repeated clicks used to pile up identical "New Chat" rows) — just focus the composer.
+        AiSession existing = sessionStore.getCurrentSession();
+        if (existing != null && existing.getMessages().isEmpty() && !isStreaming()) {
+            showChatView();
+            inputField.requestFocus();
+            return;
+        }
         sessionStore.createSession();
         try {
             sessionStore.save();
@@ -1192,6 +1200,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (current != null) {
             updateHeader(current);
         }
+        inputField.requestFocus();
     }
 
     /// Clears the current conversation's messages in-place (the `/clear` command).
@@ -2015,7 +2024,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
 
-        autocompleteSelectedIndex = -1;
+        // First item pre-selected: Enter picks it right away (an unselected list silently
+        // swallowed the Enter that was meant to run the visible command).
+        autocompleteSelectedIndex = 0;
         refreshAutocompletePopup();
     }
 
@@ -2039,7 +2050,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
 
-        autocompleteSelectedIndex = -1;
+        autocompleteSelectedIndex = 0; // see handleSlashAutocomplete
         refreshAutocompletePopup();
     }
 
@@ -2071,13 +2082,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         autocompletePopup.setManaged(true);
     }
 
-    /// Navigates the autocomplete selection by the given delta.
+    /// Navigates the autocomplete selection by the given delta (wrapping 0..size-1 — there is
+    /// no "nothing selected" stop anymore).
     private void navigateAutocomplete(int delta) {
         if (autocompleteItems.isEmpty()) return;
-        int newIndex = autocompleteSelectedIndex + delta;
-        if (newIndex < -1) newIndex = autocompleteItems.size() - 1;
-        if (newIndex >= autocompleteItems.size()) newIndex = -1;
-        autocompleteSelectedIndex = newIndex;
+        int size = autocompleteItems.size();
+        autocompleteSelectedIndex = ((autocompleteSelectedIndex + delta) % size + size) % size;
         refreshAutocompletePopup();
     }
 
@@ -2093,6 +2103,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         String textBeforeCaret = text.substring(0, Math.min(caretPos, text.length()));
 
         if (textBeforeCaret.startsWith("/")) {
+            if (text.strip().equals(selected)) {
+                // The command is already fully typed — Enter should RUN it, not re-insert it.
+                hideAutocomplete();
+                sendMessage();
+                return;
+            }
             inputField.setText(selected + " ");
             inputField.positionCaret(selected.length() + 1);
         } else {
