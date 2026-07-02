@@ -1,9 +1,16 @@
 package org.jackhuang.hmcl.ai.mcp;
 
+import com.google.gson.Gson;
+import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport;
 import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
+import dev.langchain4j.model.chat.request.json.JsonBooleanSchema;
+import dev.langchain4j.model.chat.request.json.JsonIntegerSchema;
+import dev.langchain4j.model.chat.request.json.JsonNumberSchema;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonSchemaElement;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -21,6 +28,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /// limits which discovered tools are actually registered.
 @NotNullByDefault
 public final class McpClientManager {
+
+    private static final Gson GSON = new Gson();
 
     private final ToolRegistry registry;
     private final Map<String, McpClient> clients = new ConcurrentHashMap<>();
@@ -92,8 +101,9 @@ public final class McpClientManager {
                 String toolName = spec.name();
                 if (allowed != null && !allowed.contains(toolName)) continue;
                 String prefixed = "mcp." + serverId + "." + toolName;
-                McpToolStub stub = new McpToolStub(serverId, toolName,
-                        spec.description() != null ? spec.description() : "MCP tool " + toolName);
+                McpToolStub stub = new McpToolStub(client, serverId, toolName,
+                        spec.description() != null ? spec.description() : "MCP tool " + toolName,
+                        schemaJsonOf(spec));
                 // remove old then re-register
                 registry.disable(prefixed);
                 registry.register(stub);
@@ -103,6 +113,43 @@ public final class McpClientManager {
             // discovery failed, leave stubs unregistered
         }
         serverTools.put(serverId, registered);
+    }
+
+    /// Serializes a discovered MCP tool's top-level input parameters into the flat JSON-Schema
+    /// string the HMCL tool pipeline understands ({@code ToolSpec.getInputSchemaJson} →
+    /// {@code LangChain4jToolAdapter.parseSchema}), so the model calls the tool with the right
+    /// argument names instead of the fallback {@code "query"}. Returns null when the tool takes
+    /// no parameters or the schema can't be read (caller falls back to no structured schema).
+    @Nullable
+    private static String schemaJsonOf(ToolSpecification spec) {
+        try {
+            JsonObjectSchema params = spec.parameters();
+            if (params == null || params.properties() == null || params.properties().isEmpty()) {
+                return null;
+            }
+            Map<String, Object> props = new LinkedHashMap<>();
+            for (Map.Entry<String, JsonSchemaElement> e : params.properties().entrySet()) {
+                Map<String, Object> meta = new LinkedHashMap<>();
+                meta.put("type", jsonType(e.getValue()));
+                props.put(e.getKey(), meta);
+            }
+            Map<String, Object> root = new LinkedHashMap<>();
+            root.put("type", "object");
+            root.put("properties", props);
+            root.put("required", params.required() != null ? params.required() : List.of());
+            return GSON.toJson(root);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /// Maps a langchain4j schema element to the JSON-Schema `type` keyword the flat parser reads
+    /// (it only distinguishes integer/number/boolean; everything else is treated as a string).
+    private static String jsonType(JsonSchemaElement el) {
+        if (el instanceof JsonIntegerSchema) return "integer";
+        if (el instanceof JsonNumberSchema) return "number";
+        if (el instanceof JsonBooleanSchema) return "boolean";
+        return "string";
     }
 
     public void disconnect(String serverId) {
