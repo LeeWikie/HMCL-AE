@@ -318,7 +318,8 @@ public final class AiSettings {
     public static final int DEFAULT_MAX_CONTEXT_MESSAGES = 0;
 
     /// Default maximum characters of a single tool result fed back to the model
-    /// (`0` = unlimited).
+    /// (`0` = the adapter's automatic 20,000-char cap; see
+    /// {@code LangChain4jChatAdapter.AUTO_TOOL_RESULT_MAX_CHARS}).
     public static final int DEFAULT_TOOL_RESULT_MAX_CHARS = 0;
 
     /// Default per-request timeout in seconds.

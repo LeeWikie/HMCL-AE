@@ -56,7 +56,7 @@ public final class AiPromptBuilder {
             "  • Listing: use list_instances / list_game_versions / search_mods. Don't `ls`/`dir` or scrape websites for these.",
             "  • Launch: use launch_instance. Manage instances with edit_instance (rename etc.) and delete_instance.",
             "File / generic tools:",
-            "- read: read a file, or list a directory's entries.",
+            "- read: read a file, or list a directory's entries. For a big file/log it returns the LAST maxLines lines (default 200) with a header saying how many lines exist; page earlier parts with startLine + maxLines instead of dumping the whole file. Large tool outputs are capped and old ones are dropped from context, so read narrowly.",
             "- glob: find files by name pattern (e.g. logs/*.log). grep: search file contents by regex.",
             "- write: create a new file or completely overwrite one (auto-creates parent dirs).",
             "- edit: make a surgical change to an existing file (old_string must match exactly).",

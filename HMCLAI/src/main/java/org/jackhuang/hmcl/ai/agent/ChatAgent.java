@@ -186,6 +186,12 @@ public final class ChatAgent {
     /// the configured model wins (authoritative per-model value), then the user-configured
     /// {@link AiSettings#getContextWindow()}, then a {@value #DEFAULT_CONTEXT_WINDOW}-token fallback.
     private int resolveContextWindow() {
+        return resolveContextWindow(settings);
+    }
+
+    /// Static variant of {@link #resolveContextWindow()} for callers that only have the
+    /// settings (e.g. the factory wiring the adapter's context budget).
+    public static int resolveContextWindow(AiSettings settings) {
         ModelLibrary.ModelInfo info = ModelLibrary.find(settings.getModel());
         if (info != null && info.getContextWindow() > 0) {
             return info.getContextWindow();

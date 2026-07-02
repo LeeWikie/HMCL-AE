@@ -120,7 +120,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
     /// Maximum tool-call cycles before giving up, as a runaway backstop (Pi loops until
     /// done; we keep a generous cap so a misbehaving model can't loop forever).
-    /// Configurable via {@link #setAgentLimits(int, int, int)}.
+    /// Configurable via {@link #setAgentLimits(int, int, int, int)}.
     private volatile int maxToolCycles = 25;
 
     /// Maximum number of recent conversation messages sent to the model
@@ -128,16 +128,39 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     private volatile int maxContextMessages = 0;
 
     /// Maximum characters of a single tool result fed back to the model
-    /// (`0` = unlimited).
+    /// (`0` = the {@link #AUTO_TOOL_RESULT_MAX_CHARS} auto cap).
     private volatile int toolResultMaxChars = 0;
 
+    /// Auto cap applied to a single tool result when the user setting is 0 ("自动").
+    /// A single `read`/`web_fetch` dump above this size crowds everything else out of the
+    /// window and gets re-sent on EVERY subsequent tool cycle of the turn, so an
+    /// uncapped default was the main way conversations blew past the context limit.
+    static final int AUTO_TOOL_RESULT_MAX_CHARS = 20_000;
+
+    /// Approximate character budget for one request's total content, derived from the
+    /// active model's context window (`0` = eviction disabled). When a turn's growing
+    /// tool loop exceeds this, the OLDEST tool results are replaced by a short
+    /// placeholder (the model can re-run the tool if it still needs the data).
+    private volatile long contextCharBudget = 0;
+
+    /// Fraction of the context window the request content may fill before old tool
+    /// results start being evicted (head-room for the system prompt + the reply).
+    private static final double EVICTION_BUDGET_RATIO = 0.75;
+
+    /// Heuristic chars-per-token used to convert the context window into a char budget.
+    private static final int CHARS_PER_TOKEN = 4;
+
     /// Applies the agent-loop limits from settings. Non-positive cycle counts
-    /// fall back to the default backstop; non-positive context/result limits
-    /// mean "unlimited".
-    public void setAgentLimits(int maxToolCycles, int maxContextMessages, int toolResultMaxChars) {
+    /// fall back to the default backstop; a non-positive message limit means
+    /// "unlimited"; a non-positive tool-result limit means "auto cap";
+    /// a non-positive context window disables in-turn tool-result eviction.
+    public void setAgentLimits(int maxToolCycles, int maxContextMessages, int toolResultMaxChars,
+                               int contextWindowTokens) {
         this.maxToolCycles = maxToolCycles > 0 ? maxToolCycles : 25;
         this.maxContextMessages = Math.max(0, maxContextMessages);
         this.toolResultMaxChars = Math.max(0, toolResultMaxChars);
+        this.contextCharBudget = contextWindowTokens > 0
+                ? (long) (contextWindowTokens * EVICTION_BUDGET_RATIO) * CHARS_PER_TOKEN : 0;
     }
 
     /// Trims the conversation to the most recent {@link #maxContextMessages} entries,
@@ -165,21 +188,89 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         return trimmed;
     }
 
-    /// Truncates a tool result fed back to the model when it exceeds
-    /// {@link #toolResultMaxChars}. Returns the original message when within budget.
+    /// Truncates a tool result fed back to the model when it exceeds the configured
+    /// {@link #toolResultMaxChars} (or the {@link #AUTO_TOOL_RESULT_MAX_CHARS} auto cap
+    /// when the setting is 0). Returns the original message when within budget.
     private ToolExecutionResultMessage truncateToolResult(ToolExecutionRequest req,
                                                           ToolExecutionResultMessage result) {
-        int limit = toolResultMaxChars;
-        if (limit <= 0 || result == null) {
-            return result;
+        int limit = toolResultMaxChars > 0 ? toolResultMaxChars : AUTO_TOOL_RESULT_MAX_CHARS;
+        if (result == null) {
+            return null;
         }
         String text = result.text();
         if (text == null || text.length() <= limit) {
             return result;
         }
         String truncated = text.substring(0, limit)
-                + "\n…[truncated " + (text.length() - limit) + " chars by tool-result limit]";
+                + "\n…[truncated " + (text.length() - limit) + " chars by tool-result limit —"
+                + " re-run the tool with narrower arguments (e.g. read with startLine/maxLines)"
+                + " if you need the rest]";
         return ToolExecutionResultMessage.from(req, truncated);
+    }
+
+    /// Placeholder that replaces an evicted old tool result. Kept short and explicit so the
+    /// model knows the data is re-obtainable rather than mysteriously missing.
+    static final String EVICTED_TOOL_RESULT =
+            "[old tool result dropped to free context — re-run the tool if you still need it]";
+
+    /// The most recent tool results are never evicted — they are what the model is
+    /// actively working from in the current cycles.
+    private static final int KEEP_RECENT_TOOL_RESULTS = 4;
+
+    /// Rough size of one message's content in characters, for budget accounting.
+    private static int approxChars(ChatMessage m) {
+        if (m instanceof ToolExecutionResultMessage t) {
+            return t.text() != null ? t.text().length() : 0;
+        }
+        if (m instanceof AiMessage a) {
+            int n = a.text() != null ? a.text().length() : 0;
+            if (a.hasToolExecutionRequests()) {
+                for (ToolExecutionRequest r : a.toolExecutionRequests()) {
+                    n += (r.arguments() != null ? r.arguments().length() : 0) + 40;
+                }
+            }
+            return n;
+        }
+        if (m instanceof SystemMessage s) {
+            return s.text() != null ? s.text().length() : 0;
+        }
+        // UserMessage and anything else: toString is proportional enough for budgeting.
+        return m.toString().length();
+    }
+
+    /// In-turn context editing: when the growing tool loop pushes the conversation past
+    /// {@link #contextCharBudget}, replaces the OLDEST tool results (never the most recent
+    /// {@link #KEEP_RECENT_TOOL_RESULTS}) with {@link #EVICTED_TOOL_RESULT} placeholders,
+    /// oldest first, until back under budget. Mutates {@code conversation} in place so the
+    /// eviction sticks for all remaining cycles of the turn. Keeping one placeholder per
+    /// tool-use (instead of removing the message) preserves the request/result pairing the
+    /// OpenAI/Anthropic APIs require. Idempotent — placeholders are never re-evicted.
+    private void evictOldToolResults(List<ChatMessage> conversation) {
+        long budget = contextCharBudget;
+        if (budget <= 0) {
+            return;
+        }
+        long total = 0;
+        for (ChatMessage m : conversation) {
+            total += approxChars(m);
+        }
+        if (total <= budget) {
+            return;
+        }
+        List<Integer> evictable = new ArrayList<>();
+        for (int i = 0; i < conversation.size(); i++) {
+            if (conversation.get(i) instanceof ToolExecutionResultMessage t
+                    && t.text() != null && t.text().length() > EVICTED_TOOL_RESULT.length()) {
+                evictable.add(i);
+            }
+        }
+        int limit = evictable.size() - KEEP_RECENT_TOOL_RESULTS;
+        for (int k = 0; k < limit && total > budget; k++) {
+            int i = evictable.get(k);
+            ToolExecutionResultMessage t = (ToolExecutionResultMessage) conversation.get(i);
+            total -= t.text().length() - EVICTED_TOOL_RESULT.length();
+            conversation.set(i, ToolExecutionResultMessage.from(t.id(), t.toolName(), EVICTED_TOOL_RESULT));
+        }
     }
 
     @Override
@@ -291,6 +382,11 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             callback.onComplete(turnText.toString());
             return;
         }
+
+        // In-turn context editing: fold the oldest tool results into placeholders once the
+        // accumulated tool loop no longer fits the model's window (they'd otherwise be
+        // re-sent in full on every remaining cycle).
+        evictOldToolResults(conversation);
 
         ChatRequest.Builder requestBuilder = ChatRequest.builder().messages(conversation);
         // On the final allowed cycle, drop the tools so the model is forced to produce a
@@ -415,6 +511,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         java.util.Map<String, Integer> callCounts = new java.util.HashMap<>();
 
         for (int cycle = 0; cycle < maxToolCycles; cycle++) {
+            evictOldToolResults(conversation);
             ChatRequest.Builder requestBuilder = ChatRequest.builder()
                     .messages(conversation);
 

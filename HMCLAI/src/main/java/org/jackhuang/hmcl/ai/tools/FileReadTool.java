@@ -56,7 +56,10 @@ public final class FileReadTool implements ToolSpec {
     public String getDescription() {
         StringBuilder sb = new StringBuilder("Read a text file or list a directory's contents. ");
         sb.append("Pass 'path' (relative to the launcher config dir, or an absolute path). ");
-        sb.append("'maxLines' limits output (default 200). Allowed roots: ");
+        sb.append("'maxLines' limits output (default 200). ");
+        sb.append("'startLine' (1-based) reads a window of maxLines starting there; omit it to get the "
+                + "LAST maxLines lines. For a big file/log, read the tail first, then page earlier parts "
+                + "with startLine instead of dumping the whole file. Allowed roots: ");
         for (int i = 0; i < roots.size(); i++) {
             if (i > 0) sb.append("; ");
             sb.append(roots.get(i));
@@ -83,7 +86,11 @@ public final class FileReadTool implements ToolSpec {
                    },
                    "maxLines": {
                      "type": "integer",
-                     "description": "Maximum number of trailing lines to return (default 200)."
+                     "description": "Maximum number of lines to return (default 200)."
+                   },
+                   "startLine": {
+                     "type": "integer",
+                     "description": "1-based line to start reading from; returns maxLines lines from here. Omit to return the LAST maxLines lines of the file."
                    }
                  },
                  "required": ["path"]
@@ -95,6 +102,8 @@ public final class FileReadTool implements ToolSpec {
     public ToolResult execute(Map<String, Object> parameters) {
         String child = parameters.getOrDefault("path", ".").toString();
         int maxLines = parse(parameters.get("maxLines"), 200);
+        if (maxLines <= 0) maxLines = 200;
+        int startLine = parse(parameters.get("startLine"), 0);
 
         try {
             Path candidate = Path.of(child);
@@ -120,8 +129,25 @@ public final class FileReadTool implements ToolSpec {
                 return ToolResult.failure("File too large: " + (size >> 20) + " MiB.");
             }
             java.util.List<String> lines = Files.readAllLines(resolved, StandardCharsets.UTF_8);
-            if (lines.size() > maxLines) {
-                lines = lines.subList(lines.size() - maxLines, lines.size());
+            int total = lines.size();
+            if (startLine > 0) {
+                // Explicit paging window: lines [startLine, startLine + maxLines).
+                int from = startLine - 1;
+                if (from >= total) {
+                    return ToolResult.success("[file has " + total + " lines; startLine " + startLine
+                            + " is past the end]");
+                }
+                int to = Math.min(from + maxLines, total);
+                String header = "[showing lines " + (from + 1) + "-" + to + " of " + total + " total]";
+                return ToolResult.success(header + "\n" + String.join("\n", lines.subList(from, to)));
+            }
+            if (total > maxLines) {
+                // Default: tail the file, but tell the model earlier lines exist and how to reach them.
+                String header = "[file has " + total + " lines; showing the LAST " + maxLines
+                        + " (lines " + (total - maxLines + 1) + "-" + total + ")."
+                        + " Pass startLine to read earlier parts]";
+                return ToolResult.success(header + "\n"
+                        + String.join("\n", lines.subList(total - maxLines, total)));
             }
             return ToolResult.success(String.join("\n", lines));
         } catch (IOException e) {

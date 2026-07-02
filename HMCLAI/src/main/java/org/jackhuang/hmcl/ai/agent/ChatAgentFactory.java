@@ -136,7 +136,8 @@ public final class ChatAgentFactory {
         // truncation) to the LangChain4j adapter when that is the active backend.
         if (client instanceof org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter adapter) {
             adapter.setAgentLimits(settings.getMaxToolCycles(),
-                    settings.getMaxContextMessages(), settings.getToolResultMaxChars());
+                    settings.getMaxContextMessages(), settings.getToolResultMaxChars(),
+                    ChatAgent.resolveContextWindow(settings));
         }
         // NOTE: the context-window budget is applied at request-build time inside
         // ChatAgent.buildMessages — the session itself always keeps the FULL history
