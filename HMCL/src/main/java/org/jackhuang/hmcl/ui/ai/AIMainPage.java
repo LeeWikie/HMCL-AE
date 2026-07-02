@@ -286,6 +286,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     @Nullable
     private Label streamingBubble;
 
+    /// Id of the session whose response is currently streaming (null when idle). Distinct from the
+    /// on-screen session: the user may switch away mid-stream, so the Send/Stop button and the
+    /// sidebar "生成中…" indicator must track the STREAMING session, not the visible one.
+    private String streamSessionId;
+
     /// Tool-call cards awaiting their result, keyed by tool name (FIFO per name) so onToolResult
     /// can find the matching card appended by onToolActivity.
     private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
@@ -786,7 +791,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         AdvancedListItem item = new AdvancedListItem();
         item.setTitle(session.isPinned() ? "📌 " + labelText : labelText);
-        item.setSubtitle(relativeTime(session.getUpdatedAt()));
+        boolean streamingHere = currentResponse != null && session.getId().equals(streamSessionId);
+        item.setSubtitle(streamingHere ? "● 正在生成…" : relativeTime(session.getUpdatedAt()));
         item.setLeftIcon(SVG.CHAT);
         item.setActive(isActive);
         item.getStyleClass().add("navigation-drawer-item");
@@ -1396,8 +1402,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sendBtn.getStyleClass().add("ai-send-btn");
         // While a response is streaming the button becomes a Stop button.
         sendBtn.setOnAction(e -> {
-            if (isStreaming()) stopResponse();
-            else sendMessage();
+            if (isStreaming()) {
+                // Stop only the response of the session on screen; if another session is the one
+                // streaming, don't kill it from here — tell the user where to stop it.
+                if (isStreamingCurrentSession()) stopResponse();
+                else Controllers.showToast("另一个会话正在生成回复，切回那个会话可以停止它");
+                return;
+            }
+            sendMessage();
         });
         sendBtn.setDefaultButton(true);
 
@@ -2361,6 +2373,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         updateToolActivityVisibility();
         updateEmptyState();
         scrollToBottom();
+        updateSendButtonMode(); // reflect whether THIS (now visible) session is the streaming one
         // A background-job completion that was set aside because the user was viewing another
         // session is delivered once its own session is on screen and idle again.
         if (!isStreaming() && !pendingCompletions.isEmpty()) {
@@ -2596,7 +2609,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void sendMessage() {
-        if (isStreaming()) return; // a response is in flight; the button acts as Stop instead
+        if (isStreaming()) {
+            // A response is in flight. For THIS session the button already acts as Stop, so Enter
+            // just does nothing; for ANOTHER session, don't silently swallow the message — say why
+            // (we don't run two streams at once yet).
+            if (!isStreamingCurrentSession()) {
+                Controllers.showToast("另一个会话正在生成回复，切回那个会话可以停止它，或稍候再发");
+            }
+            return;
+        }
         String text = inputField.getText().trim();
         if (text.isEmpty()) return;
 
@@ -2726,6 +2747,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // session mid-stream, callbacks must NOT touch the (now different) message view —
         // otherwise A's tokens leak into B and scrollToBottom fights the user (jitter/freeze).
         final AiSession streamSession = session;
+        streamSessionId = streamSession.getId();
 
         final int generation = ++responseGeneration;
         StringBuilder fullContent = new StringBuilder();
@@ -2857,6 +2879,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private boolean isStreaming() {
         return currentResponse != null;
+    }
+
+    /// True when a response is streaming AND it belongs to the session currently on screen — so the
+    /// Send button should act as Stop, and Stop only affects the visible session.
+    private boolean isStreamingCurrentSession() {
+        if (currentResponse == null || streamSessionId == null) return false;
+        AiSession cur = sessionStore.getCurrentSession();
+        return cur != null && streamSessionId.equals(cur.getId());
+    }
+
+    /// Sets the Send button to Stop only while THIS session's response streams; otherwise Send.
+    /// Called on stream start/end and on every session switch, so switching away from a streaming
+    /// session restores a normal Send button instead of a Stop that would kill the other session.
+    private void updateSendButtonMode() {
+        if (isStreamingCurrentSession()) {
+            sendBtn.setText(i18n("ai.stop"));
+            if (!sendBtn.getStyleClass().contains("ai-stop-btn")) {
+                sendBtn.getStyleClass().add("ai-stop-btn");
+            }
+        } else {
+            sendBtn.setText(i18n("ai.send"));
+            sendBtn.getStyleClass().remove("ai-stop-btn");
+        }
     }
 
     /// Auto-continuation hook. When a background job belonging to the CURRENT session finishes while
@@ -3078,17 +3123,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Switches the send button into Stop mode while a response streams.
     private void enterStreamingState() {
-        sendBtn.setText(i18n("ai.stop"));
-        if (!sendBtn.getStyleClass().contains("ai-stop-btn")) {
-            sendBtn.getStyleClass().add("ai-stop-btn");
-        }
+        updateSendButtonMode();
+        refreshSessionList(); // show the "生成中…" indicator on the streaming session's row
     }
 
     /// Restores the send button after a response finishes or is stopped.
     private void exitStreamingState() {
         currentResponse = null;
-        sendBtn.setText(i18n("ai.send"));
-        sendBtn.getStyleClass().remove("ai-stop-btn");
+        streamSessionId = null;
+        updateSendButtonMode();
+        refreshSessionList(); // clear the "生成中…" indicator
         // Restore any tools plan mode disabled for the just-finished response.
         restorePlanGating();
         // A background job that finished while this turn was streaming was queued; handle the next
