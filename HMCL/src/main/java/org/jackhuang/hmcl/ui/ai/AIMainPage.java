@@ -1078,7 +1078,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         p.setDefaultModelId(m);
                         agentCache.clear();
                         try { aiSettings.save(); } catch (Exception ignored) {}
-                        updateHeader(sessionStore.getCurrentSession());
+                        // After deleting the last session there is no current session — the
+                        // model switch above still applies; just skip the header refresh (an
+                        // unguarded call NPE'd on the FX thread here).
+                        AiSession headerSession = sessionStore.getCurrentSession();
+                        if (headerSession != null) {
+                            updateHeader(headerSession);
+                        }
                         return;
                     }
                 }
@@ -2188,7 +2194,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         int index = 0;
         for (LlmMessage msg : session.getMessages()) {
             String role = msg.getRole();
-            if ("user".equals(role)) {
+            if (msg.isToolRecord()) {
+                // Persisted record of one tool invocation — rebuild the completed tool card so
+                // history shows what the AI actually did (cards used to vanish on reload).
+                if (aiSettings.isToolCallDisplayEnabled()) {
+                    addPersistedToolCard(msg.getToolPayload());
+                }
+            } else if (msg.isEvent()) {
+                // Synthetic turn (background-job auto-continue / crash injection): a neutral
+                // event pill, NOT a user bubble, and no copy/edit/resend action bar.
+                addEventPill(msg.getContent());
+            } else if ("user".equals(role)) {
                 addUserBubble(msg.getContent(), true);
                 attachMessageActions(msg.getContent(), role, index);
             } else if ("assistant".equals(role)) {
@@ -2206,6 +2222,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         updateToolActivityVisibility();
         updateEmptyState();
         scrollToBottom();
+        // A background-job completion that was set aside because the user was viewing another
+        // session is delivered once its own session is on screen and idle again.
+        if (!isStreaming() && !pendingCompletions.isEmpty()) {
+            java.util.Iterator<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> it = pendingCompletions.iterator();
+            while (it.hasNext()) {
+                org.jackhuang.hmcl.ai.tools.AiJobManager.Job j = it.next();
+                if (session.getId().equals(j.getSessionId())) {
+                    it.remove();
+                    Platform.runLater(() -> onBackgroundJobComplete(j));
+                    break;
+                }
+            }
+        }
     }
 
     /// Trims a tool argument/result string for a single log line.
@@ -2322,13 +2351,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 break;
             }
         }
+        if (prompt.isEmpty()) {
+            // No preceding user message (e.g. the lone summary left by /compact): there is
+            // nothing to regenerate FROM — truncating here silently wiped the whole session.
+            Controllers.showToast("这条消息没有对应的提问，无法重新生成");
+            return;
+        }
         cur.truncateFrom(index);
         persistStore();
         loadSessionMessages(cur);
-        if (!prompt.isEmpty()) {
-            inputField.setText(prompt);
-            sendMessage();
-        }
+        sendText(prompt, null);
     }
 
     /// Deletes a single message from the session and re-renders, so it disappears from context.
@@ -2390,8 +2422,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         editor.requestFocus();
         editor.positionCaret(editor.getText().length());
 
-        cancel.setOnAction(e -> loadSessionMessages(cur));
+        // Re-check the streaming guard INSIDE the handlers: a new turn can start while the edit
+        // box is open (background-job auto-continue), and confirming then would truncate the
+        // history mid-stream without resending — orphaned reply + lost message.
+        cancel.setOnAction(e -> {
+            if (blockedWhileStreaming()) return;
+            loadSessionMessages(cur);
+        });
         confirm.setOnAction(e -> {
+            if (blockedWhileStreaming()) return;
             String edited = editor.getText() == null ? "" : editor.getText().trim();
             if (edited.isEmpty()) {
                 loadSessionMessages(cur);
@@ -2400,8 +2439,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             cur.truncateFrom(index);
             persistStore();
             loadSessionMessages(cur);
-            inputField.setText(edited);
-            sendMessage();
+            sendText(edited, null);
         });
     }
 
@@ -2415,27 +2453,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         cur.truncateFrom(index);
         persistStore();
         loadSessionMessages(cur);
-        inputField.setText(content == null ? "" : content);
-        sendMessage();
+        sendText(content == null ? "" : content, null);
     }
 
     private void sendMessage() {
         if (isStreaming()) return; // a response is in flight; the button acts as Stop instead
         String text = inputField.getText().trim();
         if (text.isEmpty()) return;
-
-        // A real user message resets the auto-continue depth guard. Auto-continue prompts start with
-        // the "（后台任务" marker and deliberately do NOT reset it, so a runaway loop can't be masked.
-        if (!text.startsWith("（后台任务")) {
-            autoContinueDepth = 0;
-        }
-
-        AiSession session = sessionStore.getCurrentSession();
-        if (session == null) return;
-
-        // Keep the game-directory tools pointed at the instance the user currently
-        // has selected (it may have changed since the page or agent was created).
-        refreshGameContext();
 
         // Slash commands: handle locally, or expand into a tool-triggering prompt.
         String command = text.split("\\s+", 2)[0].toLowerCase();
@@ -2493,16 +2517,49 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         }
 
+        inputField.clear();
+        sendText(text, null);
+        clearFileChip();
+    }
+
+    /// Core send path shared by the composer ({@link #sendMessage}) and external/synthetic
+    /// prompts ({@link #submitExternalPrompt}). External prompts no longer go THROUGH the
+    /// composer — they used to overwrite whatever draft the user was typing and send it away.
+    ///
+    /// @param kind `null` for a normal user message, or {@link LlmMessage#KIND_EVENT} for a
+    ///             synthetic turn (rendered as a neutral event pill, not a user bubble).
+    private void sendText(String text, @Nullable String kind) {
+        if (isStreaming()) return;
+        if (text == null || text.isBlank()) return;
+        text = text.trim();
+
+        boolean event = LlmMessage.KIND_EVENT.equals(kind);
+        // A real user message resets the auto-continue depth guard; synthetic event turns
+        // (background-job auto-continue) deliberately do NOT, so a runaway loop can't be masked.
+        if (!event) {
+            autoContinueDepth = 0;
+        }
+
+        AiSession session = sessionStore.getCurrentSession();
+        if (session == null) return;
+
+        // Keep the game-directory tools pointed at the instance the user currently
+        // has selected (it may have changed since the page or agent was created).
+        refreshGameContext();
+
         // Auto-title from first message
-        if (session.getMessages().isEmpty()) {
+        if (session.getMessages().isEmpty() && !event) {
             String title = text.length() > 50 ? text.substring(0, 47) + "..." : text;
             session.setTitle(title);
             updateHeader(session);
             refreshSessionList();
         }
 
-        inputField.clear();
-        addUserBubble(text);
+        if (event) {
+            addEventPill(text);
+        } else {
+            addUserBubble(text);
+        }
         persistStore();
 
         ChatAgent agent = getOrCreateChatAgent();
@@ -2512,11 +2569,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         setStatus("");
-        startAiResponse(agent, session, text);
-        clearFileChip();
+        startAiResponse(agent, session, text, kind);
     }
 
-    private void startAiResponse(ChatAgent agent, AiSession session, String userInput) {
+    private void startAiResponse(ChatAgent agent, AiSession session, String userInput, @Nullable String kind) {
         // Render a whole turn as an in-order sequence appended to the end of the list:
         // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
         streamingBubble = null;
@@ -2541,7 +2597,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
         currentCancelled = cancelled;
         currentStreamAgent = agent;
-        currentResponse = agent.sendStreaming(userInput, new LlmStreamCallback() {
+        currentResponse = agent.sendStreaming(userInput, kind, new LlmStreamCallback() {
             @Override
             public void onToken(String token) {
                 fullContent.append(token);
@@ -2615,16 +2671,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     // global streaming state (Stop button) and persist, even if completed in the
                     // background while the user is viewing another session.
                     if (sessionStore.getCurrentSession() == streamSession) {
-                        String finalText = (completeText == null || completeText.isEmpty())
-                                ? segment.toString() : completeText;
+                        // Finalize the LAST segment bubble with its own segment text only — the
+                        // full turn text glued earlier segments into it (duplicating them on
+                        // screen for an instant); the reload below renders the canonical view.
                         if (streamingBubble != null) {
-                            finalizeAiBubble(streamingBubble, finalText, usageHolder[0], true);
+                            finalizeAiBubble(streamingBubble, segment.toString(), usageHolder[0], true);
                             streamingBubble = null;
-                        } else if (!finalText.isEmpty()) {
-                            // Final turn produced text that did not stream (or was rebuilt after a
-                            // session switch); render it now.
-                            Label b = createAiBubble("");
-                            finalizeAiBubble(b, finalText, usageHolder[0], true);
                         }
                         setStatus(null);
                     }
@@ -2643,7 +2695,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             @Override
             public void onError(LlmException error) {
                 if (generation != responseGeneration) return;
-                showAiError(streamingBubble, fullContent, error, streamSession);
+                // Pass the CURRENT segment, not the whole turn text: writing the full text into
+                // the last segment bubble duplicated the already-finalized earlier segments.
+                showAiError(streamingBubble, segment, error, streamSession);
             }
         }, cancelled::get).exceptionally(ex -> {
             if (generation != responseGeneration) return null; // stopped; ignore
@@ -2655,7 +2709,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             LlmException error = cause instanceof LlmException
                     ? (LlmException) cause
                     : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
-            showAiError(streamingBubble, fullContent, error, streamSession);
+            showAiError(streamingBubble, segment, error, streamSession);
             return null;
         });
 
@@ -2672,6 +2726,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void onBackgroundJobComplete(org.jackhuang.hmcl.ai.tools.AiJobManager.Job job) {
         AiSession current = sessionStore.getCurrentSession();
         if (current == null || job.getSessionId() == null || !job.getSessionId().equals(current.getId())) {
+            // Belongs to a session the user is not viewing (e.g. drained from the queue after
+            // they switched away): put it BACK so it is delivered when its session is reopened
+            // — consuming it here silently killed that session's auto-continue for good.
+            if (job.getSessionId() != null
+                    && job.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.CANCELLED
+                    && !pendingCompletions.contains(job)) {
+                pendingCompletions.add(job);
+            }
             return;
         }
         if (job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.CANCELLED) {
@@ -2814,9 +2876,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         jobsAnimation.play();
     }
 
-    /// Entry point for other parts of the launcher (e.g. the game crash window) to hand the AI a
-    /// prompt and have it answered as if the user had typed it. Runs on the FX thread; ignored if a
-    /// response is already streaming so an in-flight turn is never interrupted.
+    /// Entry point for other parts of the launcher (e.g. the game crash window) and the
+    /// background-job auto-continue to hand the AI a prompt. The model sees a normal user turn,
+    /// but the UI renders a neutral event pill — and the composer is left alone (this used to
+    /// overwrite whatever draft the user was typing and send it away with the prompt).
+    /// Runs on the FX thread; ignored if a response is already streaming.
     public void submitExternalPrompt(String text) {
         if (text == null || text.isBlank()) {
             return;
@@ -2825,8 +2889,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             if (isStreaming()) {
                 return;
             }
-            inputField.setText(text);
-            sendMessage();
+            sendText(text, LlmMessage.KIND_EVENT);
         });
     }
 
@@ -3382,6 +3445,46 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         scrollToBottom();
     }
 
+    /// Renders a synthetic event turn (background-job auto-continue, crash injection…) as a
+    /// small centered pill — the model sees it as a user turn, but showing it as a user bubble
+    /// confused people ("I never typed that") and its copy button yielded internal glue text.
+    private void addEventPill(String text) {
+        String full = text == null ? "" : text;
+        int nl = full.indexOf('\n');
+        String headline = (nl >= 0 ? full.substring(0, nl) : full).strip();
+        if (headline.length() > 80) {
+            headline = headline.substring(0, 80) + "…";
+        }
+        Label pill = new Label(headline);
+        pill.getStyleClass().add("ai-event-pill");
+        pill.setWrapText(true);
+        pill.setMaxWidth(480);
+        if (!full.equals(headline)) {
+            javafx.scene.control.Tooltip tip = new javafx.scene.control.Tooltip(
+                    full.length() > 1000 ? full.substring(0, 1000) + "…" : full);
+            tip.setWrapText(true);
+            tip.setMaxWidth(520);
+            pill.setTooltip(tip);
+        }
+        HBox row = new HBox(pill);
+        row.setAlignment(Pos.CENTER);
+        row.setPadding(new Insets(4, 16, 4, 16));
+        messageList.getChildren().add(row);
+        updateEmptyState();
+        scrollToBottom();
+    }
+
+    /// Rebuilds a completed tool card from a persisted {@link LlmMessage.ToolPayload} when a
+    /// session is (re)loaded, so history keeps showing what the AI actually did.
+    private void addPersistedToolCard(@Nullable LlmMessage.ToolPayload payload) {
+        if (payload == null || payload.name == null) {
+            return;
+        }
+        ToolCard card = new ToolCard(payload.name);
+        card.complete(payload.success, payload.resultText == null ? "" : payload.resultText);
+        messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
+    }
+
     /// {@link org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoUiHandler}: renders the agent's
     /// latest TODO checklist as a pinned card above the messages. Called on the agent's
     /// background thread, so it marshals onto the FX thread.
@@ -3879,6 +3982,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Re-renders all messages to pick up the current user-name setting.
     private void refreshMessageList() {
+        // Never rebuild the view mid-stream: loadSessionMessages cancels a pending ask (the
+        // agent then receives a bogus "user cancelled") and wipes the live streaming bubbles /
+        // tool cards. Display-setting changes simply take effect at the next render.
+        if (isStreaming()) {
+            return;
+        }
         AiSession current = sessionStore.getCurrentSession();
         if (current != null) {
             loadSessionMessages(current);

@@ -130,7 +130,11 @@ public final class ChatAgent {
         }
         List<LlmMessage> request = new ArrayList<>(history.size() + 2);
         request.add(new LlmMessage("system", COMPACT_SYSTEM_PROMPT));
-        request.addAll(history);
+        for (LlmMessage m : history) {
+            if (!m.isToolRecord()) { // tool records are UI artifacts, not conversation content
+                request.add(m);
+            }
+        }
         request.add(new LlmMessage("user",
                 "请把以上整段对话压缩成续写式摘要（目标 / 已完成 / 关键发现 / 下一步），只输出摘要本身。"));
         String summary = client.sendMessage(Collections.unmodifiableList(request)).join();
@@ -271,8 +275,17 @@ public final class ChatAgent {
     ///                  unwanted reply and lets the UI move on.
     public CompletableFuture<Void> sendStreaming(String userInput, LlmStreamCallback callback,
                                                  @Nullable java.util.function.BooleanSupplier cancelled) {
+        return sendStreaming(userInput, null, callback, cancelled);
+    }
+
+    /// @param kind optional presentation kind persisted on the user message (e.g.
+    ///             {@link LlmMessage#KIND_EVENT} for a synthetic auto-continue / crash-report
+    ///             turn): the model sees a normal user turn, the UI renders an event pill.
+    public CompletableFuture<Void> sendStreaming(String userInput, @Nullable String kind,
+                                                 LlmStreamCallback callback,
+                                                 @Nullable java.util.function.BooleanSupplier cancelled) {
         return CompletableFuture.supplyAsync(() -> {
-            try { doSendStreaming(userInput, callback, cancelled); }
+            try { doSendStreaming(userInput, kind, callback, cancelled); }
             catch (LlmException e) { throw new RuntimeException(e); }
             return null;
         }, executor);
@@ -307,11 +320,16 @@ public final class ChatAgent {
         }
     }
 
-    private void doSendStreaming(String userInput, LlmStreamCallback callback,
+    private void doSendStreaming(String userInput, @Nullable String kind, LlmStreamCallback callback,
                                  @Nullable java.util.function.BooleanSupplier cancelled) throws LlmException {
         // See doSend: compact before adding the user message so it isn't summarised away.
         maybeAutoCompact();
-        session.addMessage(new LlmMessage("user", userInput));
+        // Groups this turn's messages (user input + tool records + assistant reply) for replay.
+        final String turnId = java.util.UUID.randomUUID().toString();
+        LlmMessage userMessage = new LlmMessage("user", userInput);
+        userMessage.setTurnId(turnId);
+        userMessage.setKind(kind);
+        session.addMessage(userMessage);
 
         // Raw streamed text of this turn. Appended on the adapter's callback thread, read from the
         // FX thread by persistInterrupted() — guard every access with `synchronized (full)`.
@@ -331,15 +349,22 @@ public final class ChatAgent {
             // KEEP whatever the assistant already produced so the conversation stays coherent —
             // dropping it left two consecutive user messages and the model forgot the work it had
             // just started (a following "继续" had no context). Roles keep alternating.
-            session.addMessage(new LlmMessage("assistant",
+            LlmMessage interrupted = new LlmMessage("assistant",
                     partial.isEmpty() ? "（本回合已被用户中断，未产出内容）"
-                            : partial + "\n\n（本回合已被用户中断）"));
+                            : partial + "\n\n（本回合已被用户中断）");
+            interrupted.setTurnId(turnId);
+            interrupted.setModel(settings.getModel());
+            session.addMessage(interrupted);
         };
         interruptPersist.set(persister);
 
         client.sendMessageStreaming(buildMessages(), new LlmStreamCallback() {
             @Nullable private LlmUsage usage;
             private boolean firstUsageCaptured = false;
+            /// Arguments of the most recent onToolActivity, consumed by the matching
+            /// onToolResult (the adapter runs tools serially, so activity→result pairs
+            /// never interleave within a turn).
+            @Nullable private String lastToolArgs;
             @Override public void onToken(String t) {
                 synchronized (full) { full.append(t); }
                 callback.onToken(t);
@@ -364,9 +389,22 @@ public final class ChatAgent {
                         full.append("\n\n");
                     }
                 }
+                lastToolArgs = args;
                 callback.onToolActivity(name, args);
             }
-            @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
+            @Override public void onToolResult(String name, boolean success, String summary) {
+                // Persist a structured record of every tool invocation so reloading the session
+                // rebuilds the tool cards (previously tool activity vanished once the turn ended
+                // — nothing was persisted, which was reported as "工具卡片完成后消失").
+                LlmMessage.ToolPayload payload = new LlmMessage.ToolPayload();
+                payload.name = name;
+                payload.argsJson = abbreviate(lastToolArgs, 2000);
+                payload.resultText = abbreviate(summary, 4000);
+                payload.success = success;
+                lastToolArgs = null;
+                session.addMessage(LlmMessage.toolRecord(payload, turnId));
+                callback.onToolResult(name, success, summary);
+            }
             @Override public boolean isCancelled() { return cancelled != null && cancelled.getAsBoolean(); }
             @Override public void onComplete(String c) {
                 interruptPersist.compareAndSet(persister, null);
@@ -390,6 +428,8 @@ public final class ChatAgent {
                 if (usage != null) {
                     aiMessage.setUsage(usage);
                 }
+                aiMessage.setTurnId(turnId);
+                aiMessage.setModel(settings.getModel());
                 session.addMessage(aiMessage);
                 callback.onComplete(f);
             }
@@ -409,11 +449,28 @@ public final class ChatAgent {
     /// Fraction of the context window the REQUEST may fill (the rest is head-room for the reply).
     private static final double REQUEST_BUDGET_RATIO = 0.8;
 
+    /// Truncates {@code s} to at most {@code max} chars (marker appended); null-safe.
+    @Nullable
+    private static String abbreviate(@Nullable String s, int max) {
+        if (s == null || s.length() <= max) {
+            return s;
+        }
+        return s.substring(0, max) + "…[truncated]";
+    }
+
     private List<LlmMessage> buildMessages() {
         List<LlmMessage> all = new ArrayList<>();
         String prompt = promptBuilder != null ? promptBuilder.build() : FALLBACK_SYSTEM_PROMPT;
         all.add(new LlmMessage("system", prompt));
-        all.addAll(trimToRequestBudget(session.getMessages(), prompt.length()));
+        // Tool records are history/UI artifacts — never sent to the model (a bare "tool" role
+        // without the provider's tool-call plumbing would be rejected by the APIs).
+        List<LlmMessage> outbound = new ArrayList<>();
+        for (LlmMessage m : session.getMessages()) {
+            if (!m.isToolRecord()) {
+                outbound.add(m);
+            }
+        }
+        all.addAll(trimToRequestBudget(outbound, prompt.length()));
         return Collections.unmodifiableList(all);
     }
 

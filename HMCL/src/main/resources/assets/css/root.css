@@ -2045,6 +2045,15 @@
     -fx-padding: 4 14 6 14;
 }
 
+/* Centered pill for synthetic event turns (background-job auto-continue, crash injection). */
+.ai-event-pill {
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 10;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 11px;
+    -fx-padding: 4 12 4 12;
+}
+
 .ai-bubble-wrapper {
     -fx-padding: 4 16 4 16;
 }
