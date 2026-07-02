@@ -185,7 +185,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     @Override
     public void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback) {
         List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
-        streamTurn(conversation, callback, 0, new java.util.HashMap<>());
+        streamTurn(conversation, callback, 0, new java.util.HashMap<>(), new StringBuilder());
     }
 
     /// After this many identical (tool, arguments) calls in one turn, stop actually running
@@ -197,12 +197,17 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// {@link #DUP_CALL_LIMIT} times this turn, in which case a synthetic BLOCKED result is
     /// returned so the conversation still has one result per tool-use (API requirement) while
     /// telling the model to stop repeating itself.
-    /// Opening of a leaked tool-call special token: a `<` followed by a fullwidth (U+FF5C) or ascii
-    /// vertical bar. Some models (notably deepseek in streaming mode) emit their tool-call tokens
-    /// (e.g. `<｜DSML｜tool_calls>…<｜DSML｜invoke name="glob">…`) into the TEXT content instead of
-    /// returning structured tool calls langchain4j can run, dumping raw markup into the chat.
+    /// Opening of a leaked tool-call special token. Some models (notably deepseek in streaming
+    /// mode) emit their tool-call tokens (e.g. `<｜DSML｜tool_calls>…<｜DSML｜invoke name="glob">…`
+    /// or ChatML `<|im_start|>`) into the TEXT content instead of returning structured tool calls
+    /// langchain4j can run, dumping raw markup into the chat.
+    ///
+    /// Deliberately narrow so ordinary prose is never truncated: requires `<` immediately followed
+    /// by a fullwidth bar (U+FF5C, only ever seen in leaked special tokens) plus a letter, or an
+    /// ascii `<|` opening one of the known special-token names. Plain `x < |y|` maths or the
+    /// F#/Elm `<|` operator followed by a space/expression do NOT match.
     private static final java.util.regex.Pattern LEAKED_TOOL_MARKUP =
-            java.util.regex.Pattern.compile("<\\s*[\\uFF5C|]");
+            java.util.regex.Pattern.compile("<(?:\\uFF5C\\p{L}|\\|(?:im_start|im_end|im_sep|DSML|tool[_▁]))");
 
     /// Returns the user-facing prose before any leaked tool-call markup (the markup is trailing
     /// garbage the model appended after its real text), or the input unchanged if none is present.
@@ -214,15 +219,25 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         return m.find() ? s.substring(0, m.start()).strip() : s;
     }
 
+    /// Read-only polling tools that are EXEMPT from the duplicate-call guard: re-issuing the exact
+    /// same call is their intended use (the background-job protocol tells the model to poll
+    /// `check_job` with the same jobId until the job finishes). The overall cycle cap still bounds
+    /// them, so an endless poll loop can't run forever.
+    private static final java.util.Set<String> DUP_GUARD_EXEMPT =
+            java.util.Set.of("check_job", "list_jobs");
+
     private ToolExecutionResultMessage executeWithLoopGuard(ToolExecutionRequest req,
                                                             java.util.Map<String, Integer> callCounts) {
-        String fingerprint = req.name() + "|" + (req.arguments() == null ? "" : req.arguments());
-        int count = callCounts.merge(fingerprint, 1, Integer::sum);
-        if (count >= DUP_CALL_LIMIT) {
-            return ToolExecutionResultMessage.from(req,
-                    "BLOCKED: you have already called '" + req.name() + "' with identical arguments "
-                    + (count - 1) + " times and the result did not change. Do NOT call it again — use a"
-                    + " different approach, a different tool, or answer with the information you already have.");
+        if (!DUP_GUARD_EXEMPT.contains(req.name())) {
+            String fingerprint = req.name() + "|" + (req.arguments() == null ? "" : req.arguments());
+            int count = callCounts.merge(fingerprint, 1, Integer::sum);
+            if (count >= DUP_CALL_LIMIT) {
+                return ToolExecutionResultMessage.from(req,
+                        "BLOCKED: you have already made this exact '" + req.name() + "' call "
+                        + (count - 1) + " times this turn. Do NOT repeat the identical call — change the"
+                        + " arguments, use a different tool, or answer with the information you already"
+                        + " have. If you are waiting on a background job, poll it with check_job instead.");
+            }
         }
         return truncateToolResult(req, toolAdapter.execute(req));
     }
@@ -234,21 +249,46 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// `callCounts` tracks how often each identical (tool, arguments) pair has been issued
     /// this turn, so we can break the model out of a loop where it keeps re-issuing the same
     /// failing call (see {@link #DUP_CALL_LIMIT}).
+    ///
+    /// `turnText` accumulates the FINAL text of every completed cycle (leaked markup already
+    /// stripped, segments separated by blank lines) — the authoritative full-turn text handed to
+    /// {@link LlmStreamCallback#onComplete}. Raw streamed tokens are NOT authoritative: they
+    /// contain the un-stripped markup and no segment separators.
+    ///
+    /// Every path out of a turn fires exactly one terminal callback (onComplete/onError) —
+    /// including cancellation, which must still reach the caller so it can persist the partial
+    /// reply with its interruption marker (a silent return here previously left the session
+    /// with a dangling user message whenever Stop was pressed during a tool cycle or retry).
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
-                            java.util.Map<String, Integer> callCounts) {
-        streamTurn(conversation, callback, cycle, callCounts, 0);
+                            java.util.Map<String, Integer> callCounts, StringBuilder turnText) {
+        streamTurn(conversation, callback, cycle, callCounts, turnText, 0);
+    }
+
+    /// Appends a completed cycle's text segment to the turn accumulator, blank-line separated.
+    private static void appendSegment(StringBuilder turnText, String segment) {
+        if (segment == null || segment.isBlank()) {
+            return;
+        }
+        if (turnText.length() > 0) {
+            turnText.append("\n\n");
+        }
+        turnText.append(segment.strip());
     }
 
     /// @param attempt how many times this cycle's request has already failed transiently and been
     ///                retried before any token streamed (0 on first try); see {@link #MAX_STREAM_RETRIES}.
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
-                            java.util.Map<String, Integer> callCounts, int attempt) {
+                            java.util.Map<String, Integer> callCounts, StringBuilder turnText, int attempt) {
         if (callback.isCancelled()) {
-            return; // user pressed Stop — abort instead of issuing another model call / tool cycle
+            // User pressed Stop — abort instead of issuing another model call / tool cycle, but
+            // still terminate the callback chain so the partial reply gets persisted.
+            callback.onComplete(turnText.toString());
+            return;
         }
         if (cycle >= maxToolCycles) {
-            callback.onComplete("（已连续调用工具 " + maxToolCycles
+            appendSegment(turnText, "（已连续调用工具 " + maxToolCycles
                     + " 轮仍未完成，已停止以避免无限空转。建议：换种说法或补充信息，必要时在右上角换一个更强的模型；也可在「高级」里调整工具调用轮数上限。）");
+            callback.onComplete(turnText.toString());
             return;
         }
 
@@ -293,10 +333,16 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                 AiMessage aiMessage = response.aiMessage();
                 if (aiMessage != null && aiMessage.hasToolExecutionRequests()) {
                     // Tool-call turn: record it, run each tool, feed results back, loop.
+                    // Any prose the model emitted before its tool calls becomes a finished segment.
+                    appendSegment(turnText, stripLeakedToolMarkup(
+                            aiMessage.text() != null ? aiMessage.text() : ""));
                     conversation.add(aiMessage);
                     for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
                         if (callback.isCancelled()) {
-                            return; // stopped mid-turn — skip this and any remaining tool calls
+                            // Stopped mid-turn — skip remaining tool calls but still terminate the
+                            // callback chain so the caller persists the interrupted partial.
+                            callback.onComplete(turnText.toString());
+                            return;
                         }
                         callback.onToolActivity(req.name(), req.arguments());
                         ToolExecutionResultMessage result = executeWithLoopGuard(req, callCounts);
@@ -310,19 +356,20 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                             callback.onToolResult(req.name(), success, summary);
                         }
                     }
-                    streamTurn(conversation, callback, cycle + 1, callCounts);
+                    streamTurn(conversation, callback, cycle + 1, callCounts, turnText);
                     return;
                 }
 
                 String raw = aiMessage != null && aiMessage.text() != null ? aiMessage.text() : "";
                 String content = stripLeakedToolMarkup(raw);
-                if (content.isEmpty() && !raw.isEmpty()) {
+                if (content.isEmpty() && !raw.isEmpty() && turnText.length() == 0) {
                     // The whole reply was leaked tool-call markup the provider never parsed into real
                     // calls — tell the user instead of dumping raw <｜…｜> tokens into the chat.
                     content = "（当前模型本轮以文本形式输出了工具调用，但接口未将其解析为真正的调用，因此无法执行。"
                             + "建议在右上角换一个能稳定进行函数调用的模型，或换种说法重试。）";
                 }
-                callback.onComplete(content);
+                appendSegment(turnText, content);
+                callback.onComplete(turnText.toString());
             }
 
             @Override
@@ -339,7 +386,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                         callback.onError(wrapped);
                         return;
                     }
-                    streamTurn(conversation, callback, cycle, callCounts, attempt + 1);
+                    streamTurn(conversation, callback, cycle, callCounts, turnText, attempt + 1);
                     return;
                 }
                 callback.onError(wrapped);

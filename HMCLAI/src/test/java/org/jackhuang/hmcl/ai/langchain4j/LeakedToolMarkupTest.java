@@ -43,10 +43,25 @@ public final class LeakedToolMarkupTest {
         assertEquals(normal, LangChain4jChatAdapter.stripLeakedToolMarkup(normal));
     }
 
+    /// The pattern must be narrow enough that legitimate prose containing `<|`-adjacent text
+    /// survives: maths like `x < |y|`, the F#/Elm pipe operator `<|`, and generic pipe syntax.
+    @Test
+    void doesNotTruncateProseContainingPipeCharacters() {
+        String maths = "绝对值判断：当 x < |y| 时成立。";
+        assertEquals(maths, LangChain4jChatAdapter.stripLeakedToolMarkup(maths));
+        String fsharp = "F# 里可以写 printfn \"%d\" <| 1 + 2 这样的管道表达式。";
+        assertEquals(fsharp, LangChain4jChatAdapter.stripLeakedToolMarkup(fsharp));
+        String table = "表格分隔符是 <| 或 |> 两种写法。";
+        assertEquals(table, LangChain4jChatAdapter.stripLeakedToolMarkup(table));
+    }
+
     @Test
     void handlesAsciiBarVariantAndEmpty() {
         assertEquals("看一下日志。", LangChain4jChatAdapter.stripLeakedToolMarkup("看一下日志。<|tool_calls>junk"));
+        assertEquals("看一下。", LangChain4jChatAdapter.stripLeakedToolMarkup("看一下。<|im_start|>assistant"));
         assertEquals("", LangChain4jChatAdapter.stripLeakedToolMarkup(""));
         assertEquals("", LangChain4jChatAdapter.stripLeakedToolMarkup("<｜tool_calls>only markup"));
+        // deepseek v2-style tokens with the U+2581 separator.
+        assertEquals("完成。", LangChain4jChatAdapter.stripLeakedToolMarkup("完成。<｜tool▁calls▁begin｜>x"));
     }
 }

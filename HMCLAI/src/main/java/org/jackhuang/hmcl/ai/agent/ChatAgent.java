@@ -288,16 +288,62 @@ public final class ChatAgent {
         return response;
     }
 
+    /// One-shot persister for the in-flight streaming turn's interrupted partial reply.
+    /// Set at the start of each streaming turn, cleared when the turn terminates normally.
+    /// {@link #persistInterrupted()} runs it immediately (from the UI's Stop handler) so the
+    /// interruption marker lands in the session RIGHT AWAY instead of whenever the abandoned
+    /// HTTP stream happens to end — which raced with the user's next message and inserted the
+    /// marker out of order.
+    private final java.util.concurrent.atomic.AtomicReference<Runnable> interruptPersist =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /// Immediately persists the current turn's partial reply with its interruption marker
+    /// (idempotent — the late onComplete of the abandoned stream will detect the write and skip).
+    /// Call from the Stop handler right after setting the cancel flag. No-op when no turn is live.
+    public void persistInterrupted() {
+        Runnable r = interruptPersist.get();
+        if (r != null) {
+            r.run();
+        }
+    }
+
     private void doSendStreaming(String userInput, LlmStreamCallback callback,
                                  @Nullable java.util.function.BooleanSupplier cancelled) throws LlmException {
         // See doSend: compact before adding the user message so it isn't summarised away.
         maybeAutoCompact();
         session.addMessage(new LlmMessage("user", userInput));
+
+        // Raw streamed text of this turn. Appended on the adapter's callback thread, read from the
+        // FX thread by persistInterrupted() — guard every access with `synchronized (full)`.
+        final StringBuilder full = new StringBuilder();
+        // Ensures the interrupted-partial message is written EXACTLY once, whether the Stop
+        // handler (persistInterrupted) or the abandoned stream's own onComplete gets there first.
+        final java.util.concurrent.atomic.AtomicBoolean interruptWritten =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final Runnable persister = () -> {
+            if (!interruptWritten.compareAndSet(false, true)) {
+                return;
+            }
+            String partial;
+            synchronized (full) {
+                partial = full.toString().strip();
+            }
+            // KEEP whatever the assistant already produced so the conversation stays coherent —
+            // dropping it left two consecutive user messages and the model forgot the work it had
+            // just started (a following "继续" had no context). Roles keep alternating.
+            session.addMessage(new LlmMessage("assistant",
+                    partial.isEmpty() ? "（本回合已被用户中断，未产出内容）"
+                            : partial + "\n\n（本回合已被用户中断）"));
+        };
+        interruptPersist.set(persister);
+
         client.sendMessageStreaming(buildMessages(), new LlmStreamCallback() {
-            private final StringBuilder full = new StringBuilder();
             @Nullable private LlmUsage usage;
             private boolean firstUsageCaptured = false;
-            @Override public void onToken(String t) { full.append(t); callback.onToken(t); }
+            @Override public void onToken(String t) {
+                synchronized (full) { full.append(t); }
+                callback.onToken(t);
+            }
             @Override public void onUsage(LlmUsage u) {
                 // The first model call of a turn reports the input-token count of the persisted
                 // context (system + history + this user message), before any in-turn tool churn —
@@ -309,21 +355,36 @@ public final class ChatAgent {
                 this.usage = u;
                 callback.onUsage(u);
             }
-            @Override public void onToolActivity(String name, String args) { callback.onToolActivity(name, args); }
+            @Override public void onToolActivity(String name, String args) {
+                // Segment boundary: keep the raw accumulator readable if this partial text is
+                // later persisted as an interrupted reply (the adapter's own turn accumulator
+                // handles separators for the normal completion path).
+                synchronized (full) {
+                    if (full.length() > 0 && full.charAt(full.length() - 1) != '\n') {
+                        full.append("\n\n");
+                    }
+                }
+                callback.onToolActivity(name, args);
+            }
             @Override public void onToolResult(String name, boolean success, String summary) { callback.onToolResult(name, success, summary); }
             @Override public boolean isCancelled() { return cancelled != null && cancelled.getAsBoolean(); }
             @Override public void onComplete(String c) {
-                String f = c != null && full.isEmpty() ? c : full.toString();
-                if (cancelled != null && cancelled.getAsBoolean()) {
-                    // The user stopped this turn. KEEP whatever the assistant already produced so the
-                    // conversation stays coherent — dropping it left two consecutive user messages and
-                    // the model forgot the work it had just started (so a following "继续" had no
-                    // context). Persist the partial text, marked as interrupted; roles keep alternating.
-                    String partial = f == null ? "" : f.strip();
-                    session.addMessage(new LlmMessage("assistant",
-                            partial.isEmpty() ? "（本回合已被用户中断，未产出内容）"
-                                    : partial + "\n\n（本回合已被用户中断）"));
+                interruptPersist.compareAndSet(persister, null);
+                if ((cancelled != null && cancelled.getAsBoolean()) || interruptWritten.get()) {
+                    // The user stopped this turn: persist the partial with its interruption marker
+                    // (idempotent — usually already written by persistInterrupted from the Stop
+                    // handler, in which case this is a no-op).
+                    persister.run();
                     return;
+                }
+                // The adapter's completion text is authoritative: it is the whole turn with leaked
+                // tool markup stripped and segments separated (the raw token accumulator has
+                // neither). Fall back to the raw text only when the adapter gave none.
+                String f;
+                if (c != null && !c.isEmpty()) {
+                    f = c;
+                } else {
+                    synchronized (full) { f = full.toString(); }
                 }
                 LlmMessage aiMessage = new LlmMessage("assistant", f);
                 if (usage != null) {
@@ -332,7 +393,16 @@ public final class ChatAgent {
                 session.addMessage(aiMessage);
                 callback.onComplete(f);
             }
-            @Override public void onError(LlmException e) { callback.onError(e); }
+            @Override public void onError(LlmException e) {
+                interruptPersist.compareAndSet(persister, null);
+                if ((cancelled != null && cancelled.getAsBoolean()) || interruptWritten.get()) {
+                    // Turn was stopped by the user; a late error from the abandoned stream is not
+                    // worth surfacing. Make sure the interrupted partial is persisted and finish.
+                    persister.run();
+                    return;
+                }
+                callback.onError(e);
+            }
         });
     }
 

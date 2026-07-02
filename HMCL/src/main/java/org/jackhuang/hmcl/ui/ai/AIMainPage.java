@@ -298,6 +298,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// streamed reply instead of persisting it after the user pressed Stop.
     @Nullable
     private java.util.concurrent.atomic.AtomicBoolean currentCancelled;
+    /// The agent serving the in-flight streaming turn, so stopResponse() can ask it to persist
+    /// the interrupted partial reply immediately (instead of whenever the abandoned stream ends).
+    @Nullable
+    private ChatAgent currentStreamAgent;
 
     /// The currently-open thinking-level popup, tracked to prevent stacking duplicates.
     @Nullable
@@ -2528,6 +2532,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         LlmUsage[] usageHolder = {null};
         final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
         currentCancelled = cancelled;
+        currentStreamAgent = agent;
         currentResponse = agent.sendStreaming(userInput, new LlmStreamCallback() {
             @Override
             public void onToken(String token) {
@@ -3061,6 +3066,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (currentCancelled != null) {
             currentCancelled.set(true); // tell the agent NOT to persist the dropped reply
         }
+        if (currentStreamAgent != null) {
+            // Persist the interrupted partial (with its marker) RIGHT NOW, so it can't race with
+            // the user's next message — previously it was written whenever the abandoned HTTP
+            // stream happened to end, which could insert it out of order or after a restart.
+            currentStreamAgent.persistInterrupted();
+            currentStreamAgent = null;
+        }
         cancelActiveAsk();
         java.util.concurrent.CompletableFuture<Void> future = currentResponse;
         if (future != null) {
@@ -3078,10 +3090,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         exitStreamingState();
         setStatus(null);
+        // persistInterrupted() above already wrote the partial into the session synchronously,
+        // so this single save puts it on disk — no need to hope a later pulse catches it.
         persistStore();
-        // The agent thread writes the interrupted partial reply into the session just after it
-        // observes the cancel flag; persist once more on the next pulse so that partial reaches disk.
-        Platform.runLater(this::persistStore);
     }
 
     private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,
