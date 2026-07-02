@@ -13,7 +13,7 @@
 |---|---|---|---|
 | 1 | UI / 对话交互 | ✅ 已审计 | 2026-07-02 |
 | 2 | 上下文与记忆管理 | ✅ 已审计 | 2026-07-02 |
-| 3 | 工具与能力系统 | ⬜ 待审计 | |
+| 3 | 工具与能力系统 | ✅ 已审计 | 2026-07-02 |
 | 4 | 模型与提供商管理 | ⬜ 待审计 | |
 | 5 | 会话与历史管理 | ⬜ 待审计 | |
 | 6 | 安全 · 权限 · 合规 | ⬜ 待审计 | |
@@ -191,6 +191,65 @@
 
 ---
 
+## 领域 3：工具与能力系统（2026-07-02）
+
+### 该有的东西 → 现状对照
+
+**A. 工具体系基础**
+- A1 工具注册表 / 发现 — ✅ `ToolRegistry` / `AiToolCatalog`
+- A2 结构化工具 schema（JSON Schema）— ✅ `getInputSchemaJson` / `supportsStructuredSchema`
+- A3 执行 + 结果回传 — ✅
+- A4 权限分级 — ✅ `ToolPermission` READ_ONLY / CONTROLLED_WRITE / DANGEROUS_WRITE
+- A5 危险操作确认（审批模式 + 红色二次确认）— ✅
+- A6 agentic 工具循环 — ✅ maxToolCycles=25
+- A7 重复调用防护 — ✅ DUP_CALL_LIMIT，check_job 免拦
+- A8 参数容错（别名 / key=value / 整数不带 .0）— ✅ `ToolParams`
+- A9 工具错误结果带指引 / 无进展检测 — 🟡 `[plan:#42]` 有基本指引，无进展检测未做
+- A10 **并行工具调用** — ❌ `[plan:并发路线图]` 工具串行，多读/多查任务体验差
+
+**B. 工具集覆盖（MC 启动器领域）** — 覆盖很全
+- 文件读写(read/write/edit/glob/grep) ✅ · shell ✅ · 账号(list/add offline/select/microsoft_login) ✅ · 实例(list/install_loader/edit/delete) ✅ · 模组(search/install/delete/update/toggle) ✅ · 世界备份/NBT ✅ · Java(list_java) ✅ · 崩溃诊断(system_info/日志/ocr) ✅ · web(search/fetch) ✅ · 剪贴板 ✅ · 截图/OCR ✅ · 皮肤/披风(set_skin) ✅
+
+**C. 工具可观测 / 控制**
+- C1 工具调用可见（卡片持久化）— ✅ `[#41]`
+- C2 工具调用可取消 — 🟡
+- C3 后台 / 异步长任务 — ✅ `AiJobManager` / wantsBackground
+- C4 工具进度反馈 — 🟡 `ToolProgress` 有，UI 进度卡 `[plan:B7]` 未做
+- C5 工具调用日志 — ✅ toolCallLogging
+- C6 工具启用 / 禁用开关 — ✅ 技能 .disabled + shell/web/nbt 开关
+
+**D. 能力扩展**
+- D1 **MCP 客户端** — 🟡→❌ **半成品**：`McpClientManager` 用 langchain4j 真连（stdio + HTTP）、`listTools()` 真发现、工具真注册进 registry——但注册的是 `McpToolStub` **占位**，调用它不真正执行（自述「运行时执行稍后接线」）。即 MCP 工具「列得出、用不了」，属 advertised-but-non-functional 死功能
+- D2 技能系统（skills）— ✅ `SkillRegistry`（.disabled 持久化）
+- D3 OCR 提供商 — 🟡 5 个真客户端（Baidu/GoogleVision/OcrSpace/Umi/VisionLLM）+ 未接入预设已**诚实标注**「暂未接入」（ultraplan P0-6 假 OCR 已修）
+- D4 搜索提供商多配置 — ❌ `[plan:#28]`
+- D5 自定义工具 / 插件 — ❌ `[plan:#30 能力架构]`
+- D6 统一能力架构（扩展 / skill / OCR / 搜索 / MCP → 唯一 ToolRegistry）— ❌ `[plan:#30-31 能力架构 P1-P6]`
+- D7 LSP 客户端（结构化代码 / NBT 查询）— ❌ `[plan:#52]`
+
+**E. 工具质量 / 测试**
+- E1 每个 toolcall 遍历测试 — ❌ `[plan:#43]` 用户曾标重点
+- E2 工具描述准确（无幽灵工具）— 🟡 `[ultraplan P0-6]` 部分已清(#26)，需复核 AiToolCatalog 是否还有列出但不存在的工具
+- E3 系统提示词 → skill 树懒加载（省 token）— ❌ `[plan:#31]`
+
+### 结论
+
+本领域是全项目**最成熟**的部分：注册表 + JSON schema + 权限分级 + 审批门 + agentic 循环 + 重复调用防护 + 参数容错 + 后台任务 + 日志 + 开关，领域工具覆盖也几乎无死角。缺口集中在「扩展性」与「工具质量保障」：
+
+1. **MCP 工具执行未接线（net-new，最刺眼）**——连得上、列得出、用不了，是明确的死功能，违背「不留骗人承诺」的铁律。
+2. **并行工具调用缺**——属并发路线图，长任务体验短板。
+3. **工具质量保障链缺**：#43 遍历测试（重点）、#42 无进展检测、E2 幽灵工具复核。
+4. **能力架构统一 #30/#31 + LSP #52 + 搜索多配置 #28**——扩展性的中长期主线。
+
+### 本领域待办（按优先级）
+
+- **P1（死功能，net-new）**：MCP 工具执行接线（McpToolStub → 真 client.executeTool）→ 已建任务。
+- **P1（质量，用户重点）**：#43 CLI 遍历测试。
+- **P2**：#42 无进展检测、并行工具调用、E2 幽灵工具复核。
+- **P3（中长期主线）**：#30/#31 能力架构、#52 LSP、#28 搜索多配置。
+
+---
+
 ## 跨领域高优先待办汇总
 
 （随各轮审计增补）
@@ -201,3 +260,5 @@
 - 【记忆/安全·net-new】记忆脱敏 + 去重 —— 防 prompt 注入把密钥写进持久 md。（任务 #55）
 - 【记忆·net-new】记忆管理 UI 支持删除/编辑单条（现只读）。（任务 #56）
 - 【上下文】上下文占用可视化 C7（快满提示 /compact）。
+- 【工具/net-new】MCP 工具执行接线 —— 现在连得上、列得出、用不了（McpToolStub 占位），是死功能。（任务 #57）
+- 【工具】#43 CLI 遍历测试（用户重点）；工具并行调用（并发路线图）。
