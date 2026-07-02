@@ -42,6 +42,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
@@ -250,7 +251,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     // ---- Composer ----
 
-    private final TextField inputField = new TextField();
+    /// Multi-line auto-growing composer (was a single-line TextField — long/pasted text was
+    /// squashed onto one line and Shift+Enter could not insert a newline despite the settings
+    /// copy promising it).
+    private final TextArea inputField = new TextArea();
+    /// True while a Chinese/Japanese IME composition is in progress: the Enter that commits
+    /// the composition must NEVER be treated as "send" (it used to fire half-typed pinyin).
+    private boolean imeComposing;
+    /// Per-session composer drafts, saved on session switch and restored on return.
+    private final java.util.Map<String, String> sessionDrafts = new HashMap<>();
+    /// The session whose draft the composer currently holds (for save-on-switch).
+    @Nullable
+    private String draftSessionId;
     private JFXButton sendBtn;
 
     /// Panel shown above the input field when the agent calls the `ask` tool: renders the
@@ -351,6 +363,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     @Nullable
     private VBox fileChipArea;
+    private javafx.scene.layout.FlowPane fileChipFlow;
+    /// Files attached to the NEXT message. Content is read at send time and appended to the
+    /// outbound prompt; removing a chip only removes that file (never touches the draft text).
+    private final java.util.List<Path> attachedFiles = new java.util.ArrayList<>();
     /// Live "background tasks" pull-up above the composer: a thin header (后台任务 + running count)
     /// that unfurls upward into a compact per-category job list.
     @Nullable
@@ -368,10 +384,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Background jobs whose completion arrived while a turn was streaming; drained one-at-a-time by
     /// exitStreamingState() so a mid-turn completion still auto-continues instead of being dropped.
     private final java.util.ArrayDeque<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> pendingCompletions = new java.util.ArrayDeque<>();
-    @Nullable
-    private Label fileChip;
-    @Nullable
-    private Path selectedFilePath;
 
     // ---- Autocomplete ----
 
@@ -1287,11 +1299,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputField.setPromptText(i18n("ai.input_placeholder"));
         inputField.getStyleClass().add("ai-input-field");
         HBox.setHgrow(inputField, Priority.ALWAYS);
-        // Keep the input box usably tall even in a short window.
+        inputField.setWrapText(true);
+        // Auto-grow between 1 line (34px) and ~8 lines (180px); beyond that it scrolls inside.
         inputField.setMinHeight(34);
-        inputField.setOnAction(e -> sendMessage());
+        inputField.setPrefHeight(34);
+        inputField.setMaxHeight(180);
+        inputField.textProperty().addListener((o, ov, nv) -> {
+            int lines = nv == null || nv.isEmpty() ? 1 : (int) nv.chars().filter(c -> c == '\n').count() + 1;
+            inputField.setPrefHeight(Math.min(180, Math.max(34, 14 + lines * 20)));
+        });
+        // Track IME composition so the Enter that commits pinyin never sends a half-typed message.
+        inputField.addEventFilter(javafx.scene.input.InputMethodEvent.INPUT_METHOD_TEXT_CHANGED,
+                e -> imeComposing = e.getComposed() != null && !e.getComposed().isEmpty());
 
-        // Autocomplete key listener
+        // Autocomplete + Enter/Shift+Enter key handling
         inputField.addEventFilter(KeyEvent.KEY_PRESSED, this::handleInputKeyPress);
 
         sendBtn = FXUtils.newRaisedButton(i18n("ai.send"));
@@ -1309,23 +1330,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         attachBtn.setOnAction(e -> handleFileUpload());
         FXUtils.installFastTooltip(attachBtn, i18n("ai.attach"));
 
-        // File chip area (shown above input when a file is selected)
+        // Attachment chip area (shown above the input while files are attached). One chip per
+        // file, each with its own remove button — attachments live in `attachedFiles`, NOT in
+        // the input text (stuffing file content into the composer destroyed drafts and capped
+        // everything at one file).
         fileChipArea = new VBox(4);
         fileChipArea.setVisible(false);
         fileChipArea.setManaged(false);
         fileChipArea.getStyleClass().add("ai-file-chip-area");
 
-        fileChip = new Label();
-        fileChip.getStyleClass().add("ai-file-chip");
-
-        JFXButton clearChipBtn = new JFXButton();
-        clearChipBtn.setGraphic(SVG.CLOSE.createIcon(12));
-        clearChipBtn.getStyleClass().add("ai-file-chip-clear-btn");
-        clearChipBtn.setOnAction(e -> clearFileChip());
-
-        HBox chipRow = new HBox(4, fileChip, clearChipBtn);
-        chipRow.setAlignment(Pos.CENTER_LEFT);
-        fileChipArea.getChildren().add(chipRow);
+        fileChipFlow = new javafx.scene.layout.FlowPane(6, 4);
+        fileChipArea.getChildren().add(fileChipFlow);
 
         // The @/ autocomplete popup lives as an overlay in the message area (created in
         // buildChatView); it deliberately takes no layout space here so the input bar
@@ -1745,43 +1760,74 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         java.io.File file = fileChooser.showOpenDialog(getScene().getWindow());
         if (file == null) return;
-
-        try {
-            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-            selectedFilePath = file.toPath();
-            if (fileChip != null && fileChipArea != null) {
-                fileChip.setText(file.getName());
-                fileChipArea.setVisible(true);
-                fileChipArea.setManaged(true);
-            }
-            String currentText = inputField.getText();
-            if (currentText != null && !currentText.isEmpty()) {
-                inputField.setText(currentText + "\n\n[File: " + file.getName() + "]\n" + content);
-            } else {
-                inputField.setText(content);
-            }
-        } catch (IOException ex) {
-            if (fileChipArea != null) {
-                fileChipArea.setVisible(false);
-                fileChipArea.setManaged(false);
-            }
-        }
+        attachFile(file.toPath());
     }
 
-    /// Clears the file chip and removes the associated file content from the input.
+    /// Adds a file to the pending attachments (content is read at SEND time, never dumped into
+    /// the composer — the old flow overwrote whatever the user was typing).
+    private void attachFile(Path path) {
+        if (path == null || attachedFiles.contains(path)) {
+            return;
+        }
+        attachedFiles.add(path);
+        rebuildFileChips();
+    }
+
+    private void rebuildFileChips() {
+        if (fileChipFlow == null || fileChipArea == null) {
+            return;
+        }
+        fileChipFlow.getChildren().clear();
+        for (Path p : attachedFiles) {
+            Label name = new Label(p.getFileName().toString());
+            name.getStyleClass().add("ai-file-chip");
+            JFXButton remove = new JFXButton();
+            remove.setGraphic(SVG.CLOSE.createIcon(12));
+            remove.getStyleClass().add("ai-file-chip-clear-btn");
+            remove.setOnAction(e -> {
+                attachedFiles.remove(p); // removes ONLY this file; the draft text is untouched
+                rebuildFileChips();
+            });
+            HBox chip = new HBox(4, name, remove);
+            chip.setAlignment(Pos.CENTER_LEFT);
+            fileChipFlow.getChildren().add(chip);
+        }
+        boolean any = !attachedFiles.isEmpty();
+        fileChipArea.setVisible(any);
+        fileChipArea.setManaged(any);
+    }
+
+    /// Maximum characters of one attachment appended to the outbound prompt.
+    private static final int ATTACHMENT_MAX_CHARS = 200_000;
+
+    /// Reads the pending attachments and appends their content to the outbound prompt text.
+    /// Unreadable files are reported inline instead of failing the send.
+    private String appendAttachments(String text) {
+        if (attachedFiles.isEmpty()) {
+            return text;
+        }
+        StringBuilder sb = new StringBuilder(text);
+        for (Path p : attachedFiles) {
+            sb.append("\n\n[附件: ").append(p.getFileName()).append("]\n");
+            try {
+                String content = Files.readString(p, StandardCharsets.UTF_8);
+                if (content.length() > ATTACHMENT_MAX_CHARS) {
+                    content = content.substring(0, ATTACHMENT_MAX_CHARS)
+                            + "\n…（文件过大，已截断）";
+                }
+                sb.append(content);
+            } catch (IOException ex) {
+                sb.append("（读取失败：").append(ex.getMessage()).append("）");
+            }
+        }
+        return sb.toString();
+    }
+
+    /// Clears all pending attachments (the composer draft is never touched — the old
+    /// implementation wiped the whole input box whenever it contained "[File:").
     private void clearFileChip() {
-        selectedFilePath = null;
-        if (fileChipArea != null) {
-            fileChipArea.setVisible(false);
-            fileChipArea.setManaged(false);
-        }
-        if (fileChip != null) {
-            fileChip.setText("");
-        }
-        String currentText = inputField.getText();
-        if (currentText != null && currentText.contains("[File:")) {
-            inputField.clear();
-        }
+        attachedFiles.clear();
+        rebuildFileChips();
     }
 
     /// Handles drag-over events on the chat area for file drag-and-drop.
@@ -1799,28 +1845,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         event.consume();
     }
 
-    /// Handles drag-dropped files on the chat area by reading the first matching file.
+    /// Handles drag-dropped files on the chat area: every matching file becomes an attachment
+    /// chip (multiple files supported; the composer draft is never touched).
     private void handleDragDropped(DragEvent event) {
         Dragboard db = event.getDragboard();
         boolean success = false;
-        if (db.hasFiles() && !db.getFiles().isEmpty()) {
-            java.io.File dropped = db.getFiles().get(0);
-            try {
-                String content = Files.readString(dropped.toPath(), StandardCharsets.UTF_8);
-                selectedFilePath = dropped.toPath();
-                if (fileChip != null && fileChipArea != null) {
-                    fileChip.setText(dropped.getName());
-                    fileChipArea.setVisible(true);
-                    fileChipArea.setManaged(true);
+        if (db.hasFiles()) {
+            for (java.io.File dropped : db.getFiles()) {
+                String name = dropped.getName().toLowerCase();
+                if (name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".crash")) {
+                    attachFile(dropped.toPath());
+                    success = true;
                 }
-                String currentText = inputField.getText();
-                if (currentText != null && !currentText.isEmpty()) {
-                    inputField.setText(currentText + "\n\n[File: " + dropped.getName() + "]\n" + content);
-                } else {
-                    inputField.setText(content);
-                }
-                success = true;
-            } catch (IOException ignored) {
             }
         }
         event.setDropCompleted(success);
@@ -1842,24 +1878,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Handles key presses in the input field for autocomplete triggers.
     private void handleInputKeyPress(KeyEvent event) {
-        // Send-on-Enter behaviour (only when the autocomplete popup is not capturing Enter).
+        // Enter behaviour (only when the autocomplete popup is not capturing Enter):
+        //   回车发送 on:  Enter=send, Shift+Enter=newline, Ctrl+Enter=send
+        //   回车发送 off: Enter=newline, Ctrl+Enter=send
+        // During an IME composition the Enter only commits the pinyin — never send.
         if (event.getCode() == KeyCode.ENTER && (autocompletePopup == null || !autocompletePopup.isVisible())) {
+            if (imeComposing) {
+                return; // commit the composition; the TextArea handles it
+            }
             boolean ctrl = event.isControlDown() || event.isMetaDown();
-            if (aiSettings.isSendOnEnter()) {
-                if (ctrl) { // Ctrl+Enter also sends, regardless
-                    sendMessage();
-                    event.consume();
-                    return;
-                }
-                // plain Enter: let TextField.onAction send it (default behaviour)
-            } else {
-                // "回车发送" off: plain Enter must NOT send; only Ctrl+Enter sends.
+            if (ctrl) { // Ctrl+Enter always sends
+                sendMessage();
                 event.consume();
-                if (ctrl) {
-                    sendMessage();
-                }
                 return;
             }
+            if (event.isShiftDown()) {
+                return; // Shift+Enter always inserts a newline (TextArea default)
+            }
+            if (aiSettings.isSendOnEnter()) {
+                sendMessage();
+                event.consume();
+            }
+            // 回车发送 off: fall through, plain Enter inserts a newline.
+            return;
         }
 
         if (autocompletePopup == null) return;
@@ -2159,6 +2200,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         String id = session.getId();
+        // Per-session drafts: stash whatever is in the composer for the session we're leaving,
+        // restore the (possibly empty) draft of the one we're entering.
+        if (!id.equals(draftSessionId)) {
+            if (draftSessionId != null) {
+                String draft = inputField.getText();
+                if (draft == null || draft.isBlank()) {
+                    sessionDrafts.remove(draftSessionId);
+                } else {
+                    sessionDrafts.put(draftSessionId, draft);
+                }
+            }
+            inputField.setText(sessionDrafts.getOrDefault(id, ""));
+            draftSessionId = id;
+        }
         // Already loading this session — don't restart.
         if (loadingSessionId != null && loadingSessionId.equals(id) && pendingSessionLoad != null && !pendingSessionLoad.isDone()) {
             return;
@@ -2518,7 +2573,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         inputField.clear();
-        sendText(text, null);
+        sendText(appendAttachments(text), null);
         clearFileChip();
     }
 

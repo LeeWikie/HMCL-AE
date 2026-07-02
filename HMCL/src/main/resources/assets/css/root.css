@@ -2447,6 +2447,16 @@
     -fx-border-width: 1.5;
 }
 
+/* The composer is now a TextArea: strip the inner ScrollPane/content chrome so only the
+   outer rounded surface paints (otherwise a white rectangle covers the rounded corners). */
+.ai-input-field .scroll-pane,
+.ai-input-field .scroll-pane .viewport,
+.ai-input-field .scroll-pane .content {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
 /* ---- ask tool: structured question panel above the input ---- */
 .ai-ask-panel {
     -fx-background-color: -monet-surface-container;
