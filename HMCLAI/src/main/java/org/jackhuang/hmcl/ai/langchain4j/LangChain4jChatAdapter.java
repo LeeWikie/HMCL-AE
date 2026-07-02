@@ -127,15 +127,11 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// (`0` = unlimited). Leading system messages are always kept.
     private volatile int maxContextMessages = 0;
 
-    /// Maximum characters of a single tool result fed back to the model
-    /// (`0` = the {@link #AUTO_TOOL_RESULT_MAX_CHARS} auto cap).
-    private volatile int toolResultMaxChars = 0;
-
-    /// Auto cap applied to a single tool result when the user setting is 0 ("自动").
-    /// A single `read`/`web_fetch` dump above this size crowds everything else out of the
-    /// window and gets re-sent on EVERY subsequent tool cycle of the turn, so an
-    /// uncapped default was the main way conversations blew past the context limit.
-    static final int AUTO_TOOL_RESULT_MAX_CHARS = 20_000;
+    /// Maximum characters of a single tool result fed back to the model.
+    /// `0` = unlimited (no truncation); the default (from {@code AiSettings}) caps a single
+    /// result at 20,000 chars, since one uncapped `read`/`web_fetch` dump gets re-sent on EVERY
+    /// subsequent tool cycle of the turn and was the main way conversations blew past the window.
+    private volatile int toolResultMaxChars = 20_000; // matches AiSettings.DEFAULT_TOOL_RESULT_MAX_CHARS
 
     /// Approximate character budget for one request's total content, derived from the
     /// active model's context window (`0` = eviction disabled). When a turn's growing
@@ -189,13 +185,16 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     }
 
     /// Truncates a tool result fed back to the model when it exceeds the configured
-    /// {@link #toolResultMaxChars} (or the {@link #AUTO_TOOL_RESULT_MAX_CHARS} auto cap
-    /// when the setting is 0). Returns the original message when within budget.
+    /// {@link #toolResultMaxChars}. A setting of `0` means unlimited — the user's explicit
+    /// opt-out — so the result is returned untouched. Returns the original message when within budget.
     private ToolExecutionResultMessage truncateToolResult(ToolExecutionRequest req,
                                                           ToolExecutionResultMessage result) {
-        int limit = toolResultMaxChars > 0 ? toolResultMaxChars : AUTO_TOOL_RESULT_MAX_CHARS;
         if (result == null) {
             return null;
+        }
+        int limit = toolResultMaxChars;
+        if (limit <= 0) {
+            return result; // 0 = unlimited: the user opted out of the cap
         }
         String text = result.text();
         if (text == null || text.length() <= limit) {

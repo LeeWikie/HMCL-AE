@@ -1975,7 +1975,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         aiSettings.maxToolCyclesProperty(), 1, 50, ""),
                 sliderRow("上下文消息条数上限", "只把最近 N 条发给模型，0=不限（始终保留系统提示）",
                         aiSettings.maxContextMessagesProperty(), 0, 100, ""),
-                sliderRow("工具结果长度上限", "单个工具结果回传模型的最大字符数，0=自动（2 万字）",
+                sliderRow("工具结果长度上限", "单个工具结果回传模型的最大字符数，0=不限（默认 2 万字，防单次超大读取撑爆上下文）",
                         aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
                 sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
                         aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"),

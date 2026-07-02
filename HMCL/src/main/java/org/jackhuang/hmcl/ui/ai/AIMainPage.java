@@ -792,8 +792,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         AdvancedListItem item = new AdvancedListItem();
         item.setTitle(session.isPinned() ? "📌 " + labelText : labelText);
         boolean streamingHere = currentResponse != null && session.getId().equals(streamSessionId);
-        item.setSubtitle(streamingHere ? "● 正在生成…" : relativeTime(session.getUpdatedAt()));
-        item.setLeftIcon(SVG.CHAT);
+        item.setSubtitle(streamingHere ? "正在生成…" : relativeTime(session.getUpdatedAt()));
+        if (streamingHere) {
+            // Swap the chat icon for a small JFoenix spinner while this session streams (keeps the
+            // "⋯" row menu intact, unlike overriding the right graphic).
+            com.jfoenix.controls.JFXSpinner spinner = new com.jfoenix.controls.JFXSpinner();
+            spinner.setRadius(8);
+            item.setLeftGraphic(spinner);
+        } else {
+            item.setLeftIcon(SVG.CHAT);
+        }
         item.setActive(isActive);
         item.getStyleClass().add("navigation-drawer-item");
         item.getProperties().put(SESSION_ID_KEY, session.getId());
