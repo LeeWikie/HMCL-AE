@@ -504,6 +504,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// collapsible (default-folded) 高级设置 and 定价设置 sections; labels are aligned
     /// against their fields via a two-column grid.
     private void editModel(AiProviderProfile profile, AiModelEntry entry) {
+        // Captured BEFORE the edit so a rename of the default model can move defaultModelId along.
+        final String originalId = entry.getId() == null ? "" : entry.getId();
         JFXTextField idField = new JFXTextField(entry.getId());
         idField.setPromptText("例如 gpt-4.1 / claude-sonnet-4-5 / deepseek-chat");
         JFXTextField aliasField = new JFXTextField(entry.getAlias());
@@ -636,6 +638,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
                 profile.putModel(entry);
                 if (profile.getDefaultModelId() == null || profile.getDefaultModelId().isEmpty()) {
+                    profile.setDefaultModelId(id);
+                } else if (profile.getDefaultModelId().equals(originalId) && !originalId.equals(id)) {
+                    // The model being renamed IS the default: follow the rename, or every request
+                    // would keep sending the old (now nonexistent) model id and 404 forever.
                     profile.setDefaultModelId(id);
                 }
                 aiSettings.putProfile(profile);
@@ -1064,13 +1070,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     }
 
     private void addMcpServer() {
-        AiMcpServerConfig config = new AiMcpServerConfig();
-        mcpServers.add(config);
-        editMcpServer(config);
+        // Do NOT pre-add the config: if the user cancels the dialog, a pre-added entry would
+        // linger in the list and get persisted as a ghost server by the next save.
+        editMcpServer(new AiMcpServerConfig());
     }
 
     private void editMcpServer(AiMcpServerConfig server) {
         PromptDialogPane.Builder builder = new PromptDialogPane.Builder("编辑 MCP 服务器", (questions, handler) -> {
+            if (!mcpServers.contains(server)) {
+                mcpServers.add(server); // a newly created server joins the list only on confirm
+            }
             server.setDisplayName((String) questions.get(0).getValue());
             Integer transportIdx = (Integer) questions.get(1).getValue();
             server.setTransport(transportIdx != null && transportIdx == 1 ? "http" : "stdio");
@@ -1596,23 +1605,32 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         Path target = chosen.toPath();
         String lower = chosen.getName().toLowerCase();
         String fmt = lower.endsWith(".json") ? "json" : lower.endsWith(".txt") ? "txt" : "md";
-        try {
-            org.jackhuang.hmcl.ai.AiSessionStore store =
-                    new org.jackhuang.hmcl.ai.AiSessionStore(SettingsManager.localConfigDirectory());
-            store.load();
-            java.util.List<org.jackhuang.hmcl.ai.AiSession> sessions = store.listSessions();
-            String content;
-            if ("json".equals(fmt)) {
-                Path src = SettingsManager.localConfigDirectory().resolve(org.jackhuang.hmcl.ai.AiSessionStore.FILE_NAME);
-                content = Files.exists(src) ? Files.readString(src, StandardCharsets.UTF_8) : "{}";
-            } else {
-                content = formatSessions(sessions, "md".equals(fmt));
+        // Read + format + write OFF the FX thread (a big history froze the UI), and catch
+        // EVERYTHING: a corrupt store file throws JsonParseException/NPE, not just IOException —
+        // previously that crashed the whole app instead of showing the failure toast.
+        Thread exporter = new Thread(() -> {
+            try {
+                org.jackhuang.hmcl.ai.AiSessionStore store =
+                        new org.jackhuang.hmcl.ai.AiSessionStore(SettingsManager.localConfigDirectory());
+                store.load();
+                java.util.List<org.jackhuang.hmcl.ai.AiSession> sessions = store.listSessions();
+                String content;
+                if ("json".equals(fmt)) {
+                    Path src = SettingsManager.localConfigDirectory().resolve(org.jackhuang.hmcl.ai.AiSessionStore.FILE_NAME);
+                    content = Files.exists(src) ? Files.readString(src, StandardCharsets.UTF_8) : "{}";
+                } else {
+                    content = formatSessions(sessions, "md".equals(fmt));
+                }
+                Files.writeString(target, content, StandardCharsets.UTF_8);
+                javafx.application.Platform.runLater(() ->
+                        Controllers.showToast("已导出 " + sessions.size() + " 个会话到 " + target));
+            } catch (Exception ex) {
+                javafx.application.Platform.runLater(() ->
+                        Controllers.showToast("导出失败：" + ex.getMessage()));
             }
-            Files.writeString(target, content, StandardCharsets.UTF_8);
-            Controllers.showToast("已导出 " + sessions.size() + " 个会话到 " + target);
-        } catch (IOException ex) {
-            Controllers.showToast("导出失败：" + ex.getMessage());
-        }
+        }, "ai-session-export");
+        exporter.setDaemon(true);
+        exporter.start();
     }
 
     private static String formatSessions(java.util.List<org.jackhuang.hmcl.ai.AiSession> sessions, boolean markdown) {
@@ -1853,6 +1871,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         titleNaming.setTitle(i18n("ai.settings.title_naming"));
         titleNaming.setSubtitle(i18n("ai.settings.title_naming.desc"));
         titleNaming.selectedProperty().bindBidirectional(aiSettings.titleNamingEnabledProperty());
+        // bindBidirectional only updates the in-memory property — without this listener the
+        // toggle silently reverted on restart (nothing ever called save()).
+        titleNaming.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
         chatList.getContent().add(titleNaming);
 
         // 标题命名模型
@@ -1896,6 +1917,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         crashAnalysis.setTitle(i18n("ai.settings.auto_crash_analysis"));
         crashAnalysis.setSubtitle(i18n("ai.settings.auto_crash_analysis.desc"));
         crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
+        // Same as titleNaming above: persist on toggle, or the change is lost on restart.
+        crashAnalysis.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
 
         ComponentSublist abilitySub = new ComponentSublist();
         abilitySub.setTitle("AI 能力与行为");
