@@ -237,7 +237,8 @@ public final class AiSessionStore {
     /// @return an unmodifiable list of sessions
     public synchronized List<AiSession> listSessions() {
         return sessions.values().stream()
-                .sorted(Comparator.comparing(AiSession::getUpdatedAt).reversed())
+                .sorted(Comparator.comparing(AiSession::isPinned).reversed()
+                        .thenComparing(Comparator.comparing(AiSession::getUpdatedAt).reversed()))
                 .collect(Collectors.toUnmodifiableList());
     }
 

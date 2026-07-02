@@ -2045,6 +2045,20 @@
     -fx-padding: 4 14 6 14;
 }
 
+/* Sidebar session-row "⋯" menu (rename / pin / delete). */
+.ai-session-menu {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 8;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.25), 12, 0, 0, 3);
+}
+
+.ai-session-menu-item {
+    -fx-alignment: CENTER_LEFT;
+    -fx-padding: 8 20 8 12;
+    -fx-text-fill: -monet-on-surface;
+}
+
 /* Centered pill for synthetic event turns (background-job auto-continue, crash injection). */
 .ai-event-pill {
     -fx-background-color: -monet-surface-container;

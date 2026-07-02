@@ -785,16 +785,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 ? session.getTitle() : i18n("ai.session.untitled");
 
         AdvancedListItem item = new AdvancedListItem();
-        item.setTitle(labelText);
-        item.setLeftIcon(SVG.FOLDER);
+        item.setTitle(session.isPinned() ? "📌 " + labelText : labelText);
+        item.setSubtitle(relativeTime(session.getUpdatedAt()));
+        item.setLeftIcon(SVG.CHAT);
         item.setActive(isActive);
         item.getStyleClass().add("navigation-drawer-item");
         item.getProperties().put(SESSION_ID_KEY, session.getId());
-        item.setRightAction(SVG.DELETE, () -> Controllers.confirm(
-                i18n("button.remove.confirm"),
-                i18n("button.remove"),
-                () -> deleteSession(session.getId()),
-                null));
+        FXUtils.installFastTooltip(item, labelText);
+        // "⋯" menu instead of a bare delete icon: every chat client lets you RENAME a session;
+        // deleting the whole session used to be the only way to fix a bad auto-title.
+        item.setRightAction(SVG.MORE_VERT, () -> showSessionMenu(item, session));
         item.setOnAction(e -> {
             String id = session.getId();
             sessionStore.setCurrentSessionId(id);
@@ -814,6 +814,74 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
 
         return item;
+    }
+
+    /// Rename / pin / delete menu for a sidebar session row.
+    private void showSessionMenu(Node anchor, AiSession session) {
+        VBox box = new VBox();
+        box.getStyleClass().add("ai-session-menu");
+        JFXPopup popup = new JFXPopup(box);
+
+        java.util.function.BiConsumer<String, Runnable> addItem = (text, action) -> {
+            JFXButton b = new JFXButton(text);
+            b.setMaxWidth(Double.MAX_VALUE);
+            b.getStyleClass().add("ai-session-menu-item");
+            b.setOnAction(e -> {
+                popup.hide();
+                action.run();
+            });
+            box.getChildren().add(b);
+        };
+
+        addItem.accept("重命名", () -> Controllers.prompt("重命名会话", (result, handler) -> {
+            String name = result == null ? "" : result.trim();
+            if (!name.isEmpty()) {
+                session.setTitle(name);
+                persistStore();
+                refreshSessionList();
+                AiSession current = sessionStore.getCurrentSession();
+                if (current == session) {
+                    updateHeader(session);
+                }
+            }
+            handler.resolve();
+        }, session.getTitle() == null ? "" : session.getTitle()));
+
+        addItem.accept(session.isPinned() ? "取消置顶" : "置顶", () -> {
+            session.setPinned(!session.isPinned());
+            persistStore();
+            refreshSessionList();
+        });
+
+        String title = session.getTitle() == null || session.getTitle().isBlank()
+                ? i18n("ai.session.untitled") : session.getTitle();
+        addItem.accept("删除", () -> Controllers.confirm(
+                "删除会话「" + title + "」？此操作不可恢复。",
+                i18n("button.remove"),
+                () -> deleteSession(session.getId()),
+                null));
+
+        popup.show(anchor, JFXPopup.PopupVPosition.TOP, JFXPopup.PopupHPosition.RIGHT, 0, 0);
+    }
+
+    /// Compact relative time for the session list subtitle (今天 HH:mm / 昨天 / M月d日).
+    private static String relativeTime(java.time.Instant instant) {
+        if (instant == null) {
+            return "";
+        }
+        java.time.LocalDate date = instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        java.time.LocalDate today = java.time.LocalDate.now();
+        if (date.equals(today)) {
+            return instant.atZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+        }
+        if (date.equals(today.minusDays(1))) {
+            return "昨天";
+        }
+        if (date.getYear() == today.getYear()) {
+            return date.format(java.time.format.DateTimeFormatter.ofPattern("M月d日"));
+        }
+        return date.format(java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
     }
 
     private void deleteSession(String sessionId) {

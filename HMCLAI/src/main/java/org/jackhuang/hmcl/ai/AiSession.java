@@ -55,6 +55,10 @@ public final class AiSession {
     @SerializedName("updatedAt")
     private volatile Instant updatedAt;
 
+    /// Pinned sessions sort above the rest in the sidebar. Optional in old files (defaults false).
+    @SerializedName("pinned")
+    private volatile boolean pinned;
+
     @SerializedName("messages")
     private List<LlmMessage> messages = new ArrayList<>();
 
@@ -90,6 +94,7 @@ public final class AiSession {
         this.title = other.title;
         this.createdAt = other.createdAt;
         this.updatedAt = other.updatedAt;
+        this.pinned = other.pinned;
         this.messages = new ArrayList<>(other.messages);
     }
 
@@ -109,6 +114,16 @@ public final class AiSession {
     public synchronized void setTitle(String title) {
         this.title = title;
         this.updatedAt = Instant.now();
+    }
+
+    public boolean isPinned() {
+        return pinned;
+    }
+
+    /// Pins/unpins the session (pinned sessions sort first). Deliberately does NOT bump
+    /// updatedAt — pinning is not conversation activity.
+    public void setPinned(boolean pinned) {
+        this.pinned = pinned;
     }
 
     /// Returns the creation timestamp.
