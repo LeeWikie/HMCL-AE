@@ -2466,7 +2466,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) return;
-        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + " ✦");
+        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + "（分支）");
         persistStore();
         refreshSessionList();
         loadSessionMessages(branch);

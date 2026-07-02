@@ -448,7 +448,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     default -> AiProtocolFamily.OPENAI_COMPLETIONS.getId();
                 });
                 profile.setEndpoint(endpointField.getText() != null ? endpointField.getText().trim() : "");
-                profile.setApiKey(apiKey.getText().trim());
+                // Strip ALL whitespace, not just the ends: keys copied from provider consoles
+                // often pick up an invisible newline/space mid-string, which turns into a
+                // baffling 401 the user cannot see.
+                profile.setApiKey(apiKey.getText().replaceAll("\\s+", ""));
                 profile.setEnabled(enabledBox.isSelected());
                 // Provider config no longer holds model/pricing — those live in 模型配置.
                 // Commit only now (on save), and make the just-configured profile active.
