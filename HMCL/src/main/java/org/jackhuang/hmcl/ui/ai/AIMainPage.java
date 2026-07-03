@@ -535,6 +535,47 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             loadSessionMessages(current);
             updateHeader(current);
         }
+
+        // First run: disclose what data the AI sends off-device and get the user's acknowledgment.
+        // Deferred so it appears over the ready scene, not mid-construction.
+        Platform.runLater(AIMainPage::maybeShowPrivacyConsent);
+    }
+
+    private static final String PRIVACY_TEXT =
+            "使用 AI 助手时，你的对话内容会通过网络发送给你所配置的 AI 服务提供商，用于生成回复。\n\n"
+            + "根据你启用的功能，发送的内容可能包含：你输入的问题；所选实例 / 模组 / 世界等游戏信息；"
+            + "你主动让 AI 读取的文件或日志；剪贴板文本；以及截图（仅当你使用相关功能时）。\n\n"
+            + "这些数据由第三方 AI 提供商按其各自的隐私政策处理；HMCL-AE 本身不额外收集或上传这些内容。\n\n"
+            + "点击「确定」表示你已阅读并同意上述数据处理方式；若不同意，请勿使用 AI 助手。";
+
+    private static java.nio.file.Path privacyConsentFile() {
+        return SettingsManager.localConfigDirectory().resolve("ai-privacy-consent");
+    }
+
+    static boolean hasPrivacyConsent() {
+        return java.nio.file.Files.exists(privacyConsentFile());
+    }
+
+    /// First-run privacy disclosure: shown once until the user acknowledges (which writes a marker).
+    static void maybeShowPrivacyConsent() {
+        if (hasPrivacyConsent()) {
+            return;
+        }
+        Controllers.dialog(PRIVACY_TEXT, "AI 隐私与数据说明",
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO, () -> {
+                    try {
+                        java.nio.file.Files.writeString(privacyConsentFile(),
+                                java.time.Instant.now().toString(),
+                                java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {
+                    }
+                });
+    }
+
+    /// Re-viewable privacy notice (does not change the consent marker), for the settings entry.
+    static void showPrivacyNotice() {
+        Controllers.dialog(PRIVACY_TEXT, "AI 隐私与数据说明",
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO);
     }
 
     /// Registers all AI tools in the shared tool registry.

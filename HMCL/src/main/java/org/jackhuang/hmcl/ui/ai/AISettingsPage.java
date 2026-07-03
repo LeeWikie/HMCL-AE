@@ -1954,7 +1954,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
                         aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
                 toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
-                        aiSettings.autoBackupBeforeNbtEditProperty()));
+                        aiSettings.autoBackupBeforeNbtEditProperty()),
+                buildPrivacyNoticeRow());
         ComponentList dataCard = new ComponentList();
         dataCard.getContent().add(dataSub);
 
@@ -2084,6 +2085,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Daily AI-spend cap row: reuses {@link #sliderRow} but backs it with the shared SpendTracker
     /// (not an AiSettings property), so setting it persists to the spend file and the chat page's cap
     /// check sees it immediately. Whole-dollar granularity (0 = no limit) is plenty for a safety cap.
+    /// A re-viewable "隐私与数据说明" entry (the same notice shown once on first AI use).
+    private LineButton buildPrivacyNoticeRow() {
+        LineButton row = new LineButton();
+        row.setTitle("隐私与数据说明");
+        row.setSubtitle("查看使用 AI 时会向服务提供商发送哪些数据");
+        row.setOnAction(e -> AIMainPage.showPrivacyNotice());
+        return row;
+    }
+
     private LineButton buildSpendLimitRow() {
         org.jackhuang.hmcl.ai.cost.SpendTracker tracker = AIMainPage.spendTracker();
         IntegerProperty prop = new javafx.beans.property.SimpleIntegerProperty(
