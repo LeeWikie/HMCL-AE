@@ -150,6 +150,22 @@ public class DecoratorController {
             });
         }
 
+        // ui-mirror: Ctrl+Shift+U dumps the current scene graph + theme to <cwd>/ui-mirror/ (see hmcl-ae-ui-mirror/DESIGN.md)
+        navigator.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.U && e.isControlDown() && e.isShiftDown()) {
+                org.jackhuang.hmcl.uimirror.SceneExporter.dumpCurrentScene();
+                e.consume();
+            }
+        });
+
+        // ui-mirror: Ctrl+Shift+E toggles edit mode (point/select controls -> channel -> Claude)
+        navigator.addEventHandler(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.E && e.isControlDown() && e.isShiftDown()) {
+                org.jackhuang.hmcl.uimirror.EditMode.toggle();
+                e.consume();
+            }
+        });
+
         navigator.addEventFilter(MouseEvent.MOUSE_CLICKED, e -> {
             if (e.getButton() == MouseButton.BACK) {
                 back();
