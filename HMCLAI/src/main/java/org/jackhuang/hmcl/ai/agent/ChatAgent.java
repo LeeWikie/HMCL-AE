@@ -340,6 +340,9 @@ public final class ChatAgent {
         // Raw streamed text of this turn. Appended on the adapter's callback thread, read from the
         // FX thread by persistInterrupted() — guard every access with `synchronized (full)`.
         final StringBuilder full = new StringBuilder();
+        // Reasoning/"thinking" text (models that expose it, e.g. DeepSeek-R1) accumulated across the
+        // turn, persisted on the assistant message so a reloaded session can show a collapsed card.
+        final StringBuilder reasoning = new StringBuilder();
         // Ensures the interrupted-partial message is written EXACTLY once, whether the Stop
         // handler (persistInterrupted) or the abandoned stream's own onComplete gets there first.
         final java.util.concurrent.atomic.AtomicBoolean interruptWritten =
@@ -374,6 +377,10 @@ public final class ChatAgent {
             @Override public void onToken(String t) {
                 synchronized (full) { full.append(t); }
                 callback.onToken(t);
+            }
+            @Override public void onReasoningToken(String t) {
+                synchronized (reasoning) { reasoning.append(t); }
+                callback.onReasoningToken(t);
             }
             @Override public void onUsage(LlmUsage u) {
                 // The first model call of a turn reports the input-token count of the persisted
@@ -433,6 +440,11 @@ public final class ChatAgent {
                 LlmMessage aiMessage = new LlmMessage("assistant", f);
                 if (usage != null) {
                     aiMessage.setUsage(usage);
+                }
+                String r;
+                synchronized (reasoning) { r = reasoning.toString().strip(); }
+                if (!r.isEmpty()) {
+                    aiMessage.setReasoning(r);
                 }
                 aiMessage.setTurnId(turnId);
                 aiMessage.setModel(settings.getModel());

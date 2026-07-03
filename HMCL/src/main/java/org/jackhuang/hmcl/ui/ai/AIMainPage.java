@@ -291,6 +291,53 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// sidebar "生成中…" indicator must track the STREAMING session, not the visible one.
     private String streamSessionId;
 
+    /// Live reasoning ("思考过程") card for the in-flight turn, appended token by token; null when
+    /// the turn has produced no reasoning yet. Reset at the start of each turn / session load.
+    private ReasoningCard reasoningLiveCard;
+
+    /// Collapsible card showing a model's reasoning/"thinking" (e.g. DeepSeek-R1's reasoning_content):
+    /// expanded while it streams, collapsed once the answer starts or on reload. Self-contained so it
+    /// can be reused by both the live stream path and the session-reload path.
+    private static final class ReasoningCard extends VBox {
+        private final Label content = new Label();
+        private final Label chevron = new Label("▾");
+        private final StringBuilder text = new StringBuilder();
+
+        ReasoningCard(String initial, boolean expanded) {
+            getStyleClass().add("ai-reasoning-card");
+            setSpacing(4);
+            content.setWrapText(true);
+            content.getStyleClass().add("ai-reasoning-content");
+            if (initial != null) {
+                text.append(initial);
+                content.setText(initial);
+            }
+            Label title = new Label("思考过程");
+            title.getStyleClass().add("ai-reasoning-title");
+            HBox headerBox = new HBox(6, chevron, title);
+            headerBox.setAlignment(Pos.CENTER_LEFT);
+            JFXButton header = new JFXButton();
+            header.setGraphic(headerBox);
+            header.setMaxWidth(Double.MAX_VALUE);
+            header.setAlignment(Pos.CENTER_LEFT);
+            header.getStyleClass().add("ai-reasoning-header");
+            header.setOnAction(e -> setExpanded(!content.isVisible()));
+            getChildren().addAll(header, content);
+            setExpanded(expanded);
+        }
+
+        void append(String token) {
+            text.append(token);
+            content.setText(text.toString());
+        }
+
+        void setExpanded(boolean expanded) {
+            content.setVisible(expanded);
+            content.setManaged(expanded);
+            chevron.setText(expanded ? "▾" : "▸");
+        }
+    }
+
     /// Tool-call cards awaiting their result, keyed by tool name (FIFO per name) so onToolResult
     /// can find the matching card appended by onToolActivity.
     private final java.util.Map<String, java.util.Deque<ToolCard>> pendingToolCards = new java.util.HashMap<>();
@@ -2347,6 +2394,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
         streamingBubble = null;
+        reasoningLiveCard = null;
         pendingToolCards.clear();
         activeToolCard = null;
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
@@ -2367,6 +2415,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 addUserBubble(msg.getContent(), true);
                 attachMessageActions(msg.getContent(), role, index);
             } else if ("assistant".equals(role)) {
+                // Reasoning/"思考过程" that came with this answer: a collapsed card above the bubble.
+                String reasoningText = msg.getReasoning();
+                if (reasoningText != null && !reasoningText.isBlank()) {
+                    messageList.getChildren().add(wrapBubble(new ReasoningCard(reasoningText, false), Pos.CENTER_LEFT));
+                }
                 createAiBubble(msg.getContent(), msg.getUsage());
                 attachMessageActions(msg.getContent(), role, index);
             } else if (isToolMessage(msg.getContent())) {
@@ -2744,6 +2797,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Render a whole turn as an in-order sequence appended to the end of the list:
         // text segment -> tool card -> text segment -> ... No pre-created bottom bubble.
         streamingBubble = null;
+        reasoningLiveCard = null;
         pendingToolCards.clear();
         activeToolCard = null;
 
@@ -2775,11 +2829,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     if (streamingBubble == null) {
                         // Text resumed after a tool call (or first text): start a new segment.
+                        // The visible answer is starting, so collapse the reasoning card out of the way.
+                        if (reasoningLiveCard != null) {
+                            reasoningLiveCard.setExpanded(false);
+                        }
                         streamingBubble = createAiBubble("");
                         segment.setLength(0);
                     }
                     segment.append(token);
                     streamingBubble.setText(segment.toString());
+                    scrollToBottom();
+                });
+            }
+
+            @Override
+            public void onReasoningToken(String token) {
+                Platform.runLater(() -> {
+                    if (generation != responseGeneration) return; // stopped/superseded
+                    if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
+                    if (reasoningLiveCard == null) {
+                        // First reasoning token of the turn: create the card (expanded) above the answer.
+                        reasoningLiveCard = new ReasoningCard("", true);
+                        messageList.getChildren().add(wrapBubble(reasoningLiveCard, Pos.CENTER_LEFT));
+                    }
+                    reasoningLiveCard.append(token);
                     scrollToBottom();
                 });
             }

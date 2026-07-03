@@ -133,6 +133,11 @@ public final class LangChain4jModelFactory {
         builder.logRequests(logRequests);
         builder.logResponses(logResponses);
 
+        // Capture provider "reasoning"/thinking content (e.g. DeepSeek-R1's reasoning_content) so it
+        // can be surfaced in a collapsible card. Harmless for models that don't emit it (stays null,
+        // onPartialThinking simply never fires).
+        builder.returnThinking(true);
+
         return builder.build();
     }
 

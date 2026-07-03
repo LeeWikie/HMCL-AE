@@ -2068,6 +2068,31 @@
     -fx-padding: 4 12 4 12;
 }
 
+/* Collapsible reasoning ("思考过程") card — a muted block above the answer. */
+.ai-reasoning-card {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 10;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 10;
+    -fx-padding: 2 8 6 8;
+}
+
+.ai-reasoning-header {
+    -fx-padding: 2 6 2 6;
+    -fx-background-radius: 8;
+}
+
+.ai-reasoning-title {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 12px;
+}
+
+.ai-reasoning-content {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 12px;
+    -fx-opacity: 0.9;
+}
+
 .ai-bubble-wrapper {
     -fx-padding: 4 16 4 16;
 }

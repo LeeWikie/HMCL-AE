@@ -410,6 +410,18 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             }
 
             @Override
+            public void onPartialThinking(dev.langchain4j.model.chat.response.PartialThinking partialThinking) {
+                // Reasoning tokens (DeepSeek-R1 reasoning_content, enabled via returnThinking) stream
+                // ahead of the answer; forward them so the UI can show a collapsible "思考过程" card.
+                if (partialThinking != null) {
+                    String t = partialThinking.text();
+                    if (t != null && !t.isEmpty()) {
+                        callback.onReasoningToken(t);
+                    }
+                }
+            }
+
+            @Override
             public void onCompleteResponse(ChatResponse response) {
                 TokenUsage usage = response.tokenUsage();
                 if (usage != null) {

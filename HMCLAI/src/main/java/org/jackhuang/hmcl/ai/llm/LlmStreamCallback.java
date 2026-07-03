@@ -34,6 +34,14 @@ public interface LlmStreamCallback {
     /// @param token a single text token; never `null`
     void onToken(String token);
 
+    /// Called for each reasoning/"thinking" token from models that expose it (e.g. DeepSeek-R1's
+    /// `reasoning_content`), streamed before the visible answer. The UI surfaces these in a
+    /// collapsible card. Default no-op so callbacks that don't render reasoning are unaffected.
+    ///
+    /// @param token a single reasoning token; never `null`
+    default void onReasoningToken(String token) {
+    }
+
     /// Called when token usage for the response becomes available, before
     /// [#onComplete]. Only invoked when the provider reports a usage object;
     /// implementations that do not display usage may ignore this.
