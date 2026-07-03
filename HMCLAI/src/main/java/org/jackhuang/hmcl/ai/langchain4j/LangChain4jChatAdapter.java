@@ -284,6 +284,13 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// where it keeps re-issuing the same failing call until the cycle cap is hit.
     private static final int DUP_CALL_LIMIT = 3;
 
+    /// After this many CONSECUTIVE failed/blocked tool results in one turn (regardless of which tool),
+    /// inject a one-off guidance nudge telling the model to stop flailing and either answer with what
+    /// it has or ask the user — catches "no progress" loops that keep varying arguments so the
+    /// identical-call guard never trips. A reserved {@code callCounts} key tracks the running streak.
+    private static final int NO_PROGRESS_LIMIT = 6;
+    private static final String NO_PROGRESS_KEY = " consecutiveFailures";
+
     /// Executes a tool request unless it has already been issued (identical name+arguments)
     /// {@link #DUP_CALL_LIMIT} times this turn, in which case a synthetic BLOCKED result is
     /// returned so the conversation still has one result per tool-use (API requirement) while
@@ -467,11 +474,28 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                             conversation.add(result);
                             String resultText = result.text() != null ? result.text() : "";
                             boolean success = !resultText.startsWith("Error:") && !resultText.startsWith("BLOCKED:");
+                            // No-progress tracking: reset the streak on any success, grow it on failure.
+                            if (success) {
+                                callCounts.put(NO_PROGRESS_KEY, 0);
+                            } else {
+                                callCounts.merge(NO_PROGRESS_KEY, 1, Integer::sum);
+                            }
                             String summary = resultText.length() > 300
                                     ? resultText.substring(0, 300) + "…"
                                     : resultText;
                             callback.onToolResult(req.name(), success, summary);
                         }
+                    }
+                    // No-progress guard: after a run of failures with nothing succeeding, nudge the model
+                    // ONCE to stop retrying and wrap up, then reset the streak so it isn't re-nagged every
+                    // cycle. The overall cycle cap remains the hard backstop.
+                    if (callCounts.getOrDefault(NO_PROGRESS_KEY, 0) >= NO_PROGRESS_LIMIT) {
+                        AiLog.warn("[AI] 连续 " + callCounts.get(NO_PROGRESS_KEY)
+                                + " 次工具失败无进展，注入收敛提示");
+                        conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                                "[系统提示] 已连续多次工具调用失败、没有取得进展。请停止继续尝试同类操作："
+                                + "用你已经获得的信息直接回答，或明确说明卡在哪里、需要用户提供什么，不要再盲目重试。"));
+                        callCounts.put(NO_PROGRESS_KEY, 0);
                     }
                     streamTurn(conversation, callback, cycle + 1, callCounts, turnText);
                     return;
