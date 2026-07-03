@@ -28,6 +28,7 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import org.jackhuang.hmcl.ai.util.AiLog;
 import dev.langchain4j.model.output.TokenUsage;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
@@ -400,6 +401,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         // Tracks whether any token has streamed yet: a transient error before the first token can be
         // retried transparently (nothing to roll back), but a mid-stream error must never be retried.
         final java.util.concurrent.atomic.AtomicBoolean tokenSeen = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final long startNanos = System.nanoTime();
+        AiLog.info("[AI] 模型请求 cycle=" + cycle + " attempt=" + attempt
+                + " 消息数=" + conversation.size() + " 工具=" + (allowTools ? "on" : "off"));
         streamingChatModel.chat(requestBuilder.build(), new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String token) {
@@ -438,6 +442,12 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                 }
 
                 AiMessage aiMessage = response.aiMessage();
+                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                AiLog.info("[AI] 模型响应 cycle=" + cycle + " 耗时=" + elapsedMs + "ms tokens(in/out/total)="
+                        + (usage != null ? usage.inputTokenCount() + "/" + usage.outputTokenCount()
+                        + "/" + usage.totalTokenCount() : "n/a")
+                        + " 工具调用=" + (aiMessage != null && aiMessage.hasToolExecutionRequests()
+                        ? aiMessage.toolExecutionRequests().size() : 0));
                 if (aiMessage != null && aiMessage.hasToolExecutionRequests()) {
                     // Tool-call turn: record it, run each tool, feed results back, loop.
                     // Any prose the model emitted before its tool calls becomes a finished segment.
@@ -486,6 +496,8 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                 // happened BEFORE any token streamed, bounded by MAX_STREAM_RETRIES with backoff.
                 if (!tokenSeen.get() && attempt < MAX_STREAM_RETRIES && isRetryable(wrapped)
                         && !callback.isCancelled()) {
+                    AiLog.warn("[AI] 模型请求瞬时失败，重试 attempt=" + (attempt + 1) + "/" + MAX_STREAM_RETRIES
+                            + "：" + wrapped.getMessage());
                     try {
                         Thread.sleep(500L * (1L << attempt)); // 0.5s, then 1s
                     } catch (InterruptedException ie) {
@@ -496,6 +508,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     streamTurn(conversation, callback, cycle, callCounts, turnText, attempt + 1);
                     return;
                 }
+                AiLog.warn("[AI] 模型请求失败：" + wrapped.getMessage());
                 callback.onError(wrapped);
             }
         });

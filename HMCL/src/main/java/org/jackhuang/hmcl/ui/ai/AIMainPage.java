@@ -2123,6 +2123,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// the /help output so they never drift apart.
     private static final java.util.LinkedHashMap<String, String> SLASH_COMMANDS = new java.util.LinkedHashMap<>();
     static {
+        // HMCLAI can't reach HMCLCore's Logger directly; route its AI-model API log lines (request /
+        // response / timing / token usage / retry / failure) into the application log here.
+        org.jackhuang.hmcl.ai.util.AiLog.setSink((warn, msg) -> {
+            if (warn) {
+                org.jackhuang.hmcl.util.logging.Logger.LOG.warning(msg);
+            } else {
+                org.jackhuang.hmcl.util.logging.Logger.LOG.info(msg);
+            }
+        });
+
         SLASH_COMMANDS.put("/new", "新建一个会话");
         SLASH_COMMANDS.put("/clear", "清空当前对话上下文");
         SLASH_COMMANDS.put("/compact", "把当前对话压缩成摘要以节省 token");
