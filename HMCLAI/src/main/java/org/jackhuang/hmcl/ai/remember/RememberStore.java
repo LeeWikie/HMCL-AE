@@ -91,6 +91,19 @@ public final class RememberStore {
     /// @return the created entry
     /// @throws IOException on I/O error
     public Entry remember(String title, List<String> tags, String content) throws IOException {
+        // Redact secrets (API keys / tokens / passwords) BEFORE anything is written: memory files are
+        // plaintext and long-lived, and untrusted text (a mod README, a log) can try to get a key
+        // persisted here. Redacting at the store layer covers every caller.
+        title = redactSecrets(title);
+        content = redactSecrets(content != null ? content : "");
+
+        // Dedup: if an existing memory already holds the same (normalized) content, return it instead
+        // of writing a near-identical duplicate that would clutter recall.
+        Entry existing = findDuplicate(normalize(content));
+        if (existing != null) {
+            return existing;
+        }
+
         String now = java.time.Instant.now().toString();
         String safe = title.replaceAll("[\\\\/:*?\"<>|]", "-").trim().toLowerCase(Locale.ROOT);
         if (safe.isEmpty()) safe = "memory";
@@ -209,6 +222,85 @@ public final class RememberStore {
     }
 
     // ---- helpers ----
+
+    // ---- redaction & dedup ----
+
+    /// Standalone secret tokens replaced wholesale with `[REDACTED]`.
+    private static final Pattern[] SECRET_TOKEN_PATTERNS = {
+            Pattern.compile("(?i)\\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"),   // OpenAI / Stripe-style keys
+            Pattern.compile("\\bghp_[A-Za-z0-9]{20,}"),                  // GitHub personal access token
+            Pattern.compile("\\bgithub_pat_[A-Za-z0-9_]{20,}"),
+            Pattern.compile("\\bAKIA[0-9A-Z]{16}\\b"),                   // AWS access key id
+            Pattern.compile("\\bAIza[0-9A-Za-z_-]{30,}"),                // Google API key
+            Pattern.compile("\\bxox[baprs]-[A-Za-z0-9-]{10,}"),         // Slack token
+            Pattern.compile("(?i)\\bbearer\\s+[A-Za-z0-9._-]{16,}"),     // Bearer <token>
+    };
+
+    /// `key: value` / `key=value` secrets — keep the key label, redact only the value.
+    private static final Pattern SECRET_KEYVAL_PATTERN = Pattern.compile(
+            "(?i)\\b(api[_-]?key|apikey|access[_-]?token|secret[_-]?key|client[_-]?secret|password|passwd|pwd|token|secret)"
+                    + "(\\s*[:=]\\s*)[\"']?[A-Za-z0-9._/+\\-]{6,}[\"']?");
+
+    /// Scrubs common secret shapes from text so keys/tokens never land in a plaintext memory file.
+    /// Conservative by design (only well-known key shapes) to avoid mangling ordinary prose.
+    static String redactSecrets(@Nullable String s) {
+        if (s == null || s.isEmpty()) {
+            return s == null ? "" : s;
+        }
+        String out = s;
+        for (Pattern p : SECRET_TOKEN_PATTERNS) {
+            out = p.matcher(out).replaceAll("[REDACTED]");
+        }
+        out = SECRET_KEYVAL_PATTERN.matcher(out).replaceAll(m -> m.group(1) + m.group(2) + "[REDACTED]");
+        return out;
+    }
+
+    /// Drops a leading Markdown H1 line (`# ...`) — the title heading remember() prepends — so the
+    /// remaining text is the fact body. Only the first H1 is removed; the fact's own headings survive.
+    private static String stripLeadingH1(@Nullable String s) {
+        if (s == null) {
+            return "";
+        }
+        String t = s.stripLeading();
+        if (t.startsWith("# ")) {
+            int nl = t.indexOf('\n');
+            return nl >= 0 ? t.substring(nl + 1).stripLeading() : "";
+        }
+        return s;
+    }
+
+    /// Whitespace/case-insensitive normal form used for duplicate detection.
+    private static String normalize(@Nullable String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    }
+
+    /// Returns an existing entry whose body matches {@code normalizedContent}, or null if none.
+    @Nullable
+    private Entry findDuplicate(String normalizedContent) throws IOException {
+        if (normalizedContent.isEmpty() || !Files.isDirectory(dir)) {
+            return null;
+        }
+        try (Stream<Path> stream = Files.list(dir)) {
+            for (Path file : stream.filter(f -> f.getFileName().toString().endsWith(".md")).toList()) {
+                String text;
+                try {
+                    text = Files.readString(file, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    continue;
+                }
+                Entry e = parseEntry(text, file);
+                // parseEntry's content still carries the "# <title>" heading that remember() prepends;
+                // strip it so we compare the actual fact body against the incoming (headerless) content.
+                if (normalize(stripLeadingH1(e.getContent())).equals(normalizedContent)) {
+                    return e;
+                }
+            }
+        }
+        return null;
+    }
 
     private static Path uniquePath(Path candidate) {
         if (!Files.exists(candidate)) return candidate;
