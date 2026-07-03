@@ -71,6 +71,7 @@ import org.jackhuang.hmcl.ai.agent.ChatAgentFactory;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.llm.LlmStreamCallback;
+import org.jackhuang.hmcl.ai.cost.SpendTracker;
 import org.jackhuang.hmcl.ai.llm.LlmUsage;
 import org.jackhuang.hmcl.ai.tools.EditTool;
 import org.jackhuang.hmcl.ai.tools.FileReadTool;
@@ -2776,6 +2777,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         }
 
+        if (spendTracker().isOverLimit()) {
+            Controllers.showToast("已达今日 AI 花费上限（约 $"
+                    + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
+                    + "）。可在 AI 设置里调高上限，或明天再用。");
+            return;
+        }
         inputField.clear();
         sendText(appendAttachments(text), null);
         clearFileChip();
@@ -2962,6 +2969,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     exitStreamingState();
                     persistStore();
+                    // Accrue this response's estimated cost against the daily spend cap, warning near it.
+                    double turnCost = estimateCost(usageHolder[0]);
+                    if (turnCost > 0) {
+                        spendTracker().record(turnCost);
+                        maybeWarnSpend();
+                    }
                     // Re-render the finished conversation so the just-completed messages get their
                     // action icons (copy/edit/resend/branch/delete) immediately — live-streamed
                     // bubbles are rendered without an action bar; only the reload path attaches one.
@@ -3715,6 +3728,49 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Formats a usage instance into a localized footer string, appending the
     /// estimated cost when cost display is enabled and the active profile has pricing.
+    /// Shared cross-session daily spend tracker (backs the cost cap + warning). Lazily bound to the
+    /// config file so the chat page and the settings page act on one instance.
+    private static SpendTracker spendTrackerInstance;
+
+    static synchronized SpendTracker spendTracker() {
+        if (spendTrackerInstance == null) {
+            spendTrackerInstance = new SpendTracker(
+                    SettingsManager.localConfigDirectory().resolve("ai-spend.json"));
+        }
+        return spendTrackerInstance;
+    }
+
+    private boolean spendWarned80 = false;
+
+    /// Estimated USD cost of one response from its token usage and the active model's pricing, or 0
+    /// when usage or pricing is unavailable.
+    private double estimateCost(@Nullable LlmUsage usage) {
+        if (usage == null || !usage.hasData()) {
+            return 0.0;
+        }
+        AiProviderProfile active = aiSettings.findSelectedProfile();
+        String modelId = active != null ? active.getDefaultModelId() : null;
+        AiModelEntry model = (active != null && modelId != null) ? active.getModel(modelId) : null;
+        return model != null && model.hasPricing()
+                ? model.computeCost(usage.getPromptTokens(), usage.getCompletionTokens(), 0, 0)
+                : 0.0;
+    }
+
+    /// Toasts once when today's spend crosses 80% of the daily limit; re-arms when a new day resets it.
+    private void maybeWarnSpend() {
+        double ratio = spendTracker().todayUsageRatio();
+        if (ratio >= 0.8 && ratio < 1.0) {
+            if (!spendWarned80) {
+                spendWarned80 = true;
+                Controllers.showToast("今日 AI 估算花费已用约 " + Math.round(ratio * 100)
+                        + "%（上限 $" + String.format(java.util.Locale.ROOT, "%.2f",
+                        spendTracker().getDailyLimitUsd()) + "）");
+            }
+        } else if (ratio < 0.8) {
+            spendWarned80 = false;
+        }
+    }
+
     private String formatUsage(LlmUsage usage) {
         if (usage.isEstimated()) {
             return i18n("ai.usage.estimated", String.valueOf(usage.getTotalTokens()));
@@ -3724,12 +3780,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 String.valueOf(usage.getPromptTokens()),
                 String.valueOf(usage.getCompletionTokens()));
         if (chatSettings.showCost) {
-            AiProviderProfile active = aiSettings.findSelectedProfile();
-            String modelId = active != null ? active.getDefaultModelId() : null;
-            AiModelEntry model = modelId != null ? active.getModel(modelId) : null;
-            if (model != null && model.hasPricing()) {
-                double cost = model.computeCost(
-                        usage.getPromptTokens(), usage.getCompletionTokens(), 0, 0);
+            double cost = estimateCost(usage);
+            if (cost > 0) {
                 text += i18n("ai.usage.cost", String.format(java.util.Locale.ROOT, "%.6f", cost));
             }
         }

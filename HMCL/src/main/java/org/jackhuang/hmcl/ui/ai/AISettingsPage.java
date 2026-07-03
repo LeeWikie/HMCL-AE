@@ -1979,6 +1979,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
                 sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
                         aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"),
+                buildSpendLimitRow(),
                 buildDangerouslySkipRow(),
                 toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
                         aiSettings.toolCallLoggingEnabledProperty()));
@@ -2080,6 +2081,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     /// Builds a native row with a trailing JFXSlider bound to an integer setting;
     /// shows the live value and persists on change. Reuses the search-tab slider idiom.
+    /// Daily AI-spend cap row: reuses {@link #sliderRow} but backs it with the shared SpendTracker
+    /// (not an AiSettings property), so setting it persists to the spend file and the chat page's cap
+    /// check sees it immediately. Whole-dollar granularity (0 = no limit) is plenty for a safety cap.
+    private LineButton buildSpendLimitRow() {
+        org.jackhuang.hmcl.ai.cost.SpendTracker tracker = AIMainPage.spendTracker();
+        IntegerProperty prop = new javafx.beans.property.SimpleIntegerProperty(
+                (int) Math.round(tracker.getDailyLimitUsd()));
+        prop.addListener((obs, old, val) -> tracker.setDailyLimitUsd(val.doubleValue()));
+        return sliderRow("每日花费上限", "AI 单日估算花费达到此金额后暂停发送，0=不限（美元，按模型定价估算）",
+                prop, 0, 50, " 美元");
+    }
+
     private LineButton sliderRow(String title, String subtitle, IntegerProperty prop,
                                  int min, int max, String unit) {
         LineButton row = new LineButton();
