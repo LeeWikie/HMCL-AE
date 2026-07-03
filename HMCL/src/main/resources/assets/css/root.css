@@ -2143,9 +2143,48 @@
 
 .ai-markdown-view .md-code-block {
     -fx-background-color: -monet-surface-container;
-    -fx-text-fill: -monet-on-surface-variant;
     -fx-background-radius: 8;
-    -fx-padding: 10 12 10 12;
+    -fx-padding: 4 4 8 12;
+}
+
+.ai-markdown-view .md-code-header {
+    -fx-padding: 0 0 2 0;
+}
+
+.ai-markdown-view .md-code-lang {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 11px;
+}
+
+.ai-markdown-view .md-code-copy {
+    -fx-text-fill: -monet-primary;
+    -fx-font-size: 11px;
+    -fx-padding: 2 8 2 8;
+    -fx-background-radius: 6;
+}
+
+.ai-markdown-view .md-code-content {
+    -fx-padding: 0 8 0 0;
+}
+
+.ai-markdown-view .md-code-text {
+    -fx-fill: -monet-on-surface;
+}
+
+.ai-markdown-view .md-code-kw {
+    -fx-fill: -monet-primary;
+}
+
+.ai-markdown-view .md-code-str {
+    -fx-fill: -monet-tertiary;
+}
+
+.ai-markdown-view .md-code-num {
+    -fx-fill: -monet-secondary;
+}
+
+.ai-markdown-view .md-code-com {
+    -fx-fill: -monet-on-surface-variant;
 }
 
 .ai-markdown-view .md-blockquote {

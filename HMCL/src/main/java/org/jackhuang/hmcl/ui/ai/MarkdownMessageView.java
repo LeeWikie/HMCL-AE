@@ -17,9 +17,14 @@
  */
 package org.jackhuang.hmcl.ui.ai;
 
+import com.jfoenix.controls.JFXButton;
+import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.util.Duration;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
@@ -131,10 +136,10 @@ public final class MarkdownMessageView extends VBox {
             return renderList(list, true);
         }
         if (node instanceof FencedCodeBlock code) {
-            return codeBlock(code.getLiteral());
+            return codeBlock(code.getLiteral(), code.getInfo());
         }
         if (node instanceof IndentedCodeBlock code) {
-            return codeBlock(code.getLiteral());
+            return codeBlock(code.getLiteral(), null);
         }
         if (node instanceof BlockQuote) {
             VBox inner = new VBox(4);
@@ -289,13 +294,88 @@ public final class MarkdownMessageView extends VBox {
         return flow;
     }
 
-    private javafx.scene.Node codeBlock(String code) {
-        String body = code != null && code.endsWith("\n") ? code.substring(0, code.length() - 1) : code;
-        Label label = new Label(body);
-        label.setFont(Font.font("Monospaced", 12));
-        label.setWrapText(true);
-        label.setMaxWidth(MAX_WIDTH);
-        label.getStyleClass().add("md-code-block");
-        return label;
+    /// A common-across-languages keyword set for lightweight highlighting. Coloring a word that is a
+    /// keyword in one language but an identifier in another is only cosmetic, so a superset is fine.
+    private static final java.util.Set<String> CODE_KEYWORDS = java.util.Set.of(
+            "if", "else", "for", "while", "do", "return", "function", "def", "class", "import",
+            "from", "public", "private", "protected", "static", "final", "void", "int", "long",
+            "float", "double", "boolean", "bool", "char", "true", "false", "null", "none", "new",
+            "const", "let", "var", "try", "catch", "finally", "throw", "throws", "this", "super",
+            "extends", "implements", "package", "interface", "enum", "switch", "case", "break",
+            "continue", "in", "of", "not", "and", "or", "is", "lambda", "yield", "with", "as",
+            "async", "await", "export", "default", "struct", "fn", "match", "impl");
+
+    /// One pass over code: block comment | line comment | string | number | identifier.
+    private static final java.util.regex.Pattern CODE_PATTERN = java.util.regex.Pattern.compile(
+            "(/\\*[\\s\\S]*?\\*/)"                                    // 1 block comment
+                    + "|(//[^\\n]*|#[^\\n]*)"                         // 2 line comment
+                    + "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*')" // 3 string
+                    + "|(\\b\\d[\\w.]*\\b)"                           // 4 number
+                    + "|([A-Za-z_]\\w*)");                            // 5 identifier
+
+    /// Renders a fenced/indented code block as a card with a language header, a copy button, and
+    /// lightweight (language-agnostic) syntax highlighting for comments, strings, numbers and a
+    /// common keyword set.
+    private javafx.scene.Node codeBlock(String code, @Nullable String lang) {
+        String body = code == null ? "" : (code.endsWith("\n") ? code.substring(0, code.length() - 1) : code);
+
+        Label langLabel = new Label(lang != null && !lang.isBlank() ? lang.trim() : "代码");
+        langLabel.getStyleClass().add("md-code-lang");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        JFXButton copyBtn = new JFXButton("复制");
+        copyBtn.getStyleClass().add("md-code-copy");
+        copyBtn.setOnAction(e -> {
+            ClipboardContent cc = new ClipboardContent();
+            cc.putString(body);
+            Clipboard.getSystemClipboard().setContent(cc);
+            copyBtn.setText("已复制");
+            PauseTransition revert = new PauseTransition(Duration.seconds(1.5));
+            revert.setOnFinished(ev -> copyBtn.setText("复制"));
+            revert.play();
+        });
+        HBox header = new HBox(6, langLabel, spacer, copyBtn);
+        header.setAlignment(Pos.CENTER_LEFT);
+        header.getStyleClass().add("md-code-header");
+        header.setMaxWidth(MAX_WIDTH);
+
+        TextFlow content = new TextFlow();
+        content.setMaxWidth(MAX_WIDTH);
+        content.getStyleClass().add("md-code-content");
+        appendHighlighted(content, body);
+
+        VBox box = new VBox(header, content);
+        box.getStyleClass().add("md-code-block");
+        box.setFillWidth(true);
+        box.setMaxWidth(MAX_WIDTH);
+        return box;
+    }
+
+    private void appendHighlighted(TextFlow flow, String body) {
+        java.util.regex.Matcher m = CODE_PATTERN.matcher(body);
+        int last = 0;
+        while (m.find()) {
+            if (m.start() > last) {
+                flow.getChildren().add(codeRun(body.substring(last, m.start()), null));
+            }
+            String cls;
+            if (m.group(1) != null || m.group(2) != null) cls = "md-code-com";
+            else if (m.group(3) != null) cls = "md-code-str";
+            else if (m.group(4) != null) cls = "md-code-num";
+            else cls = CODE_KEYWORDS.contains(m.group().toLowerCase()) ? "md-code-kw" : null;
+            flow.getChildren().add(codeRun(m.group(), cls));
+            last = m.end();
+        }
+        if (last < body.length()) {
+            flow.getChildren().add(codeRun(body.substring(last), null));
+        }
+    }
+
+    private javafx.scene.text.Text codeRun(String s, @Nullable String styleClass) {
+        javafx.scene.text.Text t = new javafx.scene.text.Text(s);
+        t.setFont(Font.font("Monospaced", 12));
+        t.getStyleClass().add("md-code-text");
+        if (styleClass != null) t.getStyleClass().add(styleClass);
+        return t;
     }
 }
