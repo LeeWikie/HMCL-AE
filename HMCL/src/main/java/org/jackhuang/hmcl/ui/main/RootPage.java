@@ -32,7 +32,6 @@ import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.task.Schedulers;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.terracotta.TerracottaMetadata;
-import org.jackhuang.hmcl.theme.Themes;
 import org.jackhuang.hmcl.ui.Controllers;
 import org.jackhuang.hmcl.ui.FXUtils;
 import org.jackhuang.hmcl.ui.SVG;
