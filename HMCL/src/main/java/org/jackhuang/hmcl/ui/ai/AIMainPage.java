@@ -2127,6 +2127,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         SLASH_COMMANDS.put("/clear", "清空当前对话上下文");
         SLASH_COMMANDS.put("/compact", "把当前对话压缩成摘要以节省 token");
         SLASH_COMMANDS.put("/sessions", "搜索并切换历史会话");
+        SLASH_COMMANDS.put("/import", "从导出的 JSON 导入会话（不覆盖现有）");
         SLASH_COMMANDS.put("/skills", "列出已启用的技能");
         SLASH_COMMANDS.put("/plan", "切换计划模式（只读分析，批准前不改动）");
         SLASH_COMMANDS.put("/model", "显示当前模型");
@@ -2669,6 +2670,28 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sendText(content == null ? "" : content, null);
     }
 
+    /// Imports sessions from a previously exported store JSON (导出全部会话 → *.json) into the LIVE
+    /// store, so it can't be clobbered by a later autosave. Existing sessions are never overwritten;
+    /// only new ones are added. Wired to the `/import` slash command.
+    private void importSessions() {
+        javafx.stage.FileChooser fc = new javafx.stage.FileChooser();
+        fc.setTitle("导入会话");
+        fc.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("会话 JSON (*.json)", "*.json"));
+        java.io.File chosen = fc.showOpenDialog(Controllers.getStage());
+        if (chosen == null) return;
+        try {
+            String json = java.nio.file.Files.readString(chosen.toPath(), java.nio.charset.StandardCharsets.UTF_8);
+            int added = sessionStore.importFromJson(json);
+            persistStore();
+            refreshSessionList();
+            Controllers.showToast(added > 0
+                    ? "已导入 " + added + " 个会话"
+                    : "没有可导入的新会话（可能都已存在，或文件不含会话）");
+        } catch (Exception ex) {
+            Controllers.showToast("导入失败：" + (ex.getMessage() != null ? ex.getMessage() : "文件格式不正确"));
+        }
+    }
+
     private void sendMessage() {
         if (isStreaming()) {
             // A response is in flight. For THIS session the button already acts as Stop, so Enter
@@ -2698,6 +2721,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             case "/sessions" -> {
                 inputField.clear();
                 showSearchOverlay();
+                return;
+            }
+            case "/import" -> {
+                inputField.clear();
+                importSessions();
                 return;
             }
             case "/skills" -> {

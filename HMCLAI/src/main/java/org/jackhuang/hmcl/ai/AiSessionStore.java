@@ -232,6 +232,30 @@ public final class AiSessionStore {
         return branch;
     }
 
+    /// Merges sessions from an exported store JSON (the `.json` produced by "导出全部会话") into this
+    /// store. Sessions whose id already exists are left untouched — import never overwrites current
+    /// data, so re-importing your own export is idempotent — only genuinely new sessions are added.
+    /// The caller should {@link #save()} afterwards.
+    ///
+    /// @param json the raw JSON of an exported store file
+    /// @return the number of sessions actually added (new ids only)
+    /// @throws JsonParseException if the text is not valid store JSON
+    public synchronized int importFromJson(String json) {
+        StoreData data = GSON.fromJson(json, STORE_TYPE);
+        if (data == null || data.sessions == null) {
+            return 0;
+        }
+        int added = 0;
+        for (AiSession session : data.sessions) {
+            if (session == null || session.getId() == null || sessions.containsKey(session.getId())) {
+                continue;
+            }
+            sessions.put(session.getId(), session);
+            added++;
+        }
+        return added;
+    }
+
     /// Lists all sessions ordered by most-recently-updated first.
     ///
     /// @return an unmodifiable list of sessions

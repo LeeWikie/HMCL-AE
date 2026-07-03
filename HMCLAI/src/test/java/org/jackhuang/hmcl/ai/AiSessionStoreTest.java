@@ -110,6 +110,49 @@ public final class AiSessionStoreTest {
         }
     }
 
+    /// Verifies importFromJson adds new sessions and is idempotent (skips ids that already exist).
+    @Test
+    public void testImportFromJsonAddsNewSkipsExisting() throws Exception {
+        Path dirA = Files.createTempDirectory("hmcl-ai-imp-a-");
+        Path dirB = Files.createTempDirectory("hmcl-ai-imp-b-");
+        try {
+            AiSessionStore a = new AiSessionStore(dirA);
+            AiSession s1 = a.createSession();
+            s1.setTitle("Chat 1");
+            AiSession s2 = a.createSession();
+            s2.setTitle("Chat 2");
+            a.save();
+            String json = Files.readString(dirA.resolve(AiSessionStore.FILE_NAME), StandardCharsets.UTF_8);
+
+            AiSessionStore b = new AiSessionStore(dirB);
+            assertEquals(2, b.importFromJson(json));
+            assertEquals(2, b.size());
+            assertNotNull(b.getSession(s1.getId()));
+            assertNotNull(b.getSession(s2.getId()));
+
+            // Re-importing the same export must add nothing (ids already present) and never overwrite.
+            assertEquals(0, b.importFromJson(json));
+            assertEquals(2, b.size());
+        } finally {
+            cleanup(dirA);
+            cleanup(dirB);
+        }
+    }
+
+    /// Verifies importFromJson tolerates empty / session-less JSON without adding anything.
+    @Test
+    public void testImportFromJsonHandlesEmpty() throws IOException {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-imp-e-");
+        try {
+            AiSessionStore store = new AiSessionStore(tempDir);
+            assertEquals(0, store.importFromJson("{}"));
+            assertEquals(0, store.importFromJson("{\"sessions\":[]}"));
+            assertEquals(0, store.size());
+        } finally {
+            cleanup(tempDir);
+        }
+    }
+
     /// Verifies that session store persists and loads correctly.
     @Test
     public void testSaveLoadRoundTrip() throws Exception {
