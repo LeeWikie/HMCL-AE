@@ -2167,9 +2167,31 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 }
                 if (sb.length() == 0 && file != null) sb.append(file.getFileName());
                 row.setSubtitle(sb.toString());
-                row.setTrailingIcon(SVG.FOLDER_OPEN);
                 if (file != null && file.getParent() != null) {
+                    // Row click opens the memory folder so the user can read/edit the .md file directly
+                    // (the store is intentionally a folder of human-editable markdown files).
                     row.setOnAction(e -> FXUtils.openFolder(file.getParent()));
+                }
+                if (file != null) {
+                    final Path entryFile = file;
+                    com.jfoenix.controls.JFXButton deleteBtn = new com.jfoenix.controls.JFXButton();
+                    deleteBtn.setGraphic(SVG.DELETE.createIcon(20));
+                    deleteBtn.getStyleClass().add("ai-memory-delete-btn");
+                    FXUtils.installFastTooltip(deleteBtn, "删除这条记忆");
+                    deleteBtn.setOnAction(e -> Controllers.confirm(
+                            "确定删除这条记忆？此操作不可撤销。", "删除记忆", () -> {
+                                try {
+                                    String stem = entryFile.getFileName().toString().replaceAll("\\.md$", "");
+                                    new RememberStore(memDir).forget(stem);
+                                } catch (Exception ex) {
+                                    Controllers.showToast("删除失败：" + ex.getMessage());
+                                }
+                                tab.select(memoryTab, false);
+                            }, () -> {
+                            }));
+                    row.setTrailingIcon(deleteBtn);
+                } else {
+                    row.setTrailingIcon(SVG.FOLDER_OPEN);
                 }
                 listCard.getContent().add(row);
             }
