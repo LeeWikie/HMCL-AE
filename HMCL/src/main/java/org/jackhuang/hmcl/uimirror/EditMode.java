@@ -19,24 +19,28 @@ package org.jackhuang.hmcl.uimirror;
 
 import com.google.gson.Gson;
 import javafx.event.EventHandler;
+import javafx.geometry.Bounds;
 import javafx.geometry.Point2D;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.TextField;
-import javafx.scene.effect.BlurType;
-import javafx.scene.effect.DropShadow;
-import javafx.scene.effect.Effect;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Line;
+import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Text;
 import org.glavo.monetfx.ColorRole;
 import org.glavo.monetfx.ColorScheme;
@@ -61,22 +65,18 @@ import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 /**
  * ui-mirror EDIT MODE (v2). Toggle with Ctrl+Shift+E.
  *
- * <p>Operate mode = normal app. Edit mode freezes the live UI as a canvas:
- * hover passes through (native darken feedback), press/click/drag are captured.
- *
- * <p><b>Intents</b> (deliberate — nothing sends until confirmed):
+ * <p>Edit mode freezes the live UI as a canvas and accumulates a QUEUE of edit
+ * intents; nothing goes to Claude Code until you press Enter (or the HUD's 发送).
  * <ul>
- *   <li><b>Left-click</b> → SELECT a control (accent glow).</li>
- *   <li><b>Drag</b> a control onto another → stages a PENDING MOVE: source stays
- *       highlighted, a rigid connector line + endpoint dot are drawn to the target,
- *       target highlighted. Nothing sent yet.</li>
- *   <li><b>Enter</b> → SEND the pending move if any, else the selection.</li>
- *   <li><b>Right-click</b> anywhere → a sticky-note comment box at that spot; type +
- *       Enter pins it and sends an annotate intent. Multiple, independent; click a
- *       note to delete. Coexists with select/drag, doesn't disturb them.</li>
- *   <li><b>Esc</b> → cancel selection / pending move.</li>
+ *   <li><b>Left-click</b> a control → adds a SELECT intent (crisp accent outline; stays).</li>
+ *   <li><b>Drag</b> a control onto another → adds a MOVE intent (connector line + endpoint,
+ *       source & target outlined).</li>
+ *   <li><b>Right-click</b> → a sticky-note comment box; type + Enter adds an ANNOTATE intent.</li>
+ *   <li>The <b>HUD list</b> (draggable) shows every queued intent with a ✕ to remove it;
+ *       hovering a row emphasizes just that intent on the canvas.</li>
+ *   <li><b>Enter</b> → send the whole batch to Claude Code, then clear.  <b>Esc</b> → clear all.</li>
  * </ul>
- * See hmcl-ae-ui-mirror/DESIGN.md. Must run on the JavaFX Application Thread.
+ * (Free-draw → screenshot intent is a separate step.) Must run on the FX thread.
  */
 public final class EditMode {
     private EditMode() {
@@ -89,34 +89,52 @@ public final class EditMode {
             "-fx-background-color: rgba(255,241,170,0.97); -fx-text-fill: #333333; "
                     + "-fx-border-color: -monet-primary; -fx-border-radius: 4; -fx-background-radius: 4;";
 
-    // Force HTTP/1.1: the channel is a Node/Bun HTTP/1.1 server; Java's default HTTP/2
-    // attempts an h2c upgrade the server mishandles → connection stalls / "received no bytes".
     private static final HttpClient HTTP = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
+            .version(HttpClient.Version.HTTP_1_1)   // channel is HTTP/1.1; HTTP/2 h2c stalls it
             .connectTimeout(Duration.ofSeconds(2))
             .build();
+
+    /** One queued edit intent + its canvas visuals + its HUD row. */
+    private static final class Intent {
+        final String kind;              // "select" | "move" | "annotate"
+        Node control;
+        String controlPath;
+        Node target;                    // move
+        String targetPath;
+        String note;                    // annotate
+        Rectangle box;                  // control outline
+        Rectangle targetBox;            // move target outline
+        Line line;
+        Circle dot;
+        Node marker;                    // annotate sticky note
+        Node hudRow;
+
+        Intent(String kind) {
+            this.kind = kind;
+        }
+    }
+
+    private static final List<Intent> intents = new ArrayList<>();
 
     private static boolean active = false;
     private static EventHandler<MouseEvent> mouseFilter;
     private static EventHandler<KeyEvent> keyFilter;
 
-    private static Node selected;
-    private static Effect prevEffect;
-    private static String selectedPath;
-
-    // drag / pending-move state
+    // in-progress drag
+    private static Node pressControl;
+    private static String pressPath;
     private static double pressX, pressY;
     private static boolean dragging = false;
-    private static Node dropTarget;
-    private static Effect dropPrevEffect;
-    private static Node pendingTarget;
-    private static String pendingTargetPath;
+    private static Node dragDropTarget;
+    private static Line liveLine;
+    private static Circle liveDot;
 
-    // full-scene overlay
-    private static Pane overlay;
-    private static Line dragLine;
-    private static Circle endpointDot;
-    private static Pane commentsLayer;
+    // overlay layers
+    private static Pane overlay;        // pick-through root (only hud + comments interactive)
+    private static Pane decor;          // outlines, connectors, note markers (non-interactive)
+    private static Pane comments;       // active comment text editors
+    private static VBox hud;            // the intent list panel
+    private static VBox hudRows;        // rows container inside the hud
 
     public static void toggle() {
         if (active) exit();
@@ -136,7 +154,7 @@ public final class EditMode {
         ensureOverlay(scene);
         active = true;
         LOG.info("[ui-mirror] EDIT MODE on");
-        toast("UI 编辑模式：开（左键=选，拖=移动，右键=批注，回车=发送，Esc=取消，Ctrl+Shift+E=退出）");
+        toast("UI 编辑模式：开（左键=选，拖=移动，右键=批注，攒好后回车发送，Esc=清空）");
     }
 
     private static void exit() {
@@ -145,7 +163,7 @@ public final class EditMode {
             if (mouseFilter != null) scene.removeEventFilter(MouseEvent.ANY, mouseFilter);
             if (keyFilter != null) scene.removeEventFilter(KeyEvent.KEY_PRESSED, keyFilter);
         }
-        clearAll();
+        clearQueue();
         removeOverlay();
         active = false;
         dragging = false;
@@ -155,24 +173,24 @@ public final class EditMode {
         toast("UI 编辑模式：关");
     }
 
-    private static void onMouse(MouseEvent e) {
-        // Let events on our own comment widgets through — they're interactive.
-        if (isInComments(e.getTarget())) return;
+    // ---- input ----
 
+    private static void onMouse(MouseEvent e) {
+        if (isInteractive(e.getTarget())) return; // let hud + comment editors work
         var t = e.getEventType();
-        // Pass hover-family events through: drives the control's native :hover darken feedback.
         if (t == MouseEvent.MOUSE_MOVED
                 || t == MouseEvent.MOUSE_ENTERED || t == MouseEvent.MOUSE_ENTERED_TARGET
                 || t == MouseEvent.MOUSE_EXITED || t == MouseEvent.MOUSE_EXITED_TARGET) {
-            return;
+            return; // hover passes through → native darken feedback
         }
         e.consume();
         try {
             if (t == MouseEvent.MOUSE_PRESSED) {
                 if (e.getButton() == MouseButton.SECONDARY) {
-                    addComment(e); // right-click → independent sticky-note comment
-                } else if (e.getTarget() instanceof Node n) {
-                    select(n);
+                    addComment(e);
+                } else {
+                    pressControl = pickNode(e);
+                    pressPath = pressControl != null ? structuralPath(pressControl) : null;
                     pressX = e.getSceneX();
                     pressY = e.getSceneY();
                     dragging = false;
@@ -188,200 +206,279 @@ public final class EditMode {
     }
 
     private static void onDrag(MouseEvent e) {
-        if (selected == null) return;
+        if (pressControl == null) return;
         if (!dragging) {
             double dx = e.getSceneX() - pressX, dy = e.getSceneY() - pressY;
             if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
             dragging = true;
         }
-        setDropTarget(pickNode(e));
-        updateDragLine(e);
+        dragDropTarget = pickNode(e);
+        updateLiveLine(e);
     }
 
-    /** Release does NOT send — it stages a pending move (line + endpoint stay); Enter sends. */
     private static void onRelease(MouseEvent e) {
-        if (!dragging) return; // plain click: selection stays, Enter sends
-        dragging = false;
-        Node drop = pickNode(e);
-        if (drop != null && drop != selected) {
-            updateDragLine(e);      // snap line + dot to the exact release point, keep visible
-            setDropTarget(drop);    // keep target highlighted
-            pendingTarget = drop;
-            pendingTargetPath = structuralPath(drop);
-            toast("移动待发：回车确认，Esc 取消");
-        } else {
-            clearDropTarget();
-            hideDragLine();
-            toast("没落在有效目标上");
+        try {
+            if (!dragging) {
+                if (pressControl != null) addSelect(pressControl, pressPath);
+            } else {
+                Node drop = pickNode(e);
+                if (drop != null && drop != pressControl) {
+                    addMove(pressControl, pressPath, drop, structuralPath(drop));
+                } else {
+                    toast("没落在有效目标上");
+                }
+            }
+        } finally {
+            hideLiveLine();
+            dragging = false;
+            dragDropTarget = null;
+            pressControl = null;
+            pressPath = null;
         }
     }
 
     private static void onKey(KeyEvent e) {
-        if (focusInComments()) return; // a comment editor handles its own Enter/Esc
+        if (focusInComments()) return; // comment editor handles its own keys
         if (e.getCode() == KeyCode.ENTER) {
             e.consume();
-            commit();
+            sendBatch();
         } else if (e.getCode() == KeyCode.ESCAPE) {
             e.consume();
-            clearAll();
-            toast("已取消");
+            clearQueue();
+            toast("已清空队列");
         }
     }
 
-    /** New left-click → fresh selection (abandons any pending move; comments untouched). */
-    private static void select(Node node) {
-        clearAll();
-        selected = node;
-        prevEffect = node.getEffect();
-        node.setEffect(new DropShadow(BlurType.THREE_PASS_BOX, accentColor(), 12, 0.9, 0, 0));
-        selectedPath = structuralPath(node);
-        LOG.info("[ui-mirror] selected " + selectedPath);
+    // ---- intents ----
+
+    private static void addSelect(Node control, String path) {
+        Intent it = new Intent("select");
+        it.control = control;
+        it.controlPath = path;
+        it.box = outline(control, 2);
+        decor.getChildren().add(it.box);
+        addIntent(it, "选 " + label(control, path));
     }
 
-    /** Enter → send the pending move if any, else the current selection as a reference. */
-    private static void commit() {
-        if (pendingTarget != null && selected != null) {
-            doMove(selected, selectedPath, pendingTarget, pendingTargetPath);
-            clearAll();
+    private static void addMove(Node source, String sourcePath, Node dropNode, String dropPath) {
+        Intent it = new Intent("move");
+        it.control = source;
+        it.controlPath = sourcePath;
+        it.target = dropNode;
+        it.targetPath = dropPath;
+        it.box = outline(source, 2);
+        it.targetBox = outline(dropNode, 2);
+        Point2D a = centerOf(source), b = centerOf(dropNode);
+        it.line = connector(a, b);
+        it.dot = new Circle(b.getX(), b.getY(), 5, accentColor());
+        it.dot.setMouseTransparent(true);
+        decor.getChildren().addAll(it.box, it.targetBox, it.line, it.dot);
+        addIntent(it, "移 " + label(source, sourcePath) + " → " + label(dropNode, dropPath));
+    }
+
+    private static void addAnnotate(String note, Node ctx, String ctxPath, Node marker) {
+        Intent it = new Intent("annotate");
+        it.note = note;
+        it.control = ctx;
+        it.controlPath = ctxPath;
+        it.marker = marker; // already on the comments layer
+        addIntent(it, "注 " + note);
+    }
+
+    private static void addIntent(Intent it, String rowLabel) {
+        intents.add(it);
+        it.hudRow = makeHudRow(it, rowLabel);
+        if (hudRows != null) hudRows.getChildren().add(it.hudRow);
+        refreshHud();
+    }
+
+    private static void removeIntent(Intent it) {
+        intents.remove(it);
+        if (it.box != null) decor.getChildren().remove(it.box);
+        if (it.targetBox != null) decor.getChildren().remove(it.targetBox);
+        if (it.line != null) decor.getChildren().remove(it.line);
+        if (it.dot != null) decor.getChildren().remove(it.dot);
+        if (it.marker != null && comments != null) comments.getChildren().remove(it.marker);
+        if (it.hudRow != null && hudRows != null) hudRows.getChildren().remove(it.hudRow);
+        refreshHud();
+    }
+
+    private static void clearQueue() {
+        for (Intent it : new ArrayList<>(intents)) removeIntent(it);
+        intents.clear();
+        hideLiveLine();
+    }
+
+    /** Enter / 发送 → one batch event with all queued intents, then clear. */
+    private static void sendBatch() {
+        if (intents.isEmpty()) {
+            toast("队列是空的");
             return;
         }
-        if (selected == null) {
-            toast("没选中控件");
-            return;
+        List<Map<String, Object>> arr = new ArrayList<>();
+        for (Intent it : intents) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("action", it.kind);
+            if (it.controlPath != null) m.put("control_id", it.controlPath);
+            if (it.control != null) {
+                String tx = textOf(it.control);
+                if (tx != null && !tx.isEmpty()) m.put("text", tx);
+            }
+            if ("move".equals(it.kind)) {
+                m.put("target_id", it.targetPath);
+                String tt = textOf(it.target);
+                if (tt != null && !tt.isEmpty()) m.put("target_text", tt);
+            } else if ("annotate".equals(it.kind)) {
+                m.put("note", it.note);
+            }
+            arr.add(m);
         }
-        Map<String, Object> meta = baseMeta(selected, selectedPath);
-        meta.put("action", "select");
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("action", "batch");
+        meta.put("intents", arr);
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("content", "选中控件 " + label(selected, selectedPath));
+        payload.put("content", intents.size() + " 个编辑意图（batch）");
         payload.put("meta", meta);
         post(payload);
-        toast("已发送 → Claude");
+        toast("已发送 " + intents.size() + " 个意图 → Claude");
+        clearQueue();
     }
 
-    private static void doMove(Node source, String sourcePath, Node dropNode, String dropPath) {
-        Map<String, Object> meta = baseMeta(source, sourcePath);
-        meta.put("action", "move");
-        meta.put("target_id", dropPath);
-        meta.put("target_fx_type", nearestFxType(dropNode.getClass()));
-        String dstText = textOf(dropNode);
-        if (dstText != null && !dstText.isEmpty()) meta.put("target_text", dstText);
+    // ---- canvas visuals ----
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("content", "把控件 " + label(source, sourcePath) + " 移动到 " + label(dropNode, dropPath));
-        payload.put("meta", meta);
-        post(payload);
-        LOG.info("[ui-mirror] move " + sourcePath + " -> " + dropPath);
-        toast("已发送移动 → Claude");
+    private static Rectangle outline(Node n, double strokeW) {
+        Bounds b = n.localToScene(n.getBoundsInLocal());
+        Point2D tl = decor.sceneToLocal(b.getMinX(), b.getMinY());
+        Rectangle r = new Rectangle(tl.getX(), tl.getY(), b.getWidth(), b.getHeight());
+        r.setFill(Color.TRANSPARENT);
+        r.setStroke(accentColor());
+        r.setStrokeWidth(strokeW);
+        r.setArcWidth(6);
+        r.setArcHeight(6);
+        r.setMouseTransparent(true);
+        return r;
     }
 
-    private static void setDropTarget(Node node) {
-        if (node == selected) node = null; // never target the source itself
-        if (node == dropTarget) return;
-        if (dropTarget != null) dropTarget.setEffect(dropPrevEffect);
-        dropTarget = node;
-        if (node != null) {
-            dropPrevEffect = node.getEffect();
-            node.setEffect(new DropShadow(BlurType.THREE_PASS_BOX, accentColor(), 20, 0.55, 0, 0));
-        } else {
-            dropPrevEffect = null;
-        }
+    private static Line connector(Point2D a, Point2D b) {
+        Line l = new Line(a.getX(), a.getY(), b.getX(), b.getY());
+        l.setStroke(accentColor());
+        l.setStrokeWidth(2.5);
+        l.setMouseTransparent(true);
+        return l;
     }
 
-    private static void clearDropTarget() {
-        if (dropTarget != null) dropTarget.setEffect(dropPrevEffect);
-        dropTarget = null;
-        dropPrevEffect = null;
+    private static Point2D centerOf(Node n) {
+        Bounds b = n.localToScene(n.getBoundsInLocal());
+        return decor.sceneToLocal(b.getMinX() + b.getWidth() / 2, b.getMinY() + b.getHeight() / 2);
     }
 
-    private static Node pickNode(MouseEvent e) {
-        var pr = e.getPickResult();
-        return pr == null ? null : pr.getIntersectedNode();
-    }
-
-    /** Reset selection + pending move + drag line (comments are independent, left alone). */
-    private static void clearAll() {
-        hideDragLine();
-        clearDropTarget();
-        if (selected != null) selected.setEffect(prevEffect);
-        selected = null;
-        prevEffect = null;
-        selectedPath = null;
-        pendingTarget = null;
-        pendingTargetPath = null;
-    }
-
-    // ---- overlay: drag connector (rigid line + endpoint dot) + comments layer ----
-
-    private static void ensureOverlay(Scene scene) {
-        if (overlay != null) return;
-        if (!(scene.getRoot() instanceof Decorator d)) return;
-        Pane wrap = d.getDrawerWrapper();
-        if (wrap == null) return;
-        dragLine = new Line();
-        dragLine.setStrokeWidth(2.5);
-        dragLine.setVisible(false);
-        dragLine.setMouseTransparent(true);
-        endpointDot = new Circle(5);
-        endpointDot.setVisible(false);
-        endpointDot.setMouseTransparent(true);
-        commentsLayer = new Pane();
-        commentsLayer.setManaged(false);
-        commentsLayer.setPickOnBounds(false);
-        overlay = new Pane(dragLine, endpointDot, commentsLayer);
-        overlay.setManaged(false);      // don't disturb layout
-        overlay.setPickOnBounds(false); // empty areas stay pick-through (drop detection); only notes are interactive
-        wrap.getChildren().add(overlay);
-    }
-
-    private static void removeOverlay() {
-        if (overlay != null && overlay.getParent() instanceof Pane pp) pp.getChildren().remove(overlay);
-        overlay = null;
-        dragLine = null;
-        endpointDot = null;
-        commentsLayer = null;
-    }
-
-    private static void updateDragLine(MouseEvent e) {
-        if (dragLine == null || overlay == null || selected == null) return;
-        var b = selected.localToScene(selected.getBoundsInLocal());
-        Point2D p1 = overlay.sceneToLocal(b.getMinX() + b.getWidth() / 2, b.getMinY() + b.getHeight() / 2);
-        Point2D p2 = overlay.sceneToLocal(e.getSceneX(), e.getSceneY());
-        if (p1 == null || p2 == null) return;
+    private static void updateLiveLine(MouseEvent e) {
+        if (liveLine == null || decor == null || pressControl == null) return;
+        Point2D a = centerOf(pressControl);
+        Point2D b = decor.sceneToLocal(e.getSceneX(), e.getSceneY());
         Color c = accentColor();
-        dragLine.setStroke(c);
-        dragLine.setStartX(p1.getX());
-        dragLine.setStartY(p1.getY());
-        dragLine.setEndX(p2.getX());
-        dragLine.setEndY(p2.getY());
-        dragLine.setVisible(true);
-        endpointDot.setFill(c);
-        endpointDot.setCenterX(p2.getX());
-        endpointDot.setCenterY(p2.getY());
-        endpointDot.setVisible(true);
+        liveLine.setStroke(c);
+        liveLine.setStartX(a.getX());
+        liveLine.setStartY(a.getY());
+        liveLine.setEndX(b.getX());
+        liveLine.setEndY(b.getY());
+        liveLine.setVisible(true);
+        liveDot.setFill(c);
+        liveDot.setCenterX(b.getX());
+        liveDot.setCenterY(b.getY());
+        liveDot.setVisible(true);
     }
 
-    private static void hideDragLine() {
-        if (dragLine != null) dragLine.setVisible(false);
-        if (endpointDot != null) endpointDot.setVisible(false);
+    private static void hideLiveLine() {
+        if (liveLine != null) liveLine.setVisible(false);
+        if (liveDot != null) liveDot.setVisible(false);
     }
 
-    // ---- comments (right-click sticky notes; independent of select/drag) ----
-
-    private static boolean isInComments(Object target) {
-        if (commentsLayer == null || !(target instanceof Node)) return false;
-        for (Node c = (Node) target; c != null; c = c.getParent())
-            if (c == commentsLayer) return true;
-        return false;
+    private static void emphasize(Intent it, boolean on) {
+        if (it.box != null) {
+            it.box.setStrokeWidth(on ? 4 : 2);
+            if (on) it.box.toFront();
+        }
+        if (it.targetBox != null) it.targetBox.setStrokeWidth(on ? 4 : 2);
+        if (it.marker != null) it.marker.setOpacity(on ? 1.0 : 0.97);
     }
 
-    private static boolean focusInComments() {
-        Scene scene = Controllers.getScene();
-        return scene != null && isInComments(scene.getFocusOwner());
+    // ---- HUD list ----
+
+    private static Node makeHudRow(Intent it, String labelText) {
+        Label lbl = new Label(labelText);
+        lbl.setMaxWidth(220);
+        lbl.setStyle("-fx-text-fill: -monet-on-surface;");
+        HBox.setHgrow(lbl, Priority.ALWAYS);
+        lbl.setMaxWidth(Double.MAX_VALUE);
+
+        Label close = new Label("✕");
+        close.setStyle("-fx-text-fill: -monet-on-surface-variant; -fx-padding: 0 4; -fx-cursor: hand;");
+        close.setOnMouseClicked(ev -> {
+            removeIntent(it);
+            ev.consume();
+        });
+
+        HBox row = new HBox(6, lbl, close);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4;");
+        row.setOnMouseEntered(ev -> {
+            row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4; -fx-background-color: -monet-surface-container-high;");
+            emphasize(it, true);
+        });
+        row.setOnMouseExited(ev -> {
+            row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4;");
+            emphasize(it, false);
+        });
+        return row;
     }
+
+    private static void refreshHud() {
+        if (hud == null) return;
+        hud.setVisible(!intents.isEmpty());
+    }
+
+    private static VBox buildHud() {
+        Label title = new Label("编辑意图");
+        title.setStyle("-fx-text-fill: -monet-on-surface; -fx-font-weight: bold; -fx-padding: 2 0;");
+
+        hudRows = new VBox(2);
+
+        Label send = new Label("发送 ⏎");
+        send.setStyle("-fx-text-fill: -monet-on-primary; -fx-background-color: -monet-primary; "
+                + "-fx-padding: 4 10; -fx-background-radius: 4; -fx-cursor: hand;");
+        send.setOnMouseClicked(ev -> {
+            sendBatch();
+            ev.consume();
+        });
+
+        VBox box = new VBox(6, title, hudRows, send);
+        box.setStyle("-fx-background-color: -monet-surface-container; -fx-padding: 8 10; "
+                + "-fx-background-radius: 8; -fx-border-color: -monet-outline-variant; -fx-border-radius: 8;");
+        box.setManaged(false);
+        box.setMaxWidth(Region.USE_PREF_SIZE);
+        box.setVisible(false);
+        box.relocate(24, 60);
+
+        // drag the panel by its title
+        final double[] off = new double[2];
+        title.setOnMousePressed(ev -> {
+            off[0] = ev.getSceneX() - box.getLayoutX();
+            off[1] = ev.getSceneY() - box.getLayoutY();
+            ev.consume();
+        });
+        title.setOnMouseDragged(ev -> {
+            box.relocate(ev.getSceneX() - off[0], ev.getSceneY() - off[1]);
+            ev.consume();
+        });
+        return box;
+    }
+
+    // ---- comments (right-click sticky notes) ----
 
     private static void addComment(MouseEvent e) {
-        if (commentsLayer == null) return;
-        Point2D pos = commentsLayer.sceneToLocal(e.getSceneX(), e.getSceneY());
+        if (comments == null) return;
+        Point2D pos = comments.sceneToLocal(e.getSceneX(), e.getSceneY());
         if (pos == null) return;
         Node ctx = pickNode(e);
         String ctxPath = ctx != null ? structuralPath(ctx) : null;
@@ -394,17 +491,17 @@ public final class EditMode {
         tf.setOnAction(ev -> confirmComment(tf, pos, ctx, ctxPath));
         tf.addEventHandler(KeyEvent.KEY_PRESSED, ke -> {
             if (ke.getCode() == KeyCode.ESCAPE) {
-                commentsLayer.getChildren().remove(tf);
+                comments.getChildren().remove(tf);
                 ke.consume();
             }
         });
-        commentsLayer.getChildren().add(tf);
+        comments.getChildren().add(tf);
         tf.requestFocus();
     }
 
     private static void confirmComment(TextField tf, Point2D pos, Node ctx, String ctxPath) {
         String text = tf.getText() == null ? "" : tf.getText().trim();
-        commentsLayer.getChildren().remove(tf);
+        comments.getChildren().remove(tf);
         if (text.isEmpty()) return;
 
         Label marker = new Label("📝 " + text);
@@ -413,43 +510,85 @@ public final class EditMode {
         marker.setMaxWidth(240);
         marker.setStyle(NOTE_STYLE + "-fx-padding: 3 7;");
         marker.relocate(pos.getX(), pos.getY());
-        marker.setOnMouseClicked(ev -> { // click a note to delete it
-            commentsLayer.getChildren().remove(marker);
-            ev.consume();
-        });
-        commentsLayer.getChildren().add(marker);
+        comments.getChildren().add(marker);
+        addAnnotate(text, ctx, ctxPath, marker);
+        // clicking the note (or its ✕ in the list) removes it via removeIntent
+        marker.setOnMouseClicked(ev -> ev.consume());
+    }
 
-        Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("action", "annotate");
-        meta.put("note", text);
-        meta.put("x", Math.round(pos.getX()));
-        meta.put("y", Math.round(pos.getY()));
-        if (ctxPath != null) meta.put("control_id", ctxPath);
-        String ctxText = ctx != null ? textOf(ctx) : null;
-        if (ctxText != null && !ctxText.isEmpty()) meta.put("near_text", ctxText);
+    // ---- overlay lifecycle ----
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("content", "批注：" + text + (ctxPath != null ? "（在 " + label(ctx, ctxPath) + " 附近）" : ""));
-        payload.put("meta", meta);
-        post(payload);
-        toast("已发送批注 → Claude");
+    private static void ensureOverlay(Scene scene) {
+        if (overlay != null) return;
+        if (!(scene.getRoot() instanceof Decorator d)) return;
+        Pane wrap = d.getDrawerWrapper();
+        if (wrap == null) return;
+
+        decor = new Pane();
+        decor.setManaged(false);
+        decor.setMouseTransparent(true);
+
+        liveLine = new Line();
+        liveLine.setStrokeWidth(2.5);
+        liveLine.setVisible(false);
+        liveDot = new Circle(5);
+        liveDot.setVisible(false);
+        decor.getChildren().addAll(liveLine, liveDot);
+
+        comments = new Pane();
+        comments.setManaged(false);
+        comments.setPickOnBounds(false);
+
+        hud = buildHud();
+
+        overlay = new Pane(decor, comments, hud);
+        overlay.setManaged(false);
+        overlay.setPickOnBounds(false); // empty areas pick-through; only hud + comments interactive
+        wrap.getChildren().add(overlay);
+    }
+
+    private static void removeOverlay() {
+        if (overlay != null && overlay.getParent() instanceof Pane pp) pp.getChildren().remove(overlay);
+        overlay = null;
+        decor = null;
+        comments = null;
+        hud = null;
+        hudRows = null;
+        liveLine = null;
+        liveDot = null;
+    }
+
+    private static boolean isInteractive(Object target) {
+        if (!(target instanceof Node)) return false;
+        for (Node c = (Node) target; c != null; c = c.getParent())
+            if (c == comments || c == hud) return true;
+        return false;
+    }
+
+    private static boolean focusInComments() {
+        Scene scene = Controllers.getScene();
+        if (scene == null || comments == null) return false;
+        for (Node c = scene.getFocusOwner(); c != null; c = c.getParent())
+            if (c == comments) return true;
+        return false;
     }
 
     // ---- shared bits ----
 
-    private static Map<String, Object> baseMeta(Node node, String path) {
-        Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("control_id", path);
-        meta.put("fx_type", nearestFxType(node.getClass()));
-        meta.put("type", node.getClass().getName());
-        String text = textOf(node);
-        if (text != null && !text.isEmpty()) meta.put("text", text);
-        return meta;
+    private static Node pickNode(MouseEvent e) {
+        var pr = e.getPickResult();
+        return pr == null ? null : pr.getIntersectedNode();
     }
 
     private static String label(Node n, String path) {
         String t = textOf(n);
-        return (t != null && !t.isEmpty()) ? "「" + t + "」" : path;
+        return (t != null && !t.isEmpty()) ? "「" + t + "」" : shortPath(path);
+    }
+
+    private static String shortPath(String path) {
+        if (path == null) return "?";
+        int i = path.lastIndexOf('/');
+        return i >= 0 ? path.substring(i + 1) : path;
     }
 
     private static void post(Map<String, Object> payload) {
@@ -486,10 +625,6 @@ public final class EditMode {
         return Color.web("#5C6BC0");
     }
 
-    /**
-     * Bottom-up structural path of a node, e.g. {@code root/StackPane[0]/.../LineButton[3]}.
-     * Format matches {@link SceneExporter} so exporter paths and live paths agree.
-     */
     static String structuralPath(Node node) {
         List<String> parts = new ArrayList<>();
         Node cur = node;
