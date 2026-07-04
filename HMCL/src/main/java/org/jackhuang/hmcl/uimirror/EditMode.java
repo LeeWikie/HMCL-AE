@@ -470,9 +470,9 @@ public final class EditMode {
         VBox box = new VBox(6, title, hudRows, send);
         box.setStyle("-fx-background-color: -monet-surface-container; -fx-padding: 8 10; "
                 + "-fx-background-radius: 8; -fx-border-color: -monet-outline-variant; -fx-border-radius: 8;");
-        box.setManaged(false);
-        box.setMinWidth(240);
-        box.setPrefWidth(280);
+        box.setMinWidth(300);   // managed child of the overlay → the layout pass gives it this width
+        box.setPrefWidth(300);
+        box.setMaxWidth(300);
         box.setVisible(false);
         box.relocate(24, 60);
 
@@ -604,8 +604,11 @@ public final class EditMode {
         hud = buildHud();
 
         overlay = new Pane(decor, comments, hud);
-        overlay.setManaged(false);
+        // overlay must be MANAGED so the layout pass reaches it and actually sizes the HUD;
+        // fill the wrapper so overlay-local coords line up with scene coords (origin top-left).
         overlay.setPickOnBounds(false); // empty areas pick-through; only hud + comments interactive
+        overlay.setMaxWidth(Double.MAX_VALUE);
+        overlay.setMaxHeight(Double.MAX_VALUE);
         wrap.getChildren().add(overlay);
     }
 
