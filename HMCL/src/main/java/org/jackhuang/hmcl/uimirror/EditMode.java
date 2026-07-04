@@ -39,6 +39,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -70,7 +71,12 @@ public final class EditMode {
 
     private static final String CHANNEL_URL =
             System.getenv().getOrDefault("UIMIRROR_CHANNEL_URL", "http://127.0.0.1:8789/event");
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
+    // Force HTTP/1.1: the channel is a Node/Bun HTTP/1.1 server; Java's default HTTP/2
+    // attempts an h2c upgrade the server mishandles → connection stalls / "received no bytes".
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(2))
+            .build();
 
     private static boolean active = false;
     private static EventHandler<MouseEvent> filter;
@@ -203,6 +209,7 @@ public final class EditMode {
 
             String json = new Gson().toJson(payload);
             HttpRequest req = HttpRequest.newBuilder(URI.create(CHANNEL_URL))
+                    .timeout(Duration.ofSeconds(3))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                     .build();
