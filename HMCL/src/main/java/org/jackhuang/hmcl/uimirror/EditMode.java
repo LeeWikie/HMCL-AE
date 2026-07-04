@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.uimirror;
 
 import com.google.gson.Gson;
+import com.jfoenix.controls.JFXTextField;
 import javafx.application.Platform;
 import javafx.event.EventHandler;
 import javafx.geometry.Bounds;
@@ -109,6 +110,8 @@ public final class EditMode {
         Circle dot;
         Node marker;                    // annotate sticky note
         Node hudRow;
+        final List<String> attachedNotes = new ArrayList<>();   // per-intent comments (right-click the HUD row)
+        final List<Node> attachedMarkers = new ArrayList<>();
 
         Intent(String kind) {
             this.kind = kind;
@@ -224,7 +227,7 @@ public final class EditMode {
             } else {
                 Node drop = pickNode(e);
                 if (drop != null && drop != pressControl) {
-                    addMove(pressControl, pressPath, drop, structuralPath(drop));
+                    addMove(pressControl, pressPath, drop, structuralPath(drop), e.getSceneX(), e.getSceneY());
                 } else {
                     toast("没落在有效目标上");
                 }
@@ -261,7 +264,8 @@ public final class EditMode {
         addIntent(it, "选中：" + label(control, path));
     }
 
-    private static void addMove(Node source, String sourcePath, Node dropNode, String dropPath) {
+    private static void addMove(Node source, String sourcePath, Node dropNode, String dropPath,
+                                double releaseSceneX, double releaseSceneY) {
         Intent it = new Intent("move");
         it.control = source;
         it.controlPath = sourcePath;
@@ -269,7 +273,9 @@ public final class EditMode {
         it.targetPath = dropPath;
         it.box = outline(source, 2);
         it.targetBox = outline(dropNode, 2);
-        Point2D a = centerOf(source), b = centerOf(dropNode);
+        // endpoint at the ACTUAL release point — drawing it at the drop node's center made
+        // two drops into the same big container look like "snapping" to the first endpoint
+        Point2D a = centerOf(source), b = decor.sceneToLocal(releaseSceneX, releaseSceneY);
         it.line = connector(a, b);
         it.dot = new Circle(b.getX(), b.getY(), 5, accentColor());
         it.dot.setMouseTransparent(true);
@@ -300,6 +306,7 @@ public final class EditMode {
         if (it.line != null) decor.getChildren().remove(it.line);
         if (it.dot != null) decor.getChildren().remove(it.dot);
         if (it.marker != null && comments != null) comments.getChildren().remove(it.marker);
+        if (comments != null) for (Node m : it.attachedMarkers) comments.getChildren().remove(m);
         if (it.hudRow != null && hudRows != null) hudRows.getChildren().remove(it.hudRow);
         refreshHud();
     }
@@ -332,6 +339,7 @@ public final class EditMode {
             } else if ("annotate".equals(it.kind)) {
                 m.put("note", it.note);
             }
+            if (!it.attachedNotes.isEmpty()) m.put("notes", new ArrayList<>(it.attachedNotes));
             arr.add(m);
         }
         Map<String, Object> meta = new LinkedHashMap<>();
@@ -423,6 +431,12 @@ public final class EditMode {
         HBox row = new HBox(6, lbl, close);
         row.setAlignment(Pos.CENTER_LEFT);
         row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4;");
+        row.setOnMouseClicked(ev -> { // right-click a row → comment on THIS intent, shown at its spot
+            if (ev.getButton() == MouseButton.SECONDARY) {
+                addCommentForIntent(it);
+                ev.consume();
+            }
+        });
         row.setOnMouseEntered(ev -> {
             row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4; -fx-background-color: -monet-surface-container-high;");
             emphasize(it, true);
@@ -476,6 +490,52 @@ public final class EditMode {
         return box;
     }
 
+    /** Where an intent lives on the canvas: line midpoint for moves, else its outline/marker. */
+    private static Point2D intentAnchor(Intent it) {
+        if (it.line != null)
+            return new Point2D((it.line.getStartX() + it.line.getEndX()) / 2,
+                    (it.line.getStartY() + it.line.getEndY()) / 2);
+        if (it.box != null)
+            return new Point2D(it.box.getX(), it.box.getY() + it.box.getHeight() + 4);
+        if (it.marker != null)
+            return new Point2D(it.marker.getLayoutX(), it.marker.getLayoutY() + 26);
+        return new Point2D(100, 100);
+    }
+
+    /** Right-click on a HUD row → a note box at the intent's own spot (midpoint of a move's line). */
+    private static void addCommentForIntent(Intent it) {
+        if (comments == null) return;
+        Point2D pos = intentAnchor(it);
+        JFXTextField tf = new JFXTextField();
+        tf.setPromptText("评论此意图…回车确认，Esc 取消");
+        tf.setManaged(false);
+        tf.setStyle(NOTE_STYLE + "-fx-padding: 2 6;");
+        tf.resizeRelocate(pos.getX(), pos.getY(), 220, 34);
+        tf.setOnAction(ev -> {
+            String text = tf.getText() == null ? "" : tf.getText().trim();
+            comments.getChildren().remove(tf);
+            if (text.isEmpty()) return;
+            Label marker = new Label("💬 " + text);
+            marker.setManaged(false);
+            marker.setWrapText(true);
+            marker.setMaxWidth(240);
+            marker.setStyle(NOTE_STYLE + "-fx-padding: 3 7;");
+            marker.relocate(pos.getX(), pos.getY());
+            marker.setOnMouseClicked(mev -> mev.consume());
+            comments.getChildren().add(marker);
+            it.attachedNotes.add(text);
+            it.attachedMarkers.add(marker);
+        });
+        tf.addEventHandler(KeyEvent.KEY_PRESSED, ke -> {
+            if (ke.getCode() == KeyCode.ESCAPE) {
+                comments.getChildren().remove(tf);
+                ke.consume();
+            }
+        });
+        comments.getChildren().add(tf);
+        Platform.runLater(tf::requestFocus);
+    }
+
     // ---- comments (right-click sticky notes) ----
 
     private static void addComment(MouseEvent e) {
@@ -485,11 +545,11 @@ public final class EditMode {
         Node ctx = pickNode(e);
         String ctxPath = ctx != null ? structuralPath(ctx) : null;
 
-        TextField tf = new TextField();
+        JFXTextField tf = new JFXTextField(); // reuse HMCL's material input (robust focus/IME/styling)
         tf.setPromptText("批注…回车确认，Esc 取消");
         tf.setManaged(false);
-        tf.setStyle(NOTE_STYLE);
-        tf.resizeRelocate(pos.getX(), pos.getY(), 220, 30);
+        tf.setStyle(NOTE_STYLE + "-fx-padding: 2 6;");
+        tf.resizeRelocate(pos.getX(), pos.getY(), 220, 34);
         tf.setOnAction(ev -> confirmComment(tf, pos, ctx, ctxPath));
         tf.addEventHandler(KeyEvent.KEY_PRESSED, ke -> {
             if (ke.getCode() == KeyCode.ESCAPE) {
