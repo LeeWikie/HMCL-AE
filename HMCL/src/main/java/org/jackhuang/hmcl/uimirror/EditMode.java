@@ -26,6 +26,8 @@ import javafx.scene.control.Labeled;
 import javafx.scene.effect.BlurType;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.effect.Effect;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Text;
@@ -49,19 +51,24 @@ import java.util.Map;
 import static org.jackhuang.hmcl.util.logging.Logger.LOG;
 
 /**
- * ui-mirror EDIT MODE (v2 · first cut). Toggle with Ctrl+Shift+E.
+ * ui-mirror EDIT MODE (v2). Toggle with Ctrl+Shift+E.
  *
  * <p>Operate mode = normal app. Edit mode freezes the live UI as a canvas:
  * hover events pass through so controls give their native darken feedback,
- * while press/click/drag are captured (the app doesn't act on them). Clicking
- * a control SELECTS it — it gets a theme-accent glow, its structural path is
- * computed, and the intent is POSTed to the running channel (channel.ts /event),
- * which pushes it to Claude Code. See hmcl-ae-ui-mirror/DESIGN.md.
+ * while press/click/drag are captured (the app doesn't act on them).
  *
- * <p>NOTE (first cut): selection feedback is an accent DropShadow glow, a stand-in
- * for the crisp accent OUTLINE we designed — the outline needs a visual overlay
- * pane whose alignment must be tuned at runtime. Drag gestures are captured but
- * not yet interpreted (only single-select emits for now).
+ * <p><b>Select vs. send are decoupled</b> (deliberate, one-at-a-time — no flood):
+ * <ul>
+ *   <li><b>Click</b> a control → SELECT it locally: theme-accent glow, structural
+ *       path computed. Nothing is sent.</li>
+ *   <li><b>Enter</b> → SEND the current selection as ONE intent to the channel
+ *       (channel.ts /event → Claude Code). This is "比划完，敲个回车，送过去".</li>
+ *   <li><b>Esc</b> → clear the current selection.</li>
+ * </ul>
+ *
+ * <p>NOTE (WIP): selection feedback is an accent glow, a stand-in for the crisp
+ * accent OUTLINE (needs an overlay pane, tuned at runtime). Drag gestures are
+ * captured but not yet interpreted. See hmcl-ae-ui-mirror/DESIGN.md.
  *
  * <p>Must run on the JavaFX Application Thread.
  */
@@ -71,6 +78,7 @@ public final class EditMode {
 
     private static final String CHANNEL_URL =
             System.getenv().getOrDefault("UIMIRROR_CHANNEL_URL", "http://127.0.0.1:8789/event");
+
     // Force HTTP/1.1: the channel is a Node/Bun HTTP/1.1 server; Java's default HTTP/2
     // attempts an h2c upgrade the server mishandles → connection stalls / "received no bytes".
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -79,9 +87,11 @@ public final class EditMode {
             .build();
 
     private static boolean active = false;
-    private static EventHandler<MouseEvent> filter;
+    private static EventHandler<MouseEvent> mouseFilter;
+    private static EventHandler<KeyEvent> keyFilter;
     private static Node selected;
     private static Effect prevEffect;
+    private static String selectedPath;
 
     public static void toggle() {
         if (active) exit();
@@ -94,27 +104,33 @@ public final class EditMode {
             LOG.warning("[ui-mirror] no scene; cannot enter edit mode");
             return;
         }
-        filter = EditMode::onMouse;
-        scene.addEventFilter(MouseEvent.ANY, filter);
+        mouseFilter = EditMode::onMouse;
+        keyFilter = EditMode::onKey;
+        scene.addEventFilter(MouseEvent.ANY, mouseFilter);
+        scene.addEventFilter(KeyEvent.KEY_PRESSED, keyFilter);
         active = true;
         LOG.info("[ui-mirror] EDIT MODE on");
-        toast("UI 编辑模式：开（点控件=选中并发给 Claude；再按 Ctrl+Shift+E 退出）");
+        toast("UI 编辑模式：开（点=选中，回车=发给 Claude，Esc=取消，Ctrl+Shift+E=退出）");
     }
 
     private static void exit() {
         Scene scene = Controllers.getScene();
-        if (scene != null && filter != null) scene.removeEventFilter(MouseEvent.ANY, filter);
+        if (scene != null) {
+            if (mouseFilter != null) scene.removeEventFilter(MouseEvent.ANY, mouseFilter);
+            if (keyFilter != null) scene.removeEventFilter(KeyEvent.KEY_PRESSED, keyFilter);
+        }
         clearSelection();
         active = false;
-        filter = null;
+        mouseFilter = null;
+        keyFilter = null;
         LOG.info("[ui-mirror] EDIT MODE off");
         toast("UI 编辑模式：关");
     }
 
     private static void onMouse(MouseEvent e) {
         var t = e.getEventType();
-        // Pass hover-family events through: this drives the control's native :hover
-        // darken feedback for free (no foreign highlight needed for aiming).
+        // Pass hover-family events through: drives the control's native :hover darken
+        // feedback for free (no foreign highlight needed for aiming).
         if (t == MouseEvent.MOUSE_MOVED
                 || t == MouseEvent.MOUSE_ENTERED || t == MouseEvent.MOUSE_ENTERED_TARGET
                 || t == MouseEvent.MOUSE_EXITED || t == MouseEvent.MOUSE_EXITED_TARGET) {
@@ -131,6 +147,18 @@ public final class EditMode {
         }
     }
 
+    private static void onKey(KeyEvent e) {
+        if (e.getCode() == KeyCode.ENTER) {
+            e.consume();
+            commit();
+        } else if (e.getCode() == KeyCode.ESCAPE) {
+            e.consume();
+            clearSelection();
+            toast("已取消选中");
+        }
+    }
+
+    /** Click → select locally only (no send). Enter commits it. */
     private static void select(Node node) {
         clearSelection();
         selected = node;
@@ -138,18 +166,27 @@ public final class EditMode {
         // Selection mark: accent-colored glow (theme -monet-primary). Interim stand-in
         // for the crisp outline (which needs an overlay pane, tuned at runtime).
         node.setEffect(new DropShadow(BlurType.THREE_PASS_BOX, accentColor(), 12, 0.9, 0, 0));
+        selectedPath = structuralPath(node);
+        LOG.info("[ui-mirror] selected " + selectedPath + " (Enter to send)");
+    }
 
-        String path = structuralPath(node);
-        LOG.info("[ui-mirror] selected " + path);
-        emit(node, path);
+    /** Enter → deliberately send the current selection as ONE intent (no per-click flood). */
+    private static void commit() {
+        if (selected == null) {
+            toast("没选中控件");
+            return;
+        }
+        emit(selected, selectedPath);
+        toast("已发送 → Claude");
     }
 
     private static void clearSelection() {
         if (selected != null) {
             selected.setEffect(prevEffect);
-            selected = null;
-            prevEffect = null;
         }
+        selected = null;
+        prevEffect = null;
+        selectedPath = null;
     }
 
     private static void toast(String msg) {
@@ -170,8 +207,7 @@ public final class EditMode {
 
     /**
      * Bottom-up structural path of a node, e.g. {@code root/StackPane[0]/.../LineButton[3]}.
-     * Format matches {@link SceneExporter} so paths from the exporter and from a live
-     * click refer to the same node.
+     * Format matches {@link SceneExporter} so exporter paths and live-click paths agree.
      */
     static String structuralPath(Node node) {
         List<String> parts = new ArrayList<>();
