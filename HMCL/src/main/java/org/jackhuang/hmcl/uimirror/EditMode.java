@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.uimirror;
 
 import com.google.gson.Gson;
+import javafx.application.Platform;
 import javafx.event.EventHandler;
 import javafx.geometry.Bounds;
 import javafx.geometry.Point2D;
@@ -257,7 +258,7 @@ public final class EditMode {
         it.controlPath = path;
         it.box = outline(control, 2);
         decor.getChildren().add(it.box);
-        addIntent(it, "选 " + label(control, path));
+        addIntent(it, "选中：" + label(control, path));
     }
 
     private static void addMove(Node source, String sourcePath, Node dropNode, String dropPath) {
@@ -273,7 +274,7 @@ public final class EditMode {
         it.dot = new Circle(b.getX(), b.getY(), 5, accentColor());
         it.dot.setMouseTransparent(true);
         decor.getChildren().addAll(it.box, it.targetBox, it.line, it.dot);
-        addIntent(it, "移 " + label(source, sourcePath) + " → " + label(dropNode, dropPath));
+        addIntent(it, "拖拽：" + label(source, sourcePath) + " → " + label(dropNode, dropPath));
     }
 
     private static void addAnnotate(String note, Node ctx, String ctxPath, Node marker) {
@@ -282,7 +283,7 @@ public final class EditMode {
         it.control = ctx;
         it.controlPath = ctxPath;
         it.marker = marker; // already on the comments layer
-        addIntent(it, "注 " + note);
+        addIntent(it, "批注：" + note);
     }
 
     private static void addIntent(Intent it, String rowLabel) {
@@ -407,10 +408,10 @@ public final class EditMode {
 
     private static Node makeHudRow(Intent it, String labelText) {
         Label lbl = new Label(labelText);
-        lbl.setMaxWidth(220);
+        lbl.setWrapText(true);
+        lbl.setMaxWidth(Double.MAX_VALUE);
         lbl.setStyle("-fx-text-fill: -monet-on-surface;");
         HBox.setHgrow(lbl, Priority.ALWAYS);
-        lbl.setMaxWidth(Double.MAX_VALUE);
 
         Label close = new Label("✕");
         close.setStyle("-fx-text-fill: -monet-on-surface-variant; -fx-padding: 0 4; -fx-cursor: hand;");
@@ -456,7 +457,8 @@ public final class EditMode {
         box.setStyle("-fx-background-color: -monet-surface-container; -fx-padding: 8 10; "
                 + "-fx-background-radius: 8; -fx-border-color: -monet-outline-variant; -fx-border-radius: 8;");
         box.setManaged(false);
-        box.setMaxWidth(Region.USE_PREF_SIZE);
+        box.setMinWidth(240);
+        box.setPrefWidth(280);
         box.setVisible(false);
         box.relocate(24, 60);
 
@@ -496,7 +498,7 @@ public final class EditMode {
             }
         });
         comments.getChildren().add(tf);
-        tf.requestFocus();
+        Platform.runLater(tf::requestFocus); // defer so focus takes after this event dispatch
     }
 
     private static void confirmComment(TextField tf, Point2D pos, Node ctx, String ctxPath) {
@@ -570,6 +572,14 @@ public final class EditMode {
         if (scene == null || comments == null) return false;
         for (Node c = scene.getFocusOwner(); c != null; c = c.getParent())
             if (c == comments) return true;
+        return false;
+    }
+
+    /** True if the key event targets our overlay — so HMCL's decorator must not redirect it. */
+    public static boolean ownsKeyTarget(Object target) {
+        if (overlay == null || !(target instanceof Node)) return false;
+        for (Node c = (Node) target; c != null; c = c.getParent())
+            if (c == overlay) return true;
         return false;
     }
 

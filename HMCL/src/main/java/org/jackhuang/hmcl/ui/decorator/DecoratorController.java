@@ -106,6 +106,11 @@ public class DecoratorController {
                 return;
             }
 
+            // ui-mirror: let the edit-mode overlay keep its own key events (comment input / IME)
+            if (org.jackhuang.hmcl.uimirror.EditMode.ownsKeyTarget(e.getTarget())) {
+                return;
+            }
+
             Node newTarget;
 
             JFXDialogPane currentDialogPane = null;
