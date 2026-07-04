@@ -138,7 +138,8 @@ public final class EditMode {
     private static Pane decor;          // outlines, connectors, note markers (non-interactive)
     private static Pane comments;       // active comment text editors
     private static VBox hud;            // the intent list panel
-    private static VBox hudRows;        // rows container inside the hud
+    private static VBox moveRows, selectRows, annotateRows;   // per-kind row containers
+    private static VBox moveSec, selectSec, annotateSec;      // per-kind sections (hidden when empty)
 
     public static void toggle() {
         if (active) exit();
@@ -295,7 +296,9 @@ public final class EditMode {
     private static void addIntent(Intent it, String rowLabel) {
         intents.add(it);
         it.hudRow = makeHudRow(it, rowLabel);
-        if (hudRows != null) hudRows.getChildren().add(it.hudRow);
+        VBox rows = "move".equals(it.kind) ? moveRows
+                : "annotate".equals(it.kind) ? annotateRows : selectRows;
+        if (rows != null) rows.getChildren().add(it.hudRow);
         refreshHud();
     }
 
@@ -307,7 +310,7 @@ public final class EditMode {
         if (it.dot != null) decor.getChildren().remove(it.dot);
         if (it.marker != null && comments != null) comments.getChildren().remove(it.marker);
         if (comments != null) for (Node m : it.attachedMarkers) comments.getChildren().remove(m);
-        if (it.hudRow != null && hudRows != null) hudRows.getChildren().remove(it.hudRow);
+        if (it.hudRow != null && it.hudRow.getParent() instanceof Pane pp) pp.getChildren().remove(it.hudRow);
         refreshHud();
     }
 
@@ -428,9 +431,12 @@ public final class EditMode {
             ev.consume();
         });
 
+        String accent = "move".equals(it.kind) ? "-monet-tertiary"
+                : "annotate".equals(it.kind) ? "#E0A800" : "-monet-primary";
+        String base = "-fx-padding: 3 6; -fx-background-radius: 4; -fx-border-width: 0 0 0 3; -fx-border-color: " + accent + ";";
         HBox row = new HBox(6, lbl, close);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4;");
+        row.setStyle(base);
         row.setOnMouseClicked(ev -> { // right-click a row → comment on THIS intent, shown at its spot
             if (ev.getButton() == MouseButton.SECONDARY) {
                 addCommentForIntent(it);
@@ -438,11 +444,11 @@ public final class EditMode {
             }
         });
         row.setOnMouseEntered(ev -> {
-            row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4; -fx-background-color: -monet-surface-container-high;");
+            row.setStyle(base + "-fx-background-color: -monet-surface-container-high;");
             emphasize(it, true);
         });
         row.setOnMouseExited(ev -> {
-            row.setStyle("-fx-padding: 3 6; -fx-background-radius: 4;");
+            row.setStyle(base);
             emphasize(it, false);
         });
         return row;
@@ -450,14 +456,29 @@ public final class EditMode {
 
     private static void refreshHud() {
         if (hud == null) return;
+        toggleSection(moveSec, moveRows);
+        toggleSection(selectSec, selectRows);
+        toggleSection(annotateSec, annotateRows);
         hud.setVisible(!intents.isEmpty());
+    }
+
+    private static void toggleSection(VBox sec, VBox rows) {
+        if (sec == null || rows == null) return;
+        boolean has = !rows.getChildren().isEmpty();
+        sec.setVisible(has);
+        sec.setManaged(has);
     }
 
     private static VBox buildHud() {
         Label title = new Label("编辑意图");
         title.setStyle("-fx-text-fill: -monet-on-surface; -fx-font-weight: bold; -fx-padding: 2 0;");
 
-        hudRows = new VBox(2);
+        moveRows = new VBox(2);
+        selectRows = new VBox(2);
+        annotateRows = new VBox(2);
+        moveSec = sectionOf("拖拽 / 移动", "-monet-tertiary-container", "-monet-on-tertiary-container", moveRows);
+        selectSec = sectionOf("选中", "-monet-primary-container", "-monet-on-primary-container", selectRows);
+        annotateSec = sectionOf("批注", "rgba(255,241,170,0.92)", "#333333", annotateRows);
 
         Label send = new Label("发送 ⏎");
         send.setStyle("-fx-text-fill: -monet-on-primary; -fx-background-color: -monet-primary; "
@@ -467,7 +488,7 @@ public final class EditMode {
             ev.consume();
         });
 
-        VBox box = new VBox(6, title, hudRows, send);
+        VBox box = new VBox(6, title, moveSec, selectSec, annotateSec, send);
         box.setStyle("-fx-background-color: -monet-surface-container; -fx-padding: 8 10; "
                 + "-fx-background-radius: 8; -fx-border-color: -monet-outline-variant; -fx-border-radius: 8;");
         box.setMinWidth(300);   // managed child of the overlay → the layout pass gives it this width
@@ -490,22 +511,42 @@ public final class EditMode {
         return box;
     }
 
+    /** A titled, colour-coded section (hidden until it has rows). */
+    private static VBox sectionOf(String name, String bg, String fg, VBox rows) {
+        Label h = new Label(name);
+        h.setMaxWidth(Double.MAX_VALUE);
+        h.setStyle("-fx-text-fill: " + fg + "; -fx-background-color: " + bg + "; "
+                + "-fx-padding: 2 8; -fx-background-radius: 4; -fx-font-weight: bold;");
+        VBox sec = new VBox(3, h, rows);
+        sec.setVisible(false);
+        sec.setManaged(false);
+        return sec;
+    }
+
     /** Where an intent lives on the canvas: line midpoint for moves, else its outline/marker. */
     private static Point2D intentAnchor(Intent it) {
         if (it.line != null)
             return new Point2D((it.line.getStartX() + it.line.getEndX()) / 2,
                     (it.line.getStartY() + it.line.getEndY()) / 2);
         if (it.box != null)
-            return new Point2D(it.box.getX(), it.box.getY() + it.box.getHeight() + 4);
+            return new Point2D(it.box.getX() + 8, it.box.getY() + 8); // top-left inside (big containers overflow if placed below)
         if (it.marker != null)
             return new Point2D(it.marker.getLayoutX(), it.marker.getLayoutY() + 26);
         return new Point2D(100, 100);
     }
 
+    /** Keep a popup fully on screen (big VBox anchors were landing off the bottom). */
+    private static Point2D clampToOverlay(Point2D p, double w, double h) {
+        if (overlay == null) return p;
+        double maxX = Math.max(8, overlay.getWidth() - w - 8);
+        double maxY = Math.max(8, overlay.getHeight() - h - 8);
+        return new Point2D(Math.max(8, Math.min(p.getX(), maxX)), Math.max(8, Math.min(p.getY(), maxY)));
+    }
+
     /** Right-click on a HUD row → a note box at the intent's own spot (midpoint of a move's line). */
     private static void addCommentForIntent(Intent it) {
         if (comments == null) return;
-        Point2D pos = intentAnchor(it);
+        Point2D pos = clampToOverlay(intentAnchor(it), 220, 34);
         JFXTextField tf = new JFXTextField();
         tf.setPromptText("评论此意图…回车确认，Esc 取消");
         tf.setManaged(false);
@@ -618,7 +659,8 @@ public final class EditMode {
         decor = null;
         comments = null;
         hud = null;
-        hudRows = null;
+        moveRows = selectRows = annotateRows = null;
+        moveSec = selectSec = annotateSec = null;
         liveLine = null;
         liveDot = null;
     }
