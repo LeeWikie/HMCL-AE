@@ -77,6 +77,12 @@
 - **ToolParams 举一反三**：弱模型猜错参数名是系统性问题，抽共享 helper 套 17 个工具。
 - **发布 v0.2.1-beta** + GitHub Actions `AE Release` workflow（CI 构建上传，替代本地传大文件）。
 
+### 第 8 天 · 技能自动注入 + TestFX 管线 + v0.3.0-beta（07-08）
+- **技能自动匹配注入**（#64 的技能路线，用户实测"模型自觉读技能"弱模型走不通后拍板）：`triggers:` frontmatter + `SkillMatcher` 确定性匹配（CJK 子串/ASCII 词边界）+ 会话级粘性注入（上限 3）+ 设置开关；内置技能 6→13（联机/存档备份/NBT改档/光影资源包/下载网络/Java内存/整合包）。
+- **测试线换代**：撤掉 `uimirror`/`ai-cli-test`（归档 tag），落地 **TestFX 事件注入管线**（物理 robot 在日常使用的 HiDPI 桌面上抢鼠标+脱靶，改用 `fire()`；headless 自动跳过保 CI 绿）；`MarkdownCodeCopyFxTest` 端到端验证 #54，`ReasoningCardFxTest` 验证 #53，`forget()` 数据层测试验证 #56。
+- 决策：#65 更新渠道归入正式版范畴；仓库根目录清理+截图归档+开发记录入库。
+- **发布 v0.3.0-beta**（tag + GitHub Release + AE Release workflow CI 构建）。
+
 ### 第 6~7 天 · 16 领域缺口审计 + 自主 /loop 修复（07-02~07-05）→ 会话 06
 - 产出 `docs/agent-client-gap-audit.md`（506 行，16 领域全覆盖），新增 net-new 任务 **#53–#65**。
 - 结论：Agent 内核 / MC 深度集成 / 执行防护 = 被低估的强项；短板 = 合规底座、MCP 死功能、流式切会话 bug、思考过程折叠、i18n。
@@ -92,8 +98,8 @@
 |---|---|---|
 | v0.1.0-beta | 06-28 | 首个可用发布：AI Agent、原生 UI、约 44 工具、Markdown、流式 |
 | v0.2.0-beta | 06-29 | NBT 套件、安全体系、CLI 测试台、后台任务、备份引擎、国内搜索 |
-| **v0.2.1-beta** | 06-30 | 当前最新发布：P1 数据/安全修复、UI 重整、rebrand、AE Release CI |
-| 开发中（未发布） | 07-02~ | 16 领域缺口审计后的 /loop 批量修复（思考折叠/成本护栏/隐私同意/注入防御…） |
+| v0.2.1-beta | 06-30 | P1 数据/安全修复、UI 重整、rebrand、AE Release CI |
+| **v0.3.0-beta** | 07-08 | 当前最新发布：技能自动匹配注入+13内置技能、缺口审计批次全部内容（思考折叠/成本护栏/隐私同意/注入防御…）、TestFX 测试管线 |
 
 > git 上共约 **126 条 AI 相关提交**（`feat(ai)`/`fix(ai)`/`ui(ai)`/`docs(ai)`/`ci(ae)` 等），时间 2026-06-28 → 07-03，均已合入 `ai-feature` 与 `main`。
 
