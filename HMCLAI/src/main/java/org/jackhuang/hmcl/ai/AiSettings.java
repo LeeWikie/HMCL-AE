@@ -213,6 +213,9 @@ public final class AiSettings {
         @SerializedName("autoRecallMemory")
         private boolean autoRecallMemory = DEFAULT_AUTO_RECALL_MEMORY;
 
+        @SerializedName("autoSkillInjection")
+        private boolean autoSkillInjection = DEFAULT_AUTO_SKILL_INJECTION;
+
         @SerializedName("worldBackupRetention")
         private int worldBackupRetention = DEFAULT_WORLD_BACKUP_RETENTION;
 
@@ -276,6 +279,7 @@ public final class AiSettings {
     private final StringProperty customInstructions;
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
+    private final BooleanProperty autoSkillInjection;
 
     // World backup engine
     private final IntegerProperty worldBackupRetention;
@@ -372,6 +376,11 @@ public final class AiSettings {
     /// Default value for the auto-recall-memory flag (off by default).
     public static final boolean DEFAULT_AUTO_RECALL_MEMORY = false;
 
+    /// Default value for automatic skill playbook injection (on by default — this is the
+    /// weak-model path: trigger-matched SKILL.md bodies are inlined into the prompt so the
+    /// model does not have to decide to read them first).
+    public static final boolean DEFAULT_AUTO_SKILL_INJECTION = true;
+
     /// Default number of newest world-backup snapshots to retain (older ones are pruned).
     public static final int DEFAULT_WORLD_BACKUP_RETENTION = 10;
 
@@ -435,6 +444,7 @@ public final class AiSettings {
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
+        this.autoSkillInjection = new SimpleBooleanProperty(this, "autoSkillInjection", DEFAULT_AUTO_SKILL_INJECTION);
         this.worldBackupRetention = new SimpleIntegerProperty(this, "worldBackupRetention", DEFAULT_WORLD_BACKUP_RETENTION);
         this.autoBackupBeforeNbtEdit = new SimpleBooleanProperty(this, "autoBackupBeforeNbtEdit", DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT);
         this.autoCompactEnabled = new SimpleBooleanProperty(this, "autoCompactEnabled", DEFAULT_AUTO_COMPACT_ENABLED);
@@ -639,6 +649,11 @@ public final class AiSettings {
     /// Returns the auto-recall-memory flag property.
     public BooleanProperty autoRecallMemoryProperty() {
         return autoRecallMemory;
+    }
+
+    /// Returns the auto-skill-injection flag property.
+    public BooleanProperty autoSkillInjectionProperty() {
+        return autoSkillInjection;
     }
 
     /// Returns the world-backup retention count property (newest snapshots to keep).
@@ -873,6 +888,11 @@ public final class AiSettings {
     /// Returns whether auto-recall-memory injection is enabled.
     public boolean isAutoRecallMemory() {
         return autoRecallMemory.get();
+    }
+
+    /// Returns whether trigger-matched skill playbooks are auto-injected into the prompt.
+    public boolean isAutoSkillInjection() {
+        return autoSkillInjection.get();
     }
 
     /// Returns the number of newest world-backup snapshots to retain.
@@ -1152,6 +1172,7 @@ public final class AiSettings {
         data.customInstructions = customInstructions.get();
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
+        data.autoSkillInjection = autoSkillInjection.get();
         data.worldBackupRetention = worldBackupRetention.get();
         data.autoBackupBeforeNbtEdit = autoBackupBeforeNbtEdit.get();
         data.autoCompactEnabled = autoCompactEnabled.get();
@@ -1337,6 +1358,7 @@ public final class AiSettings {
         responseLanguage.set(data.responseLanguage != null && !data.responseLanguage.isEmpty()
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);
         autoRecallMemory.set(data.autoRecallMemory);
+        autoSkillInjection.set(data.autoSkillInjection);
         worldBackupRetention.set(data.worldBackupRetention > 0 ? data.worldBackupRetention : DEFAULT_WORLD_BACKUP_RETENTION);
         autoBackupBeforeNbtEdit.set(data.autoBackupBeforeNbtEdit);
         autoCompactEnabled.set(data.autoCompactEnabled);

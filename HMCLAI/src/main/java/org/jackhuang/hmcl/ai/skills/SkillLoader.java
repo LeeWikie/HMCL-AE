@@ -35,6 +35,7 @@ public final class SkillLoader {
         String name = null;
         String description = null;
         String version = null;
+        List<String> triggers = List.of();
         Map<String, Object> permissions = Map.of();
 
         try {
@@ -75,6 +76,7 @@ public final class SkillLoader {
                         case "name" -> name = value;
                         case "description" -> description = value;
                         case "version" -> version = value;
+                        case "triggers" -> triggers = parseTriggers(value);
                         case "permissions" -> { /* nested; skip for now */ }
                     }
                 }
@@ -88,7 +90,52 @@ public final class SkillLoader {
             errors.add("Failed to read " + file + ": " + e.getMessage());
         }
 
-        return new SkillManifest(name, description, version, file.toString(), permissions, errors);
+        return new SkillManifest(name, description, version, file.toString(), triggers, permissions, errors);
+    }
+
+    /// Splits a `triggers:` frontmatter value into individual phrases. Accepts ASCII commas,
+    /// full-width commas and enumeration commas as separators so authors can write naturally
+    /// in either language: `triggers: 游戏崩溃, crash, 闪退、进不去`.
+    static List<String> parseTriggers(String value) {
+        if (value.isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : value.split("[,，、]")) {
+            String t = part.trim();
+            // strip optional per-phrase quotes: triggers: "crash", "闪退"
+            if (t.length() >= 2 && (t.startsWith("\"") && t.endsWith("\"")
+                    || t.startsWith("'") && t.endsWith("'"))) {
+                t = t.substring(1, t.length() - 1).trim();
+            }
+            if (!t.isEmpty()) {
+                out.add(t);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /// Reads a skill's body (everything after the frontmatter block), capped at
+    /// {@code maxChars}. Returns an empty string when the file is unreadable — callers
+    /// treat that as "nothing to inject" rather than an error.
+    public static String readBody(SkillManifest manifest, int maxChars) {
+        if (manifest.getPath() == null) return "";
+        try {
+            Path file = Path.of(manifest.getPath());
+            if (Files.size(file) > 128L * 1024) return "";
+            String content = Files.readString(file, StandardCharsets.UTF_8);
+            if (content.startsWith("---")) {
+                int end = content.indexOf("---", 3);
+                if (end >= 0) {
+                    content = content.substring(end + 3);
+                }
+            }
+            content = content.strip();
+            if (content.length() > maxChars) {
+                content = content.substring(0, maxChars) + "\n…[truncated — read the SKILL.md file for the rest]";
+            }
+            return content;
+        } catch (IOException | RuntimeException e) {
+            return "";
+        }
     }
 
     /// Names of skills bundled with the app under classpath `/assets/skills/&lt;name&gt;/SKILL.md`.
@@ -96,7 +143,10 @@ public final class SkillLoader {
     /// listable skills and stay up to date with the app.
     private static final List<String> BUILTIN_SKILLS = List.of(
             "config-hmcl-ae", "config-hmcl",
-            "diagnose-crash", "optimize-performance", "manage-accounts", "install-and-mod");
+            "diagnose-crash", "optimize-performance", "manage-accounts", "install-and-mod",
+            "multiplayer-and-servers", "manage-worlds-and-backups", "edit-save-data",
+            "resourcepacks-and-shaders", "fix-download-and-network", "java-and-memory",
+            "use-modpacks");
 
     /// Copies bundled built-in skills into the skills directory, overwriting the managed
     /// copy so it tracks the app version. User-created skills are left untouched.

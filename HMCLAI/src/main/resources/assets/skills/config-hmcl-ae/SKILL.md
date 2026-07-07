@@ -1,7 +1,8 @@
 ---
 name: config-hmcl-ae
 description: How to configure HMCL-AE itself — add model providers/models, MCP servers, skills, and web search by editing the AE JSON config files. Use whenever the user asks to configure the AI assistant, add a model/provider, set up an MCP server (e.g. "configure tavily-mcp"), install a skill/skill-store (e.g. "install SkillHub, CLI only"), or enable web search.
-version: 1.0
+version: 1.1
+triggers: 配置ai, ai设置, mcp, 联网搜索, 添加模型, 添加提供商, 加个模型, 配置模型, 装技能, 安装技能, provider, 搜索引擎
 ---
 
 # Configuring HMCL-AE (the AI assistant configures itself)

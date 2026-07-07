@@ -1,7 +1,8 @@
 ---
 name: config-hmcl
 description: How to read and modify native HMCL launcher configuration — instance memory/Java/JVM args, game directories, launcher theme/background, proxy — by editing HMCL's JSON config files. Use when the user asks to change Minecraft memory, Java path, window size, auto-join server, game directory, launcher theme/background, or proxy.
-version: 1.0
+version: 1.1
+triggers: 游戏目录, 窗口大小, 全屏, 启动器背景, 启动器主题, 换背景, 换主题, 代理, jvm参数, 启动参数, 启动器设置, 自动进服
 ---
 
 # Configuring native HMCL (launcher & instance settings)

@@ -1,0 +1,67 @@
+package org.jackhuang.hmcl.ai.skills;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/// Locks the deterministic trigger-matching rules the auto-skill-injection path relies on:
+/// CJK containment, ASCII word boundaries, specificity ordering and the match limit.
+public class SkillMatcherTest {
+
+    private static SkillManifest skill(String name, String... triggers) {
+        return new SkillManifest(name, "desc", "1.0", "/x/" + name + "/SKILL.md",
+                List.of(triggers), java.util.Map.of(), List.of());
+    }
+
+    @Test
+    public void cjkTriggerMatchesBySubstring() {
+        SkillManifest crash = skill("diagnose-crash", "崩溃", "闪退");
+        List<SkillManifest> hits = SkillMatcher.match("我的游戏又闪退了怎么办", List.of(crash), 2);
+        assertEquals(1, hits.size());
+        assertEquals("diagnose-crash", hits.get(0).getName());
+    }
+
+    @Test
+    public void asciiTriggerRequiresWordBoundary() {
+        SkillManifest mods = skill("install-and-mod", "mod");
+        // "model" must NOT fire the "mod" trigger…
+        assertTrue(SkillMatcher.match("please switch the model", List.of(mods), 2).isEmpty());
+        // …but a real word hit must.
+        assertEquals(1, SkillMatcher.match("install a mod please", List.of(mods), 2).size());
+        // and matching is case-insensitive.
+        assertEquals(1, SkillMatcher.match("Install A MOD", List.of(mods), 2).size());
+    }
+
+    @Test
+    public void moreSpecificMatchWinsOrdering() {
+        SkillManifest broad = skill("optimize-performance", "卡");
+        SkillManifest specific = skill("java-and-memory", "内存溢出", "爆内存");
+        List<SkillManifest> hits = SkillMatcher.match("游戏卡住了还内存溢出", List.of(broad, specific), 2);
+        assertEquals(2, hits.size());
+        // summed matched-trigger length: 内存溢出(4) > 卡(1)
+        assertEquals("java-and-memory", hits.get(0).getName());
+    }
+
+    @Test
+    public void limitCapsResults() {
+        SkillManifest a = skill("a", "存档");
+        SkillManifest b = skill("b", "备份");
+        SkillManifest c = skill("c", "恢复");
+        List<SkillManifest> hits = SkillMatcher.match("把存档备份然后恢复", List.of(a, b, c), 2);
+        assertEquals(2, hits.size());
+    }
+
+    @Test
+    public void skillWithoutTriggersNeverMatches() {
+        SkillManifest none = skill("no-triggers");
+        assertTrue(SkillMatcher.match("崩溃 crash mod 备份", List.of(none), 2).isEmpty());
+    }
+
+    @Test
+    public void blankInputMatchesNothing() {
+        SkillManifest crash = skill("diagnose-crash", "崩溃");
+        assertTrue(SkillMatcher.match("   ", List.of(crash), 2).isEmpty());
+    }
+}

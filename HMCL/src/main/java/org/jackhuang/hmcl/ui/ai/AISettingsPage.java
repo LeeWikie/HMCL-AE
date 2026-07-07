@@ -1934,6 +1934,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         aiSettings.memoryEnabledProperty()),
                 toggleRow("自动调用记忆", "每次对话开始时，把全局记忆里的条目注入系统提示（限 1.5KB）",
                         aiSettings.autoRecallMemoryProperty()),
+                toggleRow("技能自动匹配", "你的消息命中技能触发词时，自动把该技能手册喂给 AI 照着做（对能力较弱的模型帮助最大）",
+                        aiSettings.autoSkillInjectionProperty()),
                 crashAnalysis,
                 customInstructions,
                 toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",

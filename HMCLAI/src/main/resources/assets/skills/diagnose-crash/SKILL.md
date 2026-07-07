@@ -1,7 +1,8 @@
 ---
 name: diagnose-crash
 description: How to diagnose a Minecraft crash or launch failure end-to-end and fix it. Use whenever the user says the game crashed, won't start, closed immediately, black screen, or shares an error/crash report ("游戏崩溃了","进不去","闪退","打不开","报错").
-version: 1.0
+version: 1.1
+triggers: 崩溃, 闪退, 打不开, 进不去, 进不了, 启动失败, 启动不了, 报错, 崩了, 黑屏, 白屏, 卡在启动, 无法启动, crash, crashed, won't start, error report
 ---
 
 # Diagnose a Minecraft crash / launch failure

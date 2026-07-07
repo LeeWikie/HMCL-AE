@@ -1,7 +1,8 @@
 ---
 name: install-and-mod
-description: How to install a Minecraft version with a mod loader and add mods correctly, respecting version isolation. Use when the user wants to install/create a new version, set up Forge/Fabric/NeoForge/Quilt, or add mods ("装个版本","整合","装模组","加mod","Fabric","Forge","光影","资源包").
-version: 1.0
+description: How to install a Minecraft version with a mod loader and add mods correctly, respecting version isolation. Use when the user wants to install/create a new version, set up Forge/Fabric/NeoForge/Quilt, or add mods ("装个版本","装模组","加mod","Fabric","Forge").
+version: 1.1
+triggers: 装个版本, 安装版本, 装版本, 新建版本, 装模组, 加模组, 装mod, 加mod, 推荐模组, 模组, fabric, forge, neoforge, quilt, optifine, install mod, 安装游戏, 装个我的世界
 ---
 
 # Install a version + add mods (the right way)

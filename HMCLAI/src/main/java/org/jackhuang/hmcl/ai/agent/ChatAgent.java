@@ -67,6 +67,13 @@ public final class ChatAgent {
     private final AiSettings settings;
     private final AiPromptBuilder promptBuilder;
 
+    /// Skills whose trigger phrases matched a user message in this conversation. Sticky for the
+    /// session (a mid-task "继续" must not drop the playbook) and size-capped: the oldest match
+    /// is evicted so a long wandering chat can't accrete every playbook into the prompt.
+    /// Only touched on the agent's single-thread executor.
+    private final java.util.LinkedHashSet<String> activeSkills = new java.util.LinkedHashSet<>();
+    private static final int MAX_ACTIVE_SKILLS = 3;
+
     /// Provider-reported prompt (input) token count of the FIRST model call of the most recent
     /// streaming turn — i.e. the size of the persisted context (system + history + user) before
     /// any in-turn tool churn, which is the best proxy for what carries into the next turn.
@@ -205,7 +212,7 @@ public final class ChatAgent {
     /// reported prompt-token count, so it stays robust whether or not the provider reports usage
     /// (the non-streaming path reports none, so the heuristic carries it there).
     private int estimateContextTokens() {
-        String prompt = promptBuilder != null ? promptBuilder.build() : FALLBACK_SYSTEM_PROMPT;
+        String prompt = promptBuilder != null ? promptBuilder.build(activeSkills) : FALLBACK_SYSTEM_PROMPT;
         int chars = prompt.length();
         for (LlmMessage m : session.getMessages()) {
             String c = m.getContent();
@@ -297,10 +304,26 @@ public final class ChatAgent {
         }, executor);
     }
 
+    /// Matches {@code userInput} against skill triggers and folds the hits into the sticky
+    /// per-conversation set (evicting the oldest beyond {@link #MAX_ACTIVE_SKILLS}).
+    /// Runs on the agent executor before each turn's request is built.
+    private void updateActiveSkills(String userInput) {
+        if (promptBuilder == null) {
+            return;
+        }
+        activeSkills.addAll(promptBuilder.matchSkills(userInput));
+        while (activeSkills.size() > MAX_ACTIVE_SKILLS) {
+            java.util.Iterator<String> it = activeSkills.iterator();
+            it.next();
+            it.remove();
+        }
+    }
+
     private String doSend(String userInput) throws LlmException {
         // Auto-compact (if near the context limit) BEFORE the new user message is added, so the
         // message just typed is never folded into the summary and lost as a distinct turn.
         maybeAutoCompact();
+        updateActiveSkills(userInput);
         session.addMessage(new LlmMessage("user", userInput));
         String response = client.sendMessage(buildMessages()).join();
         session.addMessage(new LlmMessage("assistant", response));
@@ -330,6 +353,7 @@ public final class ChatAgent {
                                  @Nullable java.util.function.BooleanSupplier cancelled) throws LlmException {
         // See doSend: compact before adding the user message so it isn't summarised away.
         maybeAutoCompact();
+        updateActiveSkills(userInput);
         // Groups this turn's messages (user input + tool records + assistant reply) for replay.
         final String turnId = java.util.UUID.randomUUID().toString();
         LlmMessage userMessage = new LlmMessage("user", userInput);
@@ -478,7 +502,7 @@ public final class ChatAgent {
 
     private List<LlmMessage> buildMessages() {
         List<LlmMessage> all = new ArrayList<>();
-        String prompt = promptBuilder != null ? promptBuilder.build() : FALLBACK_SYSTEM_PROMPT;
+        String prompt = promptBuilder != null ? promptBuilder.build(activeSkills) : FALLBACK_SYSTEM_PROMPT;
         all.add(new LlmMessage("system", prompt));
         // Tool records are history/UI artifacts — never sent to the model (a bare "tool" role
         // without the provider's tool-call plumbing would be rejected by the APIs).

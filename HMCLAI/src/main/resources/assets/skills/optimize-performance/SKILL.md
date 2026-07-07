@@ -1,7 +1,8 @@
 ---
 name: optimize-performance
 description: How to make Minecraft run smoother — raise FPS, cut lag/stutter, set memory and install performance mods. Use when the user complains about lag, low FPS, stutter, freezing, or "卡","掉帧","优化","提升性能","太卡了".
-version: 1.0
+version: 1.1
+triggers: 卡顿, 掉帧, 太卡, 很卡, 好卡, 卡爆, 优化, 提升性能, 性能, 流畅, 帧数, fps, lag, stutter
 ---
 
 # Optimize Minecraft performance

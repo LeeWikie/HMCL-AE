@@ -1,7 +1,8 @@
 ---
 name: manage-accounts
 description: How to log in, add, or switch Minecraft accounts (Microsoft / offline). Use when the user wants to log in, sign in, add or change account, "登录","账号","换号","微软登录","离线账号","正版登录".
-version: 1.0
+version: 1.1
+triggers: 登录, 登陆, 账号, 帐号, 换号, 微软, 离线账号, 正版, 皮肤, 披风, login, sign in, account, skin
 ---
 
 # Manage Minecraft accounts

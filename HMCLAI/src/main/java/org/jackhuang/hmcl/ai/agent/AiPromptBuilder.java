@@ -6,6 +6,9 @@ import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
 import org.jackhuang.hmcl.ai.remember.RememberStore;
+import org.jackhuang.hmcl.ai.skills.SkillLoader;
+import org.jackhuang.hmcl.ai.skills.SkillManifest;
+import org.jackhuang.hmcl.ai.skills.SkillMatcher;
 import org.jackhuang.hmcl.ai.skills.SkillRegistry;
 import org.jackhuang.hmcl.ai.tools.AiExecutionPolicy;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -144,7 +147,35 @@ public final class AiPromptBuilder {
         this.rememberStore = rememberStore;
     }
 
+    /// Per-injected-skill body cap (chars). Keeps a runaway SKILL.md from flooding the prompt.
+    private static final int SKILL_BODY_MAX_CHARS = 6000;
+    /// How many skills a single user message may newly activate.
+    static final int SKILL_MATCH_LIMIT = 2;
+
+    /// Matches {@code userInput} against the enabled skills' trigger phrases and returns the
+    /// matched skill names (most specific first, at most {@link #SKILL_MATCH_LIMIT}).
+    /// Returns nothing when auto-injection is disabled in settings.
+    public List<String> matchSkills(String userInput) {
+        if (!settings.isAutoSkillInjection()) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        for (SkillManifest m : SkillMatcher.match(userInput, skillRegistry.enabled(), SKILL_MATCH_LIMIT)) {
+            if (m.getName() != null) {
+                names.add(m.getName());
+            }
+        }
+        return names;
+    }
+
     public String build() {
+        return build(java.util.Set.of());
+    }
+
+    /// Builds the system prompt, additionally inlining the full playbook body of every skill in
+    /// {@code activeSkillNames} (the skills auto-matched so far in this conversation) so the
+    /// model gets the steps without having to decide to read a file first.
+    public String build(java.util.Collection<String> activeSkillNames) {
         List<String> blocks = new ArrayList<>();
         blocks.add(PERSONA);
         blocks.add("");
@@ -167,8 +198,10 @@ public final class AiPromptBuilder {
         String skillSummary = skillRegistry.summarizeEnabled();
         if (!skillSummary.startsWith("(no")) {
             blocks.add("");
-            blocks.add("Domain skills — when a task matches one of these, READ its SKILL.md (path shown) "
-                    + "for the full step-by-step playbook BEFORE acting on a multi-step request:\n" + skillSummary);
+            blocks.add("Domain skills — step-by-step playbooks for common tasks. When the user's request matches "
+                    + "one, its full playbook is AUTO-LOADED into this prompt (see 'Active skill playbooks' below, "
+                    + "if any) — follow it. For a multi-step task matching a skill that was NOT auto-loaded, READ "
+                    + "its SKILL.md (path shown) before acting:\n" + skillSummary);
         }
 
         AiExecutionPolicy policy = new AiExecutionPolicy(
@@ -199,12 +232,45 @@ public final class AiPromptBuilder {
             blocks.add("用户自定义指令（务必遵守）:\n" + custom);
         }
 
+        // Auto-loaded skill playbooks: sticky per conversation, so they change rarely — keep them
+        // just above the runtime context to preserve the stable, prompt-cacheable prefix above.
+        String skillBlock = activeSkillBlock(activeSkillNames);
+        if (skillBlock != null) {
+            blocks.add("");
+            blocks.add(skillBlock);
+        }
+
         // Runtime context (free disk / selected instance) is the most volatile part of the prompt, so
         // it goes LAST — everything above forms a longer, stabler prefix the provider can prompt-cache.
         blocks.add("");
         blocks.add(buildRuntimeContext());
 
         return String.join("\n", blocks);
+    }
+
+    /// Renders the full playbook bodies of the given skills, or {@code null} when none resolve.
+    @Nullable
+    private String activeSkillBlock(java.util.Collection<String> activeSkillNames) {
+        if (activeSkillNames.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (SkillManifest m : skillRegistry.enabled()) {
+            if (m.getName() == null || !activeSkillNames.contains(m.getName())) {
+                continue;
+            }
+            String body = SkillLoader.readBody(m, SKILL_BODY_MAX_CHARS);
+            if (body.isEmpty()) {
+                continue;
+            }
+            sb.append("### ").append(m.getName()).append('\n').append(body).append("\n\n");
+        }
+        if (sb.length() == 0) {
+            return null;
+        }
+        return "Active skill playbooks (auto-loaded because the user's request matched their triggers).\n"
+                + "FOLLOW THESE STEPS for the matching part of the task — do not improvise a different procedure,\n"
+                + "and do NOT read these SKILL.md files again (the full content is already here):\n\n" + sb.toString().strip();
     }
 
     /// Maps a reply-language mode to a directive, or {@code null} for `auto` / unknown.
