@@ -80,25 +80,14 @@ public final class SetInstanceMemoryTool implements Tool {
             return ToolResult.failure("The game repository is not loaded yet; please try again in a moment.");
         }
 
-        Object instanceObj = parameters.get("instance");
-        String instance;
-        if (instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()) {
-            instance = ((String) instanceObj).trim();
-        } else {
-            @Nullable String selected = Profiles.getSelectedInstance();
-            if (selected == null) {
-                return ToolResult.failure("No instance is selected and no 'instance' parameter was given.");
-            }
-            instance = selected;
+        // NOTE: generic aliases are NOT accepted: the 'maxMemoryMB' parameter below already
+        // honours the generic 'query' fallback, and the instance resolver must not steal it.
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (target.failure() != null) {
+            return target.failure();
         }
-
-        try {
-            if (!repository.hasVersion(instance)) {
-                return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile.");
-            }
-        } catch (Throwable e) {
-            return ToolResult.failure("Failed to verify instance '" + instance + "': " + e.getMessage());
-        }
+        final String instance = target.name();
 
         int currentEffective;
         try {

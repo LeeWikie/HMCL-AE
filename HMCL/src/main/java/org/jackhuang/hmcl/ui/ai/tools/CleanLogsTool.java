@@ -79,25 +79,15 @@ public final class CleanLogsTool implements Tool {
         }
         HMCLGameRepository repository = profile.getRepository();
 
-        Object instanceObj = parameters.get("instance");
-        String instance;
-        if (instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()) {
-            instance = ((String) instanceObj).trim();
-        } else {
-            @Nullable String selected = Profiles.getSelectedInstance();
-            if (selected == null) {
-                return ToolResult.failure("No instance is selected and no 'instance' parameter was given.");
-            }
-            instance = selected;
+        // NOTE: generic aliases (name/query/version) are intentionally NOT accepted here:
+        // the 'keep' parameter below already honours the generic 'query' fallback, and the
+        // instance resolver must not steal that value.
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (target.failure() != null) {
+            return target.failure();
         }
-
-        try {
-            if (!repository.hasVersion(instance)) {
-                return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile.");
-            }
-        } catch (Throwable e) {
-            return ToolResult.failure("Failed to verify instance '" + instance + "': " + e.getMessage());
-        }
+        String instance = target.name();
 
         int keep = DEFAULT_KEEP;
         Object keepObj = parameters.get("keep");

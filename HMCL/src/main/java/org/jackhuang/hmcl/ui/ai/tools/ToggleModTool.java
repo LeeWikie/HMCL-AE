@@ -103,14 +103,6 @@ public final class ToggleModTool implements Tool {
         }
         HMCLGameRepository repository = profile.getRepository();
 
-        Object instanceObj = parameters.get("instance");
-        String instanceId = instanceObj != null && !instanceObj.toString().trim().isEmpty()
-                ? instanceObj.toString().trim()
-                : Profiles.getSelectedInstance();
-        if (instanceId == null || instanceId.isEmpty()) {
-            return ToolResult.failure("No instance specified and no instance is currently selected.");
-        }
-
         if (!repository.isLoaded()) {
             try {
                 repository.refreshVersions();
@@ -118,9 +110,13 @@ public final class ToggleModTool implements Tool {
                 return ToolResult.failure("Failed to load installed instances: " + e.getMessage());
             }
         }
-        if (!repository.hasVersion(instanceId)) {
-            return ToolResult.failure("Instance '" + instanceId + "' does not exist in the selected profile.");
+
+        InstanceToolSupport.ResolvedInstance resolvedTarget =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (resolvedTarget.failure() != null) {
+            return resolvedTarget.failure();
         }
+        String instanceId = resolvedTarget.name();
 
         Path modsDir;
         try {

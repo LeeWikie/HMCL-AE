@@ -125,6 +125,9 @@ public final class CheckJobTool implements ToolSpec {
                 break;
         }
 
+        // The model has now SEEN this job's terminal outcome — suppress the redundant
+        // auto-continue prompt that would otherwise re-announce it ("延迟回执" spam).
+        job.markAcknowledged();
         return ToolResult.success(sb.toString().trim());
     }
 

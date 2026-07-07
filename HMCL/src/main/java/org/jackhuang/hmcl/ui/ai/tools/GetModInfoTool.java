@@ -69,20 +69,17 @@ public final class GetModInfoTool implements Tool {
         if (query.isEmpty()) {
             return ToolResult.failure("Missing required parameter: mod (a substring of the mod file/display name).");
         }
-        String instance = String.valueOf(parameters.getOrDefault("instance", "")).trim();
-
         ModManager modManager;
         String target;
         try {
             Profile profile = Profiles.getSelectedProfile();
             HMCLGameRepository repo = profile.getRepository();
-            target = instance.isEmpty() ? Profiles.getSelectedInstance() : instance;
-            if (target == null || target.isEmpty()) {
-                return ToolResult.failure("No instance selected. Use list_instances, or pass instance.");
+            InstanceToolSupport.ResolvedInstance resolved =
+                    InstanceToolSupport.resolveInstance(repo, parameters, false);
+            if (resolved.failure() != null) {
+                return resolved.failure();
             }
-            if (!repo.hasVersion(target)) {
-                return ToolResult.failure("No such instance '" + target + "'. Use list_instances.");
-            }
+            target = resolved.name();
             modManager = repo.getModManager(target);
         } catch (Throwable t) {
             return ToolResult.failure("Could not resolve the instance's mods: " + t.getMessage());

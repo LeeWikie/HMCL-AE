@@ -88,22 +88,12 @@ public final class InstanceDetailsTool implements Tool {
             }
         }
 
-        Object instanceObj = parameters.get("instance");
-        String instance;
-        if (instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()) {
-            instance = ((String) instanceObj).trim();
-        } else {
-            @Nullable String selected = Profiles.getSelectedInstance();
-            if (selected == null) {
-                return ToolResult.failure("No instance is selected and no 'instance' parameter was given.");
-            }
-            instance = selected;
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, parameters, true);
+        if (target.failure() != null) {
+            return target.failure();
         }
-
-        if (!repository.hasVersion(instance)) {
-            return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile. "
-                    + "Use list_instances to see available instances.");
-        }
+        String instance = target.name();
 
         StringBuilder sb = new StringBuilder();
         sb.append("Instance: ").append(instance);

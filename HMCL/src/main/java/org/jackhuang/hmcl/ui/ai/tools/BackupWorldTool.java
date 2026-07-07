@@ -76,25 +76,12 @@ public final class BackupWorldTool implements Tool {
         }
         HMCLGameRepository repository = profile.getRepository();
 
-        Object instanceObj = parameters.get("instance");
-        String instance;
-        if (instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()) {
-            instance = ((String) instanceObj).trim();
-        } else {
-            @Nullable String selected = Profiles.getSelectedInstance();
-            if (selected == null) {
-                return ToolResult.failure("No instance is selected and no 'instance' parameter was given.");
-            }
-            instance = selected;
+        InstanceToolSupport.ResolvedInstance target0 =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (target0.failure() != null) {
+            return target0.failure();
         }
-
-        try {
-            if (!repository.hasVersion(instance)) {
-                return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile.");
-            }
-        } catch (Throwable e) {
-            return ToolResult.failure("Failed to verify instance '" + instance + "': " + e.getMessage());
-        }
+        String instance = target0.name();
 
         Path runDirectory;
         try {

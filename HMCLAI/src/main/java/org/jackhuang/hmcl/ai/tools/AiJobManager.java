@@ -98,6 +98,11 @@ public final class AiJobManager {
         private volatile @Nullable ToolResult result;
         private volatile @Nullable String error;
         private volatile long finishedAtMillis;
+        /// Whether the MODEL has already seen this job's terminal outcome via check_job /
+        /// list_jobs in its own tool loop. An acknowledged job must not additionally fire the
+        /// auto-continue prompt — in a real session a 15-install batch produced a dozen junk
+        /// "延迟回执" turns because the model had already confirmed everything via list_jobs.
+        private volatile boolean acknowledged;
 
         private Job(String id, int seq, String toolName, String label,
                     @Nullable String sessionId, Callable<ToolResult> work) {
@@ -128,6 +133,17 @@ public final class AiJobManager {
         /// The chat session that owns this job, or {@code null} if it is unscoped.
         public @Nullable String getSessionId() {
             return sessionId;
+        }
+
+        /// Whether the model already saw this job's terminal outcome (see field docs).
+        public boolean isAcknowledged() {
+            return acknowledged;
+        }
+
+        /// Marks this job's terminal outcome as seen by the model. Called by check_job /
+        /// list_jobs when they include a SUCCEEDED/FAILED/CANCELLED status in a tool result.
+        public void markAcknowledged() {
+            this.acknowledged = true;
         }
 
         /// The current lifecycle state.

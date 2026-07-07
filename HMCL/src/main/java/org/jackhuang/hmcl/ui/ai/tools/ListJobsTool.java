@@ -84,6 +84,10 @@ public final class ListJobsTool implements ToolSpec {
                     .append("  ").append(job.getToolName())
                     .append("  — ").append(job.getLabel())
                     .append('\n');
+            // The listing showed the model this job's terminal state — no auto-continue needed.
+            if (job.getStatus() != AiJobManager.Status.RUNNING) {
+                job.markAcknowledged();
+            }
             shown++;
         }
 

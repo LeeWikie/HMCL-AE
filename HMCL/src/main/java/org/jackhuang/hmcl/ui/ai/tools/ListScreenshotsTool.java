@@ -79,21 +79,12 @@ public final class ListScreenshotsTool implements Tool {
 
         HMCLGameRepository repository = profile.getRepository();
 
-        String instance = InstanceToolSupport.string(parameters, "instance");
-        if (instance == null) {
-            instance = Profiles.getSelectedInstance();
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, parameters, true);
+        if (target.failure() != null) {
+            return target.failure();
         }
-        if (instance == null) {
-            return ToolResult.failure("No instance was specified and no instance is currently selected.");
-        }
-
-        try {
-            if (!repository.hasVersion(instance)) {
-                return ToolResult.failure("Instance not found: " + instance);
-            }
-        } catch (Throwable e) {
-            return ToolResult.failure("Failed to resolve instance '" + instance + "': " + e.getMessage());
-        }
+        String instance = target.name();
 
         Path screenshotsDir;
         try {

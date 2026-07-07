@@ -136,7 +136,6 @@ public final class UpdateModTool implements ToolSpec {
         if (query.isEmpty()) {
             return ToolResult.failure("Missing required parameter: mod (a substring of the mod file/display name or id).");
         }
-        String instance = String.valueOf(parameters.getOrDefault("instance", "")).trim();
         @Nullable RemoteAddon.Source onlySource = parseSource(String.valueOf(parameters.getOrDefault("source", "")).trim());
 
         ModManager modManager;
@@ -145,13 +144,12 @@ public final class UpdateModTool implements ToolSpec {
         try {
             Profile profile = Profiles.getSelectedProfile();
             HMCLGameRepository repo = profile.getRepository();
-            target = instance.isEmpty() ? Profiles.getSelectedInstance() : instance;
-            if (target == null || target.isEmpty()) {
-                return ToolResult.failure("No instance selected. Use list_instances, or pass instance.");
+            InstanceToolSupport.ResolvedInstance resolved =
+                    InstanceToolSupport.resolveInstance(repo, parameters, false);
+            if (resolved.failure() != null) {
+                return resolved.failure();
             }
-            if (!repo.hasVersion(target)) {
-                return ToolResult.failure("No such instance '" + target + "'. Use list_instances.");
-            }
+            target = resolved.name();
             modManager = repo.getModManager(target);
             gameVersion = repo.getGameVersion(target).orElse(null);
         } catch (Throwable t) {

@@ -102,4 +102,66 @@ final class InstanceToolSupport {
         Profile profile = Profiles.getSelectedProfile();
         return profile.getRepository();
     }
+
+    /// Outcome of {@link #resolveInstance}: exactly one of {@code name} / {@code failure} is set.
+    record ResolvedInstance(@Nullable String name,
+                            @Nullable org.jackhuang.hmcl.ai.tools.ToolResult failure) {
+    }
+
+    /// Resolves which instance an instance-scoped tool should operate on.
+    ///
+    /// Rules (learned from a real session where the model asked about instance "Simple Love"
+    /// under the key {@code query} and the tool silently answered about the SELECTED instance,
+    /// sending the whole conversation down a wrong path):
+    /// - an explicit {@code instance} parameter wins; with {@code allowGenericAliases} the
+    ///   {@code name}/{@code query}/{@code version} keys are honoured too (for tools whose ONLY
+    ///   string parameter is the instance, so a mis-named key can't mean anything else);
+    /// - a NAMED instance that doesn't exist is a hard failure listing the real instance names —
+    ///   never a silent fallback to the selected instance;
+    /// - no name at all → the selected instance, or a failure when none is selected.
+    static ResolvedInstance resolveInstance(HMCLGameRepository repository,
+                                            Map<String, Object> parameters,
+                                            boolean allowGenericAliases) {
+        String name = string(parameters, "instance");
+        if (name == null && allowGenericAliases) {
+            for (String alias : new String[]{"name", "query", "version"}) {
+                name = string(parameters, alias);
+                if (name != null) {
+                    break;
+                }
+            }
+        }
+        if (name != null) {
+            if (!repository.hasVersion(name)) {
+                return new ResolvedInstance(null, org.jackhuang.hmcl.ai.tools.ToolResult.failure(
+                        "Instance '" + name + "' does not exist in the selected profile. "
+                                + "Available instances: " + availableInstanceNames(repository)
+                                + ". Use the EXACT name (or omit 'instance' for the currently selected one)."));
+            }
+            return new ResolvedInstance(name, null);
+        }
+        String selected = Profiles.getSelectedInstance();
+        if (selected == null) {
+            return new ResolvedInstance(null, org.jackhuang.hmcl.ai.tools.ToolResult.failure(
+                    "No instance is selected and no 'instance' parameter was given. "
+                            + "Call list_instances, then pass instance=<name>."));
+        }
+        return new ResolvedInstance(selected, null);
+    }
+
+    /// Comma-joined instance ids of the repository, capped so a huge library can't flood a
+    /// tool-error message.
+    private static String availableInstanceNames(HMCLGameRepository repository) {
+        java.util.List<String> names = repository.getDisplayVersions()
+                .map(v -> v.getId())
+                .limit(21)
+                .collect(java.util.stream.Collectors.toList());
+        if (names.isEmpty()) {
+            return "(none — no instances installed)";
+        }
+        if (names.size() > 20) {
+            return String.join(", ", names.subList(0, 20)) + ", … (use list_instances for the full list)";
+        }
+        return String.join(", ", names);
+    }
 }

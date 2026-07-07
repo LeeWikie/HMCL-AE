@@ -521,18 +521,26 @@ final class ContentToolSupport {
     }
 
     /// Resolves {@code <instance>/subdirectory} for the currently selected profile/instance,
-    /// creating the directory if necessary. Falls back to the profile base directory when no
-    /// instance is selected.
+    /// creating the directory if necessary.
+    ///
+    /// Uses the shared [`InstanceToolSupport#resolveInstance`] rules: a NAMED instance that
+    /// does not exist is a hard failure (listing the real instance names) — never a silent
+    /// fallback; no name at all resolves to the selected instance (failure when none is
+    /// selected).
     static Path resolveInstanceSubdirectory(String subdirectory, @Nullable String instanceOverride) throws IOException {
         Profile profile = Profiles.getSelectedProfile();
         HMCLGameRepository repository = profile.getRepository();
-        String version = instanceOverride != null ? instanceOverride : Profiles.getSelectedInstance(profile);
 
-        Path runDirectory = (version != null && repository.hasVersion(version))
-                ? repository.getRunDirectory(version)
-                : repository.getBaseDirectory();
+        Map<String, Object> params = instanceOverride != null
+                ? Map.of("instance", instanceOverride)
+                : Map.of();
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, params, false);
+        if (target.failure() != null) {
+            throw new IOException(target.failure().getError());
+        }
 
-        Path directory = runDirectory.resolve(subdirectory);
+        Path directory = repository.getRunDirectory(target.name()).resolve(subdirectory);
         Files.createDirectories(directory);
         return directory;
     }

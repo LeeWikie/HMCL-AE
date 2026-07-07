@@ -127,18 +127,6 @@ public final class DeleteModTool implements ToolSpec {
         }
         HMCLGameRepository repository = profile.getRepository();
 
-        Object instanceObj = parameters.get("instance");
-        String instanceId;
-        if (instanceObj != null && !instanceObj.toString().trim().isEmpty()) {
-            instanceId = instanceObj.toString().trim();
-        } else {
-            @Nullable String selected = Profiles.getSelectedInstance();
-            if (selected == null || selected.isEmpty()) {
-                return ToolResult.failure("No instance specified and no instance is currently selected.");
-            }
-            instanceId = selected;
-        }
-
         if (!repository.isLoaded()) {
             try {
                 repository.refreshVersions();
@@ -146,9 +134,13 @@ public final class DeleteModTool implements ToolSpec {
                 return ToolResult.failure("Failed to load installed instances: " + e.getMessage());
             }
         }
-        if (!repository.hasVersion(instanceId)) {
-            return ToolResult.failure("Instance '" + instanceId + "' does not exist in the selected profile.");
+
+        InstanceToolSupport.ResolvedInstance resolvedTarget =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (resolvedTarget.failure() != null) {
+            return resolvedTarget.failure();
         }
+        String instanceId = resolvedTarget.name();
 
         Path modsDir;
         try {

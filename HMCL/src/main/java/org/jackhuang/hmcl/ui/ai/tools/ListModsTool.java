@@ -54,19 +54,16 @@ public final class ListModsTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String instance = String.valueOf(parameters.getOrDefault("instance", "")).trim();
         Path modsDir;
         try {
             Profile profile = Profiles.getSelectedProfile();
             HMCLGameRepository repo = profile.getRepository();
-            String target = instance.isEmpty() ? Profiles.getSelectedInstance() : instance;
-            if (target == null || target.isEmpty()) {
-                return ToolResult.failure("No instance selected. Use list_instances, or pass instance.");
+            InstanceToolSupport.ResolvedInstance target =
+                    InstanceToolSupport.resolveInstance(repo, parameters, true);
+            if (target.failure() != null) {
+                return target.failure();
             }
-            if (!instance.isEmpty() && !repo.hasVersion(instance)) {
-                return ToolResult.failure("No such instance '" + instance + "'. Use list_instances.");
-            }
-            modsDir = repo.getRunDirectory(target).resolve("mods");
+            modsDir = repo.getRunDirectory(target.name()).resolve("mods");
         } catch (Throwable t) {
             return ToolResult.failure("Could not resolve mods directory: " + t.getMessage());
         }

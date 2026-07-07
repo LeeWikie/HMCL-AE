@@ -20,6 +20,8 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jackhuang.hmcl.setting.Profiles;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.util.Map;
@@ -75,9 +77,18 @@ public final class RestoreWorldBackupTool implements Tool {
         }
         String backupId = ((String) backupObj).trim();
 
-        Object instanceObj = parameters.get("instance");
-        String instance = instanceObj instanceof String && !((String) instanceObj).trim().isEmpty()
-                ? ((String) instanceObj).trim() : null;
+        HMCLGameRepository repository;
+        try {
+            repository = Profiles.getSelectedProfile().getRepository();
+        } catch (Throwable e) {
+            return ToolResult.failure("No profile is currently selected: " + e.getMessage());
+        }
+        InstanceToolSupport.ResolvedInstance target =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (target.failure() != null) {
+            return target.failure();
+        }
+        String instance = target.name();
 
         int retention = retentionSupplier.getAsInt();
 

@@ -3105,29 +3105,77 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             return;
         }
-        String status;
-        switch (job.getStatus()) {
-            case SUCCEEDED: status = "已完成"; break;
-            case FAILED: status = "失败"; break;
-            default: return; // not terminal — ignore
+        // Coalesce: a parallel install burst finishes as a stream of completions — deliver them as
+        // ONE follow-up turn instead of a dozen "延迟回执" turns (real-session failure mode). Pull
+        // every other queued completion of THIS session into the same batch.
+        java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> batch = new java.util.ArrayList<>();
+        batch.add(job);
+        java.util.Iterator<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> it = pendingCompletions.iterator();
+        while (it.hasNext()) {
+            org.jackhuang.hmcl.ai.tools.AiJobManager.Job queued = it.next();
+            if (current.getId().equals(queued.getSessionId())) {
+                it.remove();
+                if (!batch.contains(queued)
+                        && queued.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.CANCELLED
+                        && queued.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING) {
+                    batch.add(queued);
+                }
+            }
         }
+        // Drop jobs whose terminal outcome the model already saw via check_job / list_jobs —
+        // re-announcing them is exactly the junk-turn spam this path used to produce.
+        batch.removeIf(org.jackhuang.hmcl.ai.tools.AiJobManager.Job::isAcknowledged);
+        batch.removeIf(j -> j.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED
+                && j.getStatus() != org.jackhuang.hmcl.ai.tools.AiJobManager.Status.FAILED);
+        if (batch.isEmpty()) {
+            return;
+        }
+        if (autoContinueDepth >= AUTO_CONTINUE_LIMIT) {
+            addSystemMessage("后台任务「" + batch.get(0).getLabel() + "」等 " + batch.size()
+                    + " 项已结束，但连续自动继续已达上限，已暂停以免空转。发送任意消息让我接着处理。");
+            return;
+        }
+        autoContinueDepth++;
+        submitExternalPrompt(buildCompletionPrompt(batch));
+    }
+
+    /// Renders one auto-continue prompt for a batch of finished jobs: single-job keeps the old
+    /// compact shape; multi-job lists every outcome once and tells the model to handle them in
+    /// ONE reply instead of acknowledging each individually.
+    private static String buildCompletionPrompt(
+            java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> batch) {
+        if (batch.size() == 1) {
+            org.jackhuang.hmcl.ai.tools.AiJobManager.Job job = batch.get(0);
+            String status = job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED
+                    ? "已完成" : "失败";
+            String detail = jobDetail(job, 2000);
+            return "（后台任务 #" + job.getId() + "「" + job.getLabel() + "」" + status + "）"
+                    + (detail.isEmpty() ? "" : "结果：\n" + detail)
+                    + "\n请据此继续。";
+        }
+        StringBuilder sb = new StringBuilder("（").append(batch.size()).append(" 个后台任务已结束）\n");
+        for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job : batch) {
+            String status = job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED
+                    ? "已完成" : "失败";
+            sb.append("#").append(job.getId()).append("「").append(job.getLabel()).append("」")
+                    .append(status);
+            String detail = jobDetail(job, 400);
+            if (!detail.isEmpty()) {
+                sb.append("：").append(detail.replace('\n', ' '));
+            }
+            sb.append('\n');
+        }
+        sb.append("请据此一次性继续，不要逐个复述。");
+        return sb.toString();
+    }
+
+    /// The job's result output (or error), trimmed to {@code max} chars.
+    private static String jobDetail(org.jackhuang.hmcl.ai.tools.AiJobManager.Job job, int max) {
         org.jackhuang.hmcl.ai.tools.ToolResult result = job.getResult();
         String detail = result != null && result.getOutput() != null && !result.getOutput().isEmpty()
                 ? result.getOutput()
                 : (job.getError() != null ? job.getError() : "");
-        if (detail.length() > 2000) {
-            detail = detail.substring(0, 2000) + "…";
-        }
-        if (autoContinueDepth >= AUTO_CONTINUE_LIMIT) {
-            addSystemMessage("后台任务「" + job.getLabel() + "」" + status
-                    + "，但连续自动继续已达上限，已暂停以免空转。发送任意消息让我接着处理。");
-            return;
-        }
-        autoContinueDepth++;
-        String prompt = "（后台任务 #" + job.getId() + "「" + job.getLabel() + "」" + status + "）"
-                + (detail.isEmpty() ? "" : "结果：\n" + detail)
-                + "\n请据此继续。";
-        submitExternalPrompt(prompt);
+        return detail.length() > max ? detail.substring(0, max) + "…" : detail;
     }
 
     /// Rebuilds the live background-tasks panel above the composer: one row per RUNNING job with its
