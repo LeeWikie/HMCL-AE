@@ -73,6 +73,9 @@ dependencies {
     implementation(libs.uuid.tools)
 
     testImplementation(libs.jimfs)
+    // JavaFX UI tests (TestFX drives a real toolkit; tests self-skip when no display)
+    testImplementation(libs.testfx.core)
+    testImplementation(libs.hamcrest) // TestFX lookup API references org.hamcrest.Matcher
 
     if (launcherExe.isBlank()) {
         implementation(libs.hmclauncher)
