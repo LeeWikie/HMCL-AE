@@ -71,6 +71,32 @@ public final class RememberStoreTest {
         }
     }
 
+    /// forget(stem) deletes exactly the addressed memory file and reports whether it existed
+    /// (the data layer behind the settings page's per-entry delete button, #56).
+    @Test
+    public void testForgetDeletesSingleEntry() throws IOException {
+        Path dir = Files.createTempDirectory("hmcl-mem-forget-");
+        try {
+            RememberStore store = new RememberStore(dir);
+            store.init();
+            RememberStore.Entry keep = store.remember("keep", List.of(), "要留下的记忆");
+            RememberStore.Entry drop = store.remember("drop", List.of(), "要删除的记忆");
+            assertEquals(2, store.listAll().size());
+
+            String stem = drop.getFile().getFileName().toString().replaceFirst("\\.md$", "");
+            assertTrue(store.forget(stem), "existing entry must report deleted");
+            assertFalse(Files.exists(drop.getFile()), "file must be gone");
+            assertEquals(1, store.listAll().size(), "only the addressed entry is removed");
+            assertTrue(Files.exists(keep.getFile()), "other entries untouched");
+
+            assertFalse(store.forget(stem), "second delete of the same stem reports false");
+            // stem with explicit .md extension addresses the same (now absent) file
+            assertFalse(store.forget(stem + ".md"));
+        } finally {
+            deleteDir(dir);
+        }
+    }
+
     private static void deleteDir(Path dir) throws IOException {
         if (!Files.exists(dir)) {
             return;

@@ -299,7 +299,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Collapsible card showing a model's reasoning/"thinking" (e.g. DeepSeek-R1's reasoning_content):
     /// expanded while it streams, collapsed once the answer starts or on reload. Self-contained so it
     /// can be reused by both the live stream path and the session-reload path.
-    private static final class ReasoningCard extends VBox {
+    /// Package-private (not private) so the FX component test can drive it directly.
+    static final class ReasoningCard extends VBox {
         private final Label content = new Label();
         private final Label chevron = new Label("▾");
         private final StringBuilder text = new StringBuilder();
