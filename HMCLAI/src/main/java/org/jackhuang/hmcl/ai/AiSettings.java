@@ -216,6 +216,9 @@ public final class AiSettings {
         @SerializedName("autoSkillInjection")
         private boolean autoSkillInjection = DEFAULT_AUTO_SKILL_INJECTION;
 
+        @SerializedName("traceEnabled")
+        private boolean traceEnabled = DEFAULT_TRACE_ENABLED;
+
         @SerializedName("worldBackupRetention")
         private int worldBackupRetention = DEFAULT_WORLD_BACKUP_RETENTION;
 
@@ -280,6 +283,7 @@ public final class AiSettings {
     private final StringProperty responseLanguage;
     private final BooleanProperty autoRecallMemory;
     private final BooleanProperty autoSkillInjection;
+    private final BooleanProperty traceEnabled;
 
     // World backup engine
     private final IntegerProperty worldBackupRetention;
@@ -381,6 +385,10 @@ public final class AiSettings {
     /// model does not have to decide to read them first).
     public static final boolean DEFAULT_AUTO_SKILL_INJECTION = true;
 
+    /// Whether the complete per-session agent trace is recorded (default on; the truth record used
+    /// for post-mortem debugging and one-tap diagnostic upload).
+    public static final boolean DEFAULT_TRACE_ENABLED = true;
+
     /// Default number of newest world-backup snapshots to retain (older ones are pruned).
     public static final int DEFAULT_WORLD_BACKUP_RETENTION = 10;
 
@@ -445,6 +453,7 @@ public final class AiSettings {
         this.responseLanguage = new SimpleStringProperty(this, "responseLanguage", DEFAULT_RESPONSE_LANGUAGE);
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
         this.autoSkillInjection = new SimpleBooleanProperty(this, "autoSkillInjection", DEFAULT_AUTO_SKILL_INJECTION);
+        this.traceEnabled = new SimpleBooleanProperty(this, "traceEnabled", DEFAULT_TRACE_ENABLED);
         this.worldBackupRetention = new SimpleIntegerProperty(this, "worldBackupRetention", DEFAULT_WORLD_BACKUP_RETENTION);
         this.autoBackupBeforeNbtEdit = new SimpleBooleanProperty(this, "autoBackupBeforeNbtEdit", DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT);
         this.autoCompactEnabled = new SimpleBooleanProperty(this, "autoCompactEnabled", DEFAULT_AUTO_COMPACT_ENABLED);
@@ -895,6 +904,15 @@ public final class AiSettings {
         return autoSkillInjection.get();
     }
 
+    public BooleanProperty traceEnabledProperty() {
+        return traceEnabled;
+    }
+
+    /// Returns whether the complete per-session agent trace is recorded.
+    public boolean isTraceEnabled() {
+        return traceEnabled.get();
+    }
+
     /// Returns the number of newest world-backup snapshots to retain.
     public int getWorldBackupRetention() {
         return worldBackupRetention.get();
@@ -1173,6 +1191,7 @@ public final class AiSettings {
         data.responseLanguage = responseLanguage.get();
         data.autoRecallMemory = autoRecallMemory.get();
         data.autoSkillInjection = autoSkillInjection.get();
+        data.traceEnabled = traceEnabled.get();
         data.worldBackupRetention = worldBackupRetention.get();
         data.autoBackupBeforeNbtEdit = autoBackupBeforeNbtEdit.get();
         data.autoCompactEnabled = autoCompactEnabled.get();
@@ -1359,6 +1378,7 @@ public final class AiSettings {
                 ? data.responseLanguage : DEFAULT_RESPONSE_LANGUAGE);
         autoRecallMemory.set(data.autoRecallMemory);
         autoSkillInjection.set(data.autoSkillInjection);
+        traceEnabled.set(data.traceEnabled);
         worldBackupRetention.set(data.worldBackupRetention > 0 ? data.worldBackupRetention : DEFAULT_WORLD_BACKUP_RETENTION);
         autoBackupBeforeNbtEdit.set(data.autoBackupBeforeNbtEdit);
         autoCompactEnabled.set(data.autoCompactEnabled);

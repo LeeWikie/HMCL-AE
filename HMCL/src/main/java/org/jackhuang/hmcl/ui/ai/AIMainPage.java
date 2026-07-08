@@ -466,6 +466,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         } catch (Exception ignored) {
         }
 
+        // Observability: record a complete per-session agent trace (full messages / raw response /
+        // finishReason / complete tool IO / guard decisions) to an INDEPENDENT jsonl under
+        // .hmcl/logs/ai-trace/ — the truth record the summarised [AI] log and mutable session store
+        // cannot provide. Default on in this Alpha; a settings toggle can disable it.
+        org.jackhuang.hmcl.ai.trace.TraceRecorder.configure(
+                SettingsManager.localConfigDirectory().resolve("logs").resolve("ai-trace"),
+                aiSettings.isTraceEnabled());
+
         // First-use test-phase risk notice (one-time, must be acknowledged). Deferred so the page is shown.
         if (!aiSettings.isAiRiskNoticeAccepted()) {
             Platform.runLater(this::showAiRiskNotice);
