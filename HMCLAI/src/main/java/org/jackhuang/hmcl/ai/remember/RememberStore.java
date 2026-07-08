@@ -225,34 +225,14 @@ public final class RememberStore {
 
     // ---- redaction & dedup ----
 
-    /// Standalone secret tokens replaced wholesale with `[REDACTED]`.
-    private static final Pattern[] SECRET_TOKEN_PATTERNS = {
-            Pattern.compile("(?i)\\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}"),   // OpenAI / Stripe-style keys
-            Pattern.compile("\\bghp_[A-Za-z0-9]{20,}"),                  // GitHub personal access token
-            Pattern.compile("\\bgithub_pat_[A-Za-z0-9_]{20,}"),
-            Pattern.compile("\\bAKIA[0-9A-Z]{16}\\b"),                   // AWS access key id
-            Pattern.compile("\\bAIza[0-9A-Za-z_-]{30,}"),                // Google API key
-            Pattern.compile("\\bxox[baprs]-[A-Za-z0-9-]{10,}"),         // Slack token
-            Pattern.compile("(?i)\\bbearer\\s+[A-Za-z0-9._-]{16,}"),     // Bearer <token>
-    };
-
-    /// `key: value` / `key=value` secrets — keep the key label, redact only the value.
-    private static final Pattern SECRET_KEYVAL_PATTERN = Pattern.compile(
-            "(?i)\\b(api[_-]?key|apikey|access[_-]?token|secret[_-]?key|client[_-]?secret|password|passwd|pwd|token|secret)"
-                    + "(\\s*[:=]\\s*)[\"']?[A-Za-z0-9._/+\\-]{6,}[\"']?");
-
     /// Scrubs common secret shapes from text so keys/tokens never land in a plaintext memory file.
-    /// Conservative by design (only well-known key shapes) to avoid mangling ordinary prose.
+    /// Delegates to the shared {@link org.jackhuang.hmcl.ai.util.Redactor} (single source of truth,
+    /// also used by the agent trace); keeps this method's null→"" contract for existing callers/tests.
     static String redactSecrets(@Nullable String s) {
-        if (s == null || s.isEmpty()) {
-            return s == null ? "" : s;
+        if (s == null) {
+            return "";
         }
-        String out = s;
-        for (Pattern p : SECRET_TOKEN_PATTERNS) {
-            out = p.matcher(out).replaceAll("[REDACTED]");
-        }
-        out = SECRET_KEYVAL_PATTERN.matcher(out).replaceAll(m -> m.group(1) + m.group(2) + "[REDACTED]");
-        return out;
+        return org.jackhuang.hmcl.ai.util.Redactor.redact(s);
     }
 
     /// Drops a leading Markdown H1 line (`# ...`) — the title heading remember() prepends — so the

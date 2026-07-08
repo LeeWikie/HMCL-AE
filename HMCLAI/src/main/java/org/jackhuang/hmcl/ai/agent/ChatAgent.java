@@ -391,6 +391,8 @@ public final class ChatAgent {
         };
         interruptPersist.set(persister);
 
+        // Tag this turn's full trace (request/response/tool/guard events) with session + turn id.
+        client.beginTurn(session.getId(), turnId);
         client.sendMessageStreaming(buildMessages(), new LlmStreamCallback() {
             @Nullable private LlmUsage usage;
             private boolean firstUsageCaptured = false;

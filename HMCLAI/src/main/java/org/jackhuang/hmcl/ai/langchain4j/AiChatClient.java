@@ -49,4 +49,11 @@ public interface AiChatClient {
     /// @param messages the conversation history to send to the model
     /// @param callback the callback receiving tokens, completion, and errors
     void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback);
+
+    /// Marks the start of a new user-turn for tracing, so the client can tag every
+    /// request/response/tool/guard event of the upcoming streaming turn with this session + turn id.
+    /// Default no-op; only the tracing-capable [`LangChain4jChatAdapter`] overrides it. Called by
+    /// [`ChatAgent`][org.jackhuang.hmcl.ai.agent.ChatAgent] right before {@link #sendMessageStreaming}.
+    default void beginTurn(@Nullable String sessionId, @Nullable String turnId) {
+    }
 }

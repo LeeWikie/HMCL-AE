@@ -28,6 +28,9 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import com.google.gson.JsonObject;
+import org.jackhuang.hmcl.ai.trace.TraceContext;
+import org.jackhuang.hmcl.ai.trace.TraceRecorder;
 import org.jackhuang.hmcl.ai.util.AiLog;
 import dev.langchain4j.model.output.TokenUsage;
 import org.jackhuang.hmcl.ai.llm.LlmException;
@@ -78,6 +81,25 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     @Nullable
     private final LangChain4jToolAdapter toolAdapter;
     private final ExecutorService executor;
+
+    /// Trace context for the CURRENT streaming turn, set by {@link #beginTurn} just before
+    /// {@link #sendMessageStreaming}. Snapshotted into a local at the start of the streaming call
+    /// so a later turn overwriting this field can't corrupt an in-flight turn's trace tags.
+    /// {@link org.jackhuang.hmcl.ai.trace.TraceContext#NONE} = not tracing.
+    private volatile org.jackhuang.hmcl.ai.trace.TraceContext pendingTrace =
+            org.jackhuang.hmcl.ai.trace.TraceContext.NONE;
+
+    @Override
+    public void beginTurn(@Nullable String sessionId, @Nullable String turnId) {
+        this.pendingTrace = new TraceContext(sessionId, turnId);
+    }
+
+    /// Records one trace event for the given turn context (no-op when not tracing).
+    private static void trace(TraceContext tc, JsonObject event) {
+        if (tc.active()) {
+            TraceRecorder.record(tc.sessionId(), event);
+        }
+    }
 
     /// Creates an adapter backed by the given chat and streaming models
     /// without tool support.
@@ -275,8 +297,10 @@ public final class LangChain4jChatAdapter implements AiChatClient {
 
     @Override
     public void sendMessageStreaming(List<LlmMessage> messages, LlmStreamCallback callback) {
+        // Snapshot the trace context now so a later turn overwriting pendingTrace can't retag this one.
+        org.jackhuang.hmcl.ai.trace.TraceContext tc = pendingTrace;
         List<ChatMessage> conversation = new ArrayList<>(applyContextLimit(convertMessages(messages)));
-        streamTurn(conversation, callback, 0, new java.util.HashMap<>(), new StringBuilder());
+        streamTurn(conversation, callback, 0, new java.util.HashMap<>(), new StringBuilder(), tc);
     }
 
     /// After this many identical (tool, arguments) calls in one turn, stop actually running
@@ -325,19 +349,30 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             java.util.Set.of("check_job", "list_jobs");
 
     private ToolExecutionResultMessage executeWithLoopGuard(ToolExecutionRequest req,
-                                                            java.util.Map<String, Integer> callCounts) {
+                                                            java.util.Map<String, Integer> callCounts,
+                                                            TraceContext tc, int cycle) {
         if (!DUP_GUARD_EXEMPT.contains(req.name())) {
             String fingerprint = req.name() + "|" + (req.arguments() == null ? "" : req.arguments());
             int count = callCounts.merge(fingerprint, 1, Integer::sum);
             if (count >= DUP_CALL_LIMIT) {
-                return ToolExecutionResultMessage.from(req,
+                ToolExecutionResultMessage blocked = ToolExecutionResultMessage.from(req,
                         "BLOCKED: you have already made this exact '" + req.name() + "' call "
                         + (count - 1) + " times this turn. Do NOT repeat the identical call — change the"
                         + " arguments, use a different tool, or answer with the information you already"
                         + " have. If you are waiting on a background job, poll it with check_job instead.");
+                trace(tc, TraceEvents.guard(tc, cycle, "DUP_BLOCKED", req.name() + " x" + (count - 1)));
+                trace(tc, TraceEvents.tool(tc, cycle, req.name(), req.arguments(), blocked.text(), false, false));
+                return blocked;
             }
         }
-        return truncateToolResult(req, toolAdapter.execute(req));
+        // Capture the COMPLETE tool result for the trace BEFORE any truncation the model sees.
+        ToolExecutionResultMessage raw = toolAdapter.execute(req);
+        String fullText = raw != null && raw.text() != null ? raw.text() : "";
+        boolean success = !fullText.startsWith("Error:") && !fullText.startsWith("BLOCKED:");
+        ToolExecutionResultMessage forModel = truncateToolResult(req, raw);
+        boolean truncatedForModel = forModel != raw; // truncateToolResult returns the same instance if within budget
+        trace(tc, TraceEvents.tool(tc, cycle, req.name(), req.arguments(), fullText, success, truncatedForModel));
+        return forModel;
     }
 
     /// One turn of the streaming agent loop: stream the model's response (with tools
@@ -358,8 +393,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// reply with its interruption marker (a silent return here previously left the session
     /// with a dangling user message whenever Stop was pressed during a tool cycle or retry).
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
-                            java.util.Map<String, Integer> callCounts, StringBuilder turnText) {
-        streamTurn(conversation, callback, cycle, callCounts, turnText, 0);
+                            java.util.Map<String, Integer> callCounts, StringBuilder turnText,
+                            org.jackhuang.hmcl.ai.trace.TraceContext tc) {
+        streamTurn(conversation, callback, cycle, callCounts, turnText, 0, tc);
     }
 
     /// Appends a completed cycle's text segment to the turn accumulator, blank-line separated.
@@ -376,14 +412,18 @@ public final class LangChain4jChatAdapter implements AiChatClient {
     /// @param attempt how many times this cycle's request has already failed transiently and been
     ///                retried before any token streamed (0 on first try); see {@link #MAX_STREAM_RETRIES}.
     private void streamTurn(List<ChatMessage> conversation, LlmStreamCallback callback, int cycle,
-                            java.util.Map<String, Integer> callCounts, StringBuilder turnText, int attempt) {
+                            java.util.Map<String, Integer> callCounts, StringBuilder turnText, int attempt,
+                            org.jackhuang.hmcl.ai.trace.TraceContext tc) {
         if (callback.isCancelled()) {
             // User pressed Stop — abort instead of issuing another model call / tool cycle, but
             // still terminate the callback chain so the partial reply gets persisted.
+            trace(tc, org.jackhuang.hmcl.ai.langchain4j.TraceEvents.guard(tc, cycle, "CANCELLED", null));
             callback.onComplete(turnText.toString());
             return;
         }
         if (cycle >= maxToolCycles) {
+            trace(tc, org.jackhuang.hmcl.ai.langchain4j.TraceEvents.guard(tc, cycle, "CYCLE_CAP",
+                    "maxToolCycles=" + maxToolCycles));
             appendSegment(turnText, "（已连续调用工具 " + maxToolCycles
                     + " 轮仍未完成，已停止以避免无限空转。建议：换种说法或补充信息，必要时在右上角换一个更强的模型；也可在「高级」里调整工具调用轮数上限。）");
             callback.onComplete(turnText.toString());
@@ -411,6 +451,9 @@ public final class LangChain4jChatAdapter implements AiChatClient {
         final long startNanos = System.nanoTime();
         AiLog.info("[AI] 模型请求 cycle=" + cycle + " attempt=" + attempt
                 + " 消息数=" + conversation.size() + " 工具=" + (allowTools ? "on" : "off"));
+        // Trace: the COMPLETE request (full conversation incl. system prompt + tool schemas).
+        trace(tc, TraceEvents.request(tc, cycle, attempt, conversation,
+                allowTools ? toolAdapter.buildToolSpecifications() : null, allowTools));
         streamingChatModel.chat(requestBuilder.build(), new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String token) {
@@ -455,6 +498,14 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                         + "/" + usage.totalTokenCount() : "n/a")
                         + " 工具调用=" + (aiMessage != null && aiMessage.hasToolExecutionRequests()
                         ? aiMessage.toolExecutionRequests().size() : 0));
+                // Trace: the raw response — text, tool calls (raw args), usage, and the finishReason
+                // that the loop currently never reads (this is where a `length` truncation shows up).
+                String finishReason = response.finishReason() != null ? response.finishReason().name() : null;
+                trace(tc, TraceEvents.response(tc, cycle, aiMessage, finishReason,
+                        usage != null ? usage.inputTokenCount() : null,
+                        usage != null ? usage.outputTokenCount() : null,
+                        usage != null ? usage.totalTokenCount() : null,
+                        elapsedMs));
                 if (aiMessage != null && aiMessage.hasToolExecutionRequests()) {
                     // Tool-call turn: record it, run each tool, feed results back, loop.
                     // Any prose the model emitted before its tool calls becomes a finished segment.
@@ -469,7 +520,7 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                             return;
                         }
                         callback.onToolActivity(req.name(), req.arguments());
-                        ToolExecutionResultMessage result = executeWithLoopGuard(req, callCounts);
+                        ToolExecutionResultMessage result = executeWithLoopGuard(req, callCounts, tc, cycle);
                         if (result != null) {
                             conversation.add(result);
                             String resultText = result.text() != null ? result.text() : "";
@@ -492,12 +543,14 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                     if (callCounts.getOrDefault(NO_PROGRESS_KEY, 0) >= NO_PROGRESS_LIMIT) {
                         AiLog.warn("[AI] 连续 " + callCounts.get(NO_PROGRESS_KEY)
                                 + " 次工具失败无进展，注入收敛提示");
+                        trace(tc, TraceEvents.guard(tc, cycle, "NO_PROGRESS",
+                                "consecutiveFailures=" + callCounts.get(NO_PROGRESS_KEY)));
                         conversation.add(dev.langchain4j.data.message.UserMessage.from(
                                 "[系统提示] 已连续多次工具调用失败、没有取得进展。请停止继续尝试同类操作："
                                 + "用你已经获得的信息直接回答，或明确说明卡在哪里、需要用户提供什么，不要再盲目重试。"));
                         callCounts.put(NO_PROGRESS_KEY, 0);
                     }
-                    streamTurn(conversation, callback, cycle + 1, callCounts, turnText);
+                    streamTurn(conversation, callback, cycle + 1, callCounts, turnText, tc);
                     return;
                 }
 
@@ -522,6 +575,8 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                         && !callback.isCancelled()) {
                     AiLog.warn("[AI] 模型请求瞬时失败，重试 attempt=" + (attempt + 1) + "/" + MAX_STREAM_RETRIES
                             + "：" + wrapped.getMessage());
+                    trace(tc, TraceEvents.guard(tc, cycle, "RETRY",
+                            "attempt=" + (attempt + 1) + " " + wrapped.getMessage()));
                     try {
                         Thread.sleep(500L * (1L << attempt)); // 0.5s, then 1s
                     } catch (InterruptedException ie) {
@@ -529,10 +584,11 @@ public final class LangChain4jChatAdapter implements AiChatClient {
                         callback.onError(wrapped);
                         return;
                     }
-                    streamTurn(conversation, callback, cycle, callCounts, turnText, attempt + 1);
+                    streamTurn(conversation, callback, cycle, callCounts, turnText, attempt + 1, tc);
                     return;
                 }
                 AiLog.warn("[AI] 模型请求失败：" + wrapped.getMessage());
+                trace(tc, TraceEvents.guard(tc, cycle, "ERROR", wrapped.getMessage()));
                 callback.onError(wrapped);
             }
         });
@@ -588,7 +644,8 @@ public final class LangChain4jChatAdapter implements AiChatClient {
             // OpenAI/Anthropic APIs — even when a tool fails (the failure is
             // returned to the model as an "Error: ..." result so it can retry).
             for (ToolExecutionRequest req : aiMessage.toolExecutionRequests()) {
-                conversation.add(executeWithLoopGuard(req, callCounts));
+                // Non-streaming path (compact/title/testConnection) — not an agent turn, not traced.
+                conversation.add(executeWithLoopGuard(req, callCounts, TraceContext.NONE, cycle));
             }
         }
 
