@@ -38,7 +38,11 @@ public final class EditToolTest {
     public void editsFileInPlace(@TempDir Path root) throws IOException {
         Path file = root.resolve("a.txt");
         Files.writeString(file, "hello world");
-        EditTool tool = new EditTool(root);
+        // The read-before-edit contract requires a recorded read; use an isolated ledger so
+        // this test doesn't touch the global one.
+        ReadLedger ledger = new ReadLedger();
+        ledger.recordRead(file, Files.readAllBytes(file));
+        EditTool tool = new EditTool(root, ledger);
 
         ToolResult result = tool.execute(Map.of("path", "a.txt", "old_string", "world", "new_string", "there"));
 

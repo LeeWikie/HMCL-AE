@@ -20,9 +20,17 @@ import java.util.Map;
 @NotNullByDefault
 public final class FileReadTool implements ToolSpec {
     private final List<Path> roots = new ArrayList<>();
+    private final ReadLedger ledger;
 
     public FileReadTool(Path primaryRoot) {
+        this(primaryRoot, ReadLedger.global());
+    }
+
+    /// Ledger-injecting constructor for tests (production wiring uses [`ReadLedger#global`]
+    /// so reads recorded here are visible to [`EditTool`] / [`WriteFileTool`]).
+    public FileReadTool(Path primaryRoot, ReadLedger ledger) {
         roots.add(primaryRoot.toAbsolutePath().normalize());
+        this.ledger = ledger;
     }
 
     /// Adds another allowed root (no-op if null or already present).
@@ -111,7 +119,7 @@ public final class FileReadTool implements ToolSpec {
             if (candidate.isAbsolute()) {
                 resolved = candidate.toAbsolutePath().normalize();
                 if (roots.stream().noneMatch(resolved::startsWith)) {
-                    return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                    return FileToolFailures.outsideRoots(resolved, roots);
                 }
                 if (!Files.exists(resolved)) {
                     return ToolResult.failure("Path does not exist: " + resolved);
@@ -137,7 +145,7 @@ public final class FileReadTool implements ToolSpec {
                     // allowed-roots check, but report every root that was tried.
                     resolved = attempted.get(0);
                     if (roots.stream().noneMatch(resolved::startsWith)) {
-                        return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                        return FileToolFailures.outsideRoots(resolved, roots);
                     }
                     StringBuilder sb = new StringBuilder("Path does not exist under any allowed root. Tried: ");
                     for (int i = 0; i < attempted.size(); i++) {
@@ -154,7 +162,7 @@ public final class FileReadTool implements ToolSpec {
             // read back an arbitrary external file/directory's content.
             Path realResolved = resolved.toRealPath();
             if (roots.stream().noneMatch(r -> realResolved.startsWith(realOrSelf(r)))) {
-                return ToolResult.failure("Path is outside the allowed roots: " + realResolved);
+                return FileToolFailures.outsideRoots(realResolved, roots);
             }
             if (Files.isDirectory(resolved)) {
                 StringBuilder sb = new StringBuilder();
@@ -169,7 +177,15 @@ public final class FileReadTool implements ToolSpec {
             if (size > 10 * 1024 * 1024) {
                 return ToolResult.failure("File too large: " + (size >> 20) + " MiB.");
             }
-            java.util.List<String> lines = Files.readAllLines(resolved, StandardCharsets.UTF_8);
+            byte[] raw = Files.readAllBytes(resolved);
+            // Strict decode (same failure behavior as the previous Files.readAllLines): a
+            // malformed-UTF-8 file must surface as an IO error, not as mojibake.
+            String text = StandardCharsets.UTF_8.newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(raw)).toString();
+            // Record the read in the shared ledger — this is what later entitles edit/write
+            // to touch the file (read precondition) and detects external changes (staleness).
+            ledger.recordRead(realResolved, raw);
+            java.util.List<String> lines = text.lines().toList();
             int total = lines.size();
             if (startLine > 0) {
                 // Explicit paging window: lines [startLine, startLine + maxLines).
@@ -192,9 +208,9 @@ public final class FileReadTool implements ToolSpec {
             }
             return ToolResult.success(String.join("\n", lines));
         } catch (IOException e) {
-            return ToolResult.failure("IO error: " + e.getMessage());
+            return FileToolFailures.io("reading the path", e);
         } catch (RuntimeException e) {
-            return ToolResult.failure("Invalid path: " + e.getMessage());
+            return FileToolFailures.invalid("path", e);
         }
     }
 
