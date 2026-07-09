@@ -43,9 +43,17 @@ final class McpToolStub implements ToolSpec {
 
     @Override
     public ToolPermission getPermission() {
-        // An MCP tool is external, user-configured code of unknown effect: treat it as a
-        // controlled write (never silently "read-only"), so ASK mode confirms it before running.
-        return ToolPermission.CONTROLLED_WRITE;
+        // An MCP tool is external, user-configured code of unknown effect: treat it as
+        // DANGEROUS_WRITE, never CONTROLLED_WRITE. CONTROLLED_WRITE alone does NOT guarantee a
+        // confirmation dialog — per AiExecutionPolicy.check(), it only asks when the user has
+        // separately turned on the "file write confirm" toggle (off by default), so an MCP tool
+        // classified CONTROLLED_WRITE could auto-run with no prompt at all. Classifying it
+        // DANGEROUS_WRITE instead makes Auto confirm it by default (dangerous confirmation defaults
+        // on), AND LangChain4jToolAdapter.execute() separately force-confirms any MCP-sourced tool
+        // call even when the dangerous-confirmation toggle is off (mirroring its existing
+        // "dangerousShell" always-confirm gate) — see that method for the policy-independent
+        // enforcement.
+        return ToolPermission.DANGEROUS_WRITE;
     }
 
     @Override

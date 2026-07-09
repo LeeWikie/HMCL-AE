@@ -37,7 +37,8 @@ public final class SearchModpacksTool extends AbstractContentSearchTool {
                 + "Parameters: query (search keywords, required), "
                 + "game_version (optional, e.g. \"1.20.1\"), "
                 + "source (optional, \"modrinth\" (default) or \"curseforge\"). "
-                + "Returns a numbered list of matches; each item has an \"id\" to pass to install_modpack. "
+                + "Returns a numbered list of matches; each item has an \"id\" to pass to "
+                + "instance(action=\"modpacks_install\"). "
                 + "Note: installing a modpack creates a NEW game instance, it is not a file copy.";
     }
 }

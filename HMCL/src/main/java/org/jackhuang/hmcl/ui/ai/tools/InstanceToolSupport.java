@@ -22,6 +22,7 @@ import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Locale;
 import java.util.Map;
 
 /// Shared helpers for instance-lifecycle AI tools that drive HMCL's
@@ -97,6 +98,36 @@ final class InstanceToolSupport {
         return def;
     }
 
+    /// Resolves an optional string-valued parameter that also honours the generic {@code query}
+    /// alias, distinguishing "key present (even as an empty string)" — a deliberate value,
+    /// including an explicit clear/reset request — from "key absent entirely" (report-only /
+    /// nothing to do). Unlike {@link #instanceName}, an empty string is returned as-is rather
+    /// than treated as absent, since some callers (e.g. clearing a free-text setting) need to
+    /// tell "clear it" apart from "the caller didn't say anything about it".
+    ///
+    /// @param key the primary parameter name to look up first
+    /// @return the value under {@code key} if present (even if {@code null} or blank), else the
+    ///         value under {@code query} if THAT key is present, else {@code null} if neither key
+    ///         was supplied at all
+    @Nullable
+    static Object presentOrQueryFallback(Map<String, Object> parameters, String key) {
+        if (parameters.containsKey(key)) {
+            return parameters.get(key);
+        }
+        if (parameters.containsKey("query")) {
+            return parameters.get("query");
+        }
+        return null;
+    }
+
+    /// Returns whether the given JVM-args string mentions a heap-size flag ({@code -Xmx}/{@code
+    /// -Xms}), case-insensitively. Used to attach a non-blocking advisory note steering the model
+    /// back to the dedicated {@code set_memory} action instead of duplicating heap size here.
+    static boolean mentionsHeapSizeFlag(String jvmArgs) {
+        String lower = jvmArgs.toLowerCase(Locale.ROOT);
+        return lower.contains("-xmx") || lower.contains("-xms");
+    }
+
     /// The currently selected profile's game repository.
     static HMCLGameRepository repository() {
         Profile profile = Profiles.getSelectedProfile();
@@ -144,7 +175,7 @@ final class InstanceToolSupport {
         if (selected == null) {
             return new ResolvedInstance(null, org.jackhuang.hmcl.ai.tools.ToolResult.failure(
                     "No instance is selected and no 'instance' parameter was given. "
-                            + "Call list_instances, then pass instance=<name>."));
+                            + "Call instance(action=\"list\"), then pass instance=<name>."));
         }
         return new ResolvedInstance(selected, null);
     }
@@ -160,7 +191,7 @@ final class InstanceToolSupport {
             return "(none — no instances installed)";
         }
         if (names.size() > 20) {
-            return String.join(", ", names.subList(0, 20)) + ", … (use list_instances for the full list)";
+            return String.join(", ", names.subList(0, 20)) + ", … (use instance(action=\"list\") for the full list)";
         }
         return String.join(", ", names);
     }

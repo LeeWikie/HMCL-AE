@@ -1,0 +1,19 @@
+{
+  "name": "set-isolation",
+  "description": "Explain and toggle Minecraft instance version isolation via instance(action=set_isolation, enable). Use when the user asks about shared vs. isolated mods/saves, or wants isolation turned on/off (\"版本隔离\",\"独立mod\",\"共享mod\",\"隔离设置\").",
+  "version": "1.0",
+  "triggers": [
+    "版本隔离",
+    "独立mod",
+    "独立存档",
+    "共享mod",
+    "隔离设置",
+    "开启隔离",
+    "关闭隔离",
+    "version isolation",
+    "isolate instance",
+    "shared mods"
+  ],
+  "requires": [],
+  "body": "# Version isolation\n\n`instance(action=set_isolation, instance, enable)` — omit `enable` to just report current\nstate without changing it.\n\n- **ON** — this instance's `mods/`, `saves/`, `config/`, `resourcepacks/`,\n  `shaderpacks/` live under its own `versions/<name>/`; changes affect only it.\n- **OFF** — this instance FOLLOWS the global/parent preset's own directory setting\n  instead of using its own `versions/<name>/` folder — it is NOT unconditionally\n  \"shared\", it inherits whatever the current global default is. In the common case\n  that default IS the shared base `.minecraft` (so content installed while off leaks\n  into every other instance following that same default) — but check the actual\n  current global setting rather than assuming; warn before switching off, and again\n  before installing into an instance that is (or effectively is, via the global\n  default) shared with others.\n- A modpack-imported instance is always isolated regardless of this setting — never\n  offer to disable it or call it shared.\n- Flipping the switch doesn't move existing files between the two folders, only future\n  writes.\n- The currently-selected instance's isolation state is already shown to you automatically\n  each turn (runtime context: version isolation). For OTHER instances, `game(action=list)` /\n  `instance(action=list)` only show each instance's run directory path, from which isolation\n  can be inferred (`versions/<name>/` vs. elsewhere) — there is no explicit isolation flag\n  in that output."
+}

@@ -1,0 +1,18 @@
+{
+  "name": "transfer-player-data",
+  "description": "Compute offline-mode UUIDs and move a player's save data (full profile or inventory-only) between usernames/slots after a name or account change (\"换电脑\",\"换用户名\",\"背包转移\",\"搬背包\",\"离线uuid\",\"数据丢了\").",
+  "version": "1.0",
+  "triggers": [
+    "换电脑",
+    "换用户名",
+    "背包转移",
+    "搬背包",
+    "离线uuid",
+    "数据丢了",
+    "转移背包",
+    "玩家数据",
+    "nbt"
+  ],
+  "requires": [],
+  "body": "NBT tools hidden by default — confirm \"NBT 工具\" is on in AI 设置, else tell the user to enable\nit and stop.\n\n`nbt(action=offline_uuid, username)` gives the offline UUID (`OfflinePlayer:<name>`); playerdata\nfiles are `<dashed-uuid>.dat`. A \"换账号/换用户名后存档丢了\" report is usually just\nusername→UUID changing — check with `offline_uuid` first, not corruption.\n\n- **Full move**: `offline_uuid` for old+new names, then `nbt(action=copy_player_data, world,\n  from, to, DESTRUCTIVE)` — moves ALL data (pos, health, XP, inventory, ender chest),\n  overwriting destination.\n- **Inventory only**: `nbt(action=transfer_inventory, world, from, to, includeEnderChest?,\n  DESTRUCTIVE)` — items only, keeps destination's pos/health/XP.\n\nWorld must be closed in-game. Run `instance(action=worlds_backup_create, world)` first — both\noverwrite the destination. Show resolved UUIDs before transferring."
+}

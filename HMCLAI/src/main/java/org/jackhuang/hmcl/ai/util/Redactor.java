@@ -45,9 +45,27 @@ public final class Redactor {
     };
 
     /// `key: value` / `key=value` secrets — keep the key label, redact only the value.
+    ///
+    /// Includes `refresh[_-]?token` / `client[_-]?token` explicitly (not just the bare `token`
+    /// alternative) because `\b` is a WORD boundary and `_` is a word character — `\btoken` never
+    /// matches the "token" inside "refresh_token" or "client_token" (no boundary between two word
+    /// characters), and those are exactly the field names HMCL's own account system uses for
+    /// Microsoft/Yggdrasil OAuth credentials.
     private static final Pattern SECRET_KEYVAL_PATTERN = Pattern.compile(
-            "(?i)\\b(api[_-]?key|apikey|access[_-]?token|secret[_-]?key|client[_-]?secret|password|passwd|pwd|token|secret)"
+            "(?i)\\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?token|secret[_-]?key|"
+                    + "client[_-]?secret|password|passwd|pwd|token|secret)"
                     + "(\\s*[:=]\\s*)[\"']?[A-Za-z0-9._/+\\-]{6,}[\"']?");
+
+    /// `"key":"value"` — properly JSON-quoted key/value secrets (same key set as above). The
+    /// pattern above requires the key to be followed only by optional whitespace then `:`/`=`, so
+    /// it can NEVER match a JSON-quoted pair like `{"password":"hunter2ABCDEF"}` — the closing
+    /// quote right after the key breaks that match. Without this, any tool argument or API
+    /// response shaped like `"accessToken":"…"` reached the trace file (and its diagnostic-upload
+    /// path) completely unredacted. Keeps the key label, redacts only the value.
+    private static final Pattern SECRET_JSON_KEYVAL_PATTERN = Pattern.compile(
+            "(?i)\"(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?token|secret[_-]?key|"
+                    + "client[_-]?secret|password|passwd|pwd|token|secret)\""
+                    + "(\\s*:\\s*)\"[^\"]{6,}\"");
 
     /// Replaces known secret shapes in {@code s} with `[REDACTED]`, or returns {@code s} unchanged
     /// when it is null/empty or contains no recognized secret. Safe to run over a serialized JSON
@@ -63,6 +81,8 @@ public final class Redactor {
             out = p.matcher(out).replaceAll("[REDACTED]");
         }
         out = SECRET_KEYVAL_PATTERN.matcher(out).replaceAll(m -> m.group(1) + m.group(2) + "[REDACTED]");
+        out = SECRET_JSON_KEYVAL_PATTERN.matcher(out)
+                .replaceAll(m -> "\"" + m.group(1) + "\"" + m.group(2) + "\"[REDACTED]\"");
         return out;
     }
 }

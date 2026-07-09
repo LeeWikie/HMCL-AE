@@ -144,7 +144,7 @@ public final class GetModInfoTool implements Tool {
         if (mod.getDescription() != null) {
             String desc = mod.getDescription().toStringSingleLine();
             if (desc != null && !desc.isBlank()) {
-                sb.append("  description: ").append(desc.strip()).append('\n');
+                sb.append("  description: ").append(truncate(desc.strip())).append('\n');
             }
         }
         return ToolResult.success(sb.toString().trim());
@@ -154,6 +154,16 @@ public final class GetModInfoTool implements Tool {
         if (value != null && !value.isBlank()) {
             sb.append("  ").append(pad(label)).append(": ").append(value.strip()).append('\n');
         }
+    }
+
+    /// Caps an untrusted, free-text mod description (author-controlled content baked into the
+    /// jar, not something HMCL/the user wrote) to a single bounded line before it enters the
+    /// model's context — same cap and behaviour as {@link SearchModsTool}'s own `truncate`, so a
+    /// long/adversarial description can't inject a much larger untrusted payload here than it
+    /// could via a search result for the same mod.
+    private static String truncate(String text) {
+        String oneLine = text.replaceAll("\\s+", " ").trim();
+        return oneLine.length() > 160 ? oneLine.substring(0, 157) + "..." : oneLine;
     }
 
     private static String pad(String label) {

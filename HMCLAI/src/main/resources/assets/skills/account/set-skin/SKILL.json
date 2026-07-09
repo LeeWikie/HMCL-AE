@@ -1,0 +1,17 @@
+{
+  "name": "set-skin",
+  "description": "How to change a Minecraft account's skin, cape, and model. Use when the user wants to set/change skin, cape, or player model (\"换皮肤\",\"设置皮肤\",\"披风\",\"改模型\").",
+  "version": "1.0",
+  "triggers": [
+    "皮肤",
+    "换皮肤",
+    "设置皮肤",
+    "披风",
+    "模型",
+    "skin",
+    "cape",
+    "model"
+  ],
+  "requires": [],
+  "body": "# Set account skin\n\n`account(action=set_skin, username?, source, skinPath?, capePath?, cslApi?, model?)`\n\nOffline accounts accept any source: `local` (a `.png` path via `skinPath`),\n`little_skin`/`csl_api` (a skin-station URL via `cslApi`), or presets\n`steve`/`alex`/`default`. `capePath` (a cape) is offline-only.\n\nOnline accounts (Microsoft/authlib-injector) accept ONLY `local` PNG upload — this\nchanges the REAL account skin, needs network + valid credentials. No cape, no\npresets for online accounts.\n\n`model` is `auto` (detect wide/slim from PNG), `wide`, or `slim`.\n\nCall `account(action=list)` first to confirm the exact target username and whether\nit's offline or online — that decides which source/params are valid.\n\nDon't: offer cape or presets to an online account; guess the username when multiple\naccounts exist without confirming which one."
+}

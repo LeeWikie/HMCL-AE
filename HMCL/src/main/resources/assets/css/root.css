@@ -2068,13 +2068,18 @@
     -fx-padding: 4 12 4 12;
 }
 
-/* Collapsible reasoning ("思考过程") card — a muted block above the answer. */
+/* Collapsible reasoning ("思考过程") card — a muted block above the answer. Box model (radius/
+   padding/border-width) is kept in lockstep with the sibling .ai-tool-card below: this card never
+   picked up the shared .ai-bubble class (it isn't a chat bubble), so it needs its own explicit
+   -fx-border-width to match .ai-tool-card's, and its radius/padding are pinned to the same values
+   rather than the slightly different ones it drifted to on its own. */
 .ai-reasoning-card {
     -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 10;
+    -fx-background-radius: 8;
     -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 10;
-    -fx-padding: 2 8 6 8;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 6 10 6 10;
 }
 
 .ai-reasoning-header {
@@ -2227,44 +2232,8 @@
 }
 
 
-.ai-sidebar-settings-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 13px;
-    -fx-padding: 8 12 8 12;
-    -fx-background-radius: 8;
-}
-
-.ai-sidebar-settings-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-sidebar-settings-btn-active {
-    -fx-background-color: -monet-secondary-container;
-    -fx-text-fill: -monet-on-secondary-container;
-}
-
-.ai-sidebar-separator {
-    -fx-padding: 4 8 4 8;
-}
-
-.ai-sidebar-separator .line {
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0.5;
-}
-
 .ai-chat-settings-backdrop {
     -fx-background-color: rgba(0, 0, 0, 0.3);
-}
-
-.ai-advanced-toggle {
-    -fx-text-fill: -monet-primary;
-    -fx-font-size: 12px;
-    -fx-cursor: hand;
-}
-
-.ai-advanced-toggle:hover {
-    -fx-text-fill: -monet-on-surface;
 }
 
 /* ---- AI Header Selectors (compact LineSelectButton) ---- */
@@ -2331,65 +2300,6 @@
     -fx-background-color: transparent;
 }
 
-/* ---- AI Toolbar Selectors ---- */
-
-.ai-toolbar-selector {
-    -fx-font-size: 12px;
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 8;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
-    -fx-border-width: 0.5;
-    -fx-padding: 1 24 1 10;
-}
-
-.ai-toolbar-selector > .arrow-button {
-    -fx-background-color: transparent;
-    -fx-padding: 0 6 0 0;
-}
-
-.ai-toolbar-selector > .arrow-button > .arrow {
-    -fx-background-color: -monet-on-surface-variant;
-    -fx-shape: "M6 9l6 6 6-6z";
-    -fx-scale-x: 0.6;
-    -fx-scale-y: 0.6;
-}
-
-.ai-toolbar-selector:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-border-color: -monet-on-surface-variant;
-}
-
-.ai-toolbar-selector:focused {
-    -fx-border-color: -monet-primary;
-    -fx-border-width: 1.5;
-}
-
-.ai-toolbar-selector .list-cell {
-    -fx-text-fill: -monet-on-surface;
-    -fx-font-size: 12px;
-    -fx-padding: 2 6 2 6;
-}
-
-.ai-toolbar-selector .combo-box-popup .list-view {
-    -fx-background-color: -monet-surface;
-    -fx-background-radius: 8;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
-    -fx-border-width: 0.5;
-    -fx-padding: 4;
-}
-
-.ai-toolbar-selector .combo-box-popup .list-cell {
-    -fx-padding: 6 10 6 10;
-    -fx-background-radius: 6;
-}
-
-.ai-toolbar-selector .combo-box-popup .list-cell:hover {
-    -fx-background-color: -monet-secondary-container;
-    -fx-text-fill: -monet-on-secondary-container;
-}
-
 .ai-messages-scroll {
     -fx-background-color: transparent;
 }
@@ -2404,26 +2314,6 @@
 
 .ai-message-list {
     -fx-background-color: transparent;
-}
-
-/* ---- AI Model Discovery ---- */
-
-.ai-model-row {
-    -fx-spacing: 6;
-}
-
-.ai-discover-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-primary;
-    -fx-font-size: 12px;
-    -fx-padding: 2 0 2 0;
-    -fx-cursor: hand;
-}
-
-.ai-discover-btn:hover {
-    -fx-text-fill: -monet-on-primary;
-    -fx-background-color: -monet-primary-container;
-    -fx-background-radius: 4;
 }
 
 /* ---- AI Suggestion Chips ---- */
@@ -2496,6 +2386,30 @@
 .ai-job-row {
     -fx-padding: 3 2 3 2;
 }
+/* Pinned TODO checklist above the messages — mirrors .ai-jobs-pane's translucent/borderless
+   treatment (previously inherited .ai-tool-card's OPAQUE background + hairline border, meant for
+   a bubble-like chat card, which read as a disconnected box sitting flush against the container's
+   edges: "任务清单的边缘和界面相当割裂不对齐"). Also now collapsible like the jobs pane, via
+   .ai-todo-header (previously had no toggle at all). */
+.ai-todo-container {
+    -fx-padding: 4 8 0 8;
+}
+.ai-todo-card {
+    -fx-background-color: -monet-surface-container-low-transparent-80;
+    -fx-background-radius: 8;
+}
+.ai-todo-header {
+    -fx-cursor: hand;
+    -fx-background-radius: 8;
+}
+.ai-todo-title {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+.ai-todo-body {
+    -fx-padding: 4 0 0 0;
+}
 .ai-job-cat {
     -fx-font-size: 12px;
     -fx-text-fill: -monet-on-surface;
@@ -2533,6 +2447,29 @@
     -fx-background-color: transparent;
     -fx-background-insets: 0;
     -fx-padding: 0;
+}
+
+/* Reasoning-effort ("思考: low/medium/...") popup — previously had NO dedicated rule at all,
+   so it fell back to the bare .jfx-popup-container (-monet-surface) + default .label fill
+   (-monet-on-surface) with no distinct selected-row treatment, reading as washed-out/illegible
+   against the rest of the themed UI. */
+.ai-model-picker {
+    -fx-background-color: -monet-surface-container-high;
+    -fx-background-radius: 8;
+    -fx-padding: 2;
+}
+/* Unselected rows (none/low/medium/high/xhigh/max minus whichever is active) — these plain
+   Labels carry no class of their own beyond the bare ".label" default, which is what users
+   reported as illegible against this popup's -monet-surface-container-high background. Pin an
+   explicit, higher-specificity fill here (the same on-surface pairing used for every other
+   -monet-surface-container-high surface in this file, e.g. .jfx-dialog-layout) so it can't be
+   lost to cascade ordering; the background itself is untouched. */
+.ai-model-picker .label {
+    -fx-text-fill: -monet-on-surface;
+}
+.ai-model-picker .title-label {
+    -fx-text-fill: -monet-primary;
+    -fx-font-weight: bold;
 }
 
 /* ---- ask tool: structured question panel above the input ---- */
@@ -2581,43 +2518,10 @@
     -fx-background-color: derive(-monet-primary, 10%);
 }
 
-/* ---- AI Global Settings Section ---- */
-
-.ai-global-section {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 8;
-    -fx-padding: 12 12 12 12;
-    -fx-spacing: 10;
-}
-
-.ai-global-section-label {
-    -fx-font-size: 13px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-global-toggle-row {
-    -fx-spacing: 6;
-    -fx-alignment: center-left;
-}
-
-.ai-global-toggle-label {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-global-toggle-desc {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 0 0 0 24;
-}
-
-.ai-global-combo {
-    -fx-font-size: 12px;
-    -fx-max-width: 200;
-}
-
-/* ---- AI Approval Badge in Header ---- */
+/* ---- AI Approval Badge in Header ----
+   Used to have per-mode (.ai-approval-badge-safe/-ask/-yolo) color variants; now that there is
+   only one approval mode (Auto — see AiApprovalMode's own doc for the SAFE/ASK/YOLO merge this
+   replaced), the badge no longer varies and just uses the base style below. */
 
 .ai-approval-badge {
     -fx-font-size: 10px;
@@ -2627,19 +2531,35 @@
     -fx-background-color: -monet-primary-container;
 }
 
-.ai-approval-badge-safe {
-    -fx-background-color: -monet-primary-container;
-    -fx-text-fill: -monet-on-primary-container;
-}
-
-.ai-approval-badge-ask {
+/* "计划模式" header badge (AIMainPage#planBadge) — a DIFFERENT feature from the approval-mode
+   badge above (Plan Mode is the read-only-investigation-then-approve toggle, unrelated to the
+   now-unified SAFE/ASK/YOLO approval mode). It used to piggyback on the approval-mode badge's
+   now-deleted ".ai-approval-badge-ask" tertiary-container variant purely for a distinct color;
+   now that that class is gone it needs its own rule so it doesn't silently fall back to
+   .ai-approval-badge's primary-container color and become visually indistinguishable from the
+   "Auto" badge next to it. */
+.ai-plan-mode-badge {
     -fx-background-color: -monet-tertiary-container;
     -fx-text-fill: -monet-on-tertiary-container;
 }
 
-.ai-approval-badge-yolo {
-    -fx-background-color: -monet-error-container;
-    -fx-text-fill: -monet-on-error-container;
+/* ---- Inline live job-progress badge ({{job_progress:<id[,id...]>}} chat markup) ----
+   Spliced into a message's TextFlow in place of the raw marker (see MarkdownMessageView /
+   JobProgressBadge): a small highlighted pill, not plain inline text, so a live-updating
+   percentage (single job) or "<done>/<N> 已完成" count (multiple jobs) reads as status chrome
+   rather than prose. Mirrors .ai-approval-badge's small-pill treatment above. */
+.ai-job-progress-badge {
+    -fx-font-size: 11.5px;
+    -fx-padding: 1 8 1 8;
+    -fx-background-radius: 8;
+    -fx-text-fill: -monet-on-primary-container;
+    -fx-background-color: -monet-primary-container;
+}
+
+/* Once settled (job finished / all jobs in the group terminal / bad id fallback), dim slightly
+   so a glance at old chat history can tell a live badge from a long-finished one. */
+.ai-job-progress-badge-done {
+    -fx-opacity: 0.75;
 }
 
 /* ---- AI Tool Activity ---- */
@@ -2678,13 +2598,25 @@
     -fx-padding: 6 10 6 10;
 }
 
+/* Font size matches .ai-reasoning-title (both are card-header titles, see .ai-reasoning-card
+   above) — this used to be 11px, one size smaller than its reasoning-card sibling. */
 .ai-tool-card-header {
     -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
 }
 
 .ai-tool-card-expandable {
     -fx-cursor: hand;
+}
+
+/* Collapsed run of 2+ consecutive tool calls ("已调用 N 个工具") — see ToolCallGroupCard. Scoped to
+   the group's own dedicated class so it can't leak onto nested ToolCard headers inside the
+   group's body (a ToolCard is a descendant of the group VBox too, and a plain descendant
+   selector on .ai-tool-card-header would otherwise match those as well). Font size matches
+   .ai-tool-card-header/.ai-reasoning-title. */
+.ai-tool-group-header {
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
 }
 
 .ai-tool-card-result {
@@ -2723,80 +2655,12 @@
     -fx-text-fill: -monet-on-surface;
 }
 
-.ai-chat-settings-close-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 14px;
-    -fx-padding: 4 8 4 8;
-    -fx-background-radius: 4;
-}
-
-.ai-chat-settings-close-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-text-fill: -monet-on-surface;
-}
-
 .ai-chat-settings-body {
     -fx-spacing: 12;
 }
 
 .ai-chat-settings-scroll {
     -fx-background-color: transparent;
-}
-
-.ai-chat-settings-section {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 8;
-    -fx-padding: 12 12 12 12;
-    -fx-spacing: 6;
-}
-
-.ai-chat-settings-section-title {
-    -fx-font-size: 13px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-    -fx-padding: 2 0 4 0;
-}
-
-.ai-chat-settings-section-header {
-    -fx-cursor: hand;
-}
-
-.ai-chat-settings-section-header:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-background-radius: 4;
-}
-
-.ai-chat-settings-toggle-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-min-width: 20;
-    -fx-min-height: 20;
-    -fx-padding: 2;
-}
-
-.ai-chat-settings-toggle-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-chat-settings-section-content {
-    -fx-padding: 0;
-}
-
-.ai-chat-settings-section .label {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-chat-settings-section .combo-box {
-    -fx-font-size: 11px;
-    -fx-max-width: 140;
-}
-
-.ai-chat-settings-section .text-field {
-    -fx-font-size: 11px;
-    -fx-padding: 4 6 4 6;
-    -fx-background-radius: 4;
 }
 
 /* ---- AI Chat Message Styles ---- */
@@ -2827,55 +2691,6 @@
 
 .ai-chat-font-large .ai-bubble {
     -fx-font-size: 16px;
-}
-
-/* ---- AI Session Management ---- */
-
-.ai-sidebar-manage-btn {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 8 10 8 10;
-    -fx-background-radius: 8;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1;
-    -fx-border-style: dashed;
-}
-
-.ai-sidebar-manage-btn:hover {
-    -fx-background-color: -monet-primary-fixed-dim;
-    -fx-border-color: -monet-primary;
-}
-
-.ai-sidebar-manage-btn .svg {
-    -fx-fill: -monet-on-surface-variant;
-}
-
-.ai-sidebar-manage-btn:hover .svg {
-    -fx-fill: -monet-primary;
-}
-
-.ai-session-check {
-    -fx-min-width: 16;
-    -fx-min-height: 16;
-}
-
-.ai-manage-bar {
-    -fx-background-color: -monet-surface-container-high;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1 0 0 0;
-}
-
-.ai-manage-btn {
-    -fx-font-size: 11px;
-    -fx-padding: 4 8 4 8;
-}
-
-.ai-manage-delete-btn {
-    -fx-text-fill: -monet-error;
-}
-
-.ai-manage-delete-btn:hover {
-    -fx-background-color: -monet-error-container;
 }
 
 /* ---- AI Search Overlay ---- */
@@ -2928,21 +2743,6 @@
     -fx-border-color: -monet-primary;
     -fx-border-width: 1;
     -fx-border-radius: 8;
-}
-
-.ai-search-clear-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-min-width: 24;
-    -fx-min-height: 24;
-    -fx-font-size: 14px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-cursor: hand;
-}
-
-.ai-search-clear-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-text-fill: -monet-on-surface;
 }
 
 .ai-search-empty {
@@ -3058,10 +2858,6 @@
     -fx-padding: 4;
 }
 
-.ai-autocomplete-scroll {
-    -fx-background-color: transparent;
-}
-
 .ai-autocomplete-item {
     -fx-font-size: 12px;
     -fx-text-fill: -monet-on-surface;
@@ -3099,4 +2895,42 @@
 
 .ai-toolbar-icon-btn:hover .svg {
     -fx-fill: -monet-primary;
+}
+
+/* org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane: a real JSON/code editor (RichTextFX
+ * CodeArea) with lightweight syntax highlighting, replacing the old fixed-question-form dialog
+ * used to hand-edit an MCP server's raw config. */
+
+.json-editor-code-area {
+    -fx-font-size: 13px;
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 8;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 8;
+    -fx-padding: 6;
+}
+
+.json-editor-code-area .json-plain {
+    -fx-fill: -monet-on-surface;
+}
+
+.json-editor-code-area .json-key {
+    -fx-fill: -monet-primary;
+    -fx-font-weight: bold;
+}
+
+.json-editor-code-area .json-string {
+    -fx-fill: -monet-tertiary;
+}
+
+.json-editor-code-area .json-number,
+.json-editor-code-area .json-boolean,
+.json-editor-code-area .json-null {
+    -fx-fill: -monet-secondary;
+}
+
+.json-editor-code-area .json-brace,
+.json-editor-code-area .json-bracket {
+    -fx-fill: -monet-on-surface-variant;
+    -fx-font-weight: bold;
 }

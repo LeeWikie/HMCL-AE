@@ -60,7 +60,8 @@ public final class ListAccountsTool implements Tool {
                     Account selected = Accounts.getSelectedAccount();
                     if (accounts.isEmpty()) {
                         future.complete("No accounts are logged in. "
-                                + "Use add_offline_account for an offline account, or microsoft_login for a Microsoft account.");
+                                + "Use account(action=\"add_offline\", username=...) for an offline account, or "
+                                + "account(action=\"microsoft_login\") for a Microsoft account.");
                         return;
                     }
                     StringBuilder sb = new StringBuilder();

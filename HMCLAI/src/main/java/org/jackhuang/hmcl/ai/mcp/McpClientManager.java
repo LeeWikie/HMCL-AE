@@ -46,10 +46,10 @@ public final class McpClientManager {
         try {
             String cmd = config.getCommand();
             if (cmd == null || cmd.isEmpty()) return false;
-            List<String> args = List.of(cmd.split("\\s+"));
             McpClient client = DefaultMcpClient.builder()
                     .transport(StdioMcpTransport.builder()
-                            .command(args)
+                            .command(buildCommandLine(cmd, config.getArgs()))
+                            .environment(config.getEnv())
                             .logEvents(false)
                             .build())
                     .build();
@@ -59,6 +59,25 @@ public final class McpClientManager {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /// Builds the full argv for the stdio child process: the configured executable followed by
+    /// its explicit {@link AiMcpServerConfig#getArgs() args}.
+    ///
+    /// Falls back to a naive whitespace split of {@code command} only when no args are configured,
+    /// for backward compatibility with configs saved before {@code args}/{@code env} existed, where
+    /// the whole command line (executable and its arguments together) was crammed into one string.
+    ///
+    /// Package-private (not {@code private}) so {@code McpClientManagerTest} can exercise both
+    /// branches directly without spawning a process.
+    static List<String> buildCommandLine(String command, List<String> args) {
+        if (args.isEmpty()) {
+            return List.of(command.trim().split("\\s+"));
+        }
+        List<String> commandLine = new ArrayList<>(args.size() + 1);
+        commandLine.add(command);
+        commandLine.addAll(args);
+        return commandLine;
     }
 
     /// Connects to a remote MCP server via HTTP and discovers tools.
@@ -104,9 +123,15 @@ public final class McpClientManager {
                 McpToolStub stub = new McpToolStub(client, serverId, toolName,
                         spec.description() != null ? spec.description() : "MCP tool " + toolName,
                         schemaJsonOf(spec));
-                // remove old then re-register
+                // Disable-then-register-then-enable: the disable call here only matters on
+                // RE-discovery (clearing whatever state a previous registration left), but without
+                // the matching enable() afterward, EVERY newly discovered tool — including on the
+                // very first connection — was left permanently disabled (ToolRegistry.register()
+                // never touches the disabled set on its own), so no MCP tool could ever appear in
+                // the model's tool manifest or be called at all.
                 registry.disable(prefixed);
                 registry.register(stub);
+                registry.enable(prefixed);
                 registered.add(stub);
             }
         } catch (Exception ignored) {

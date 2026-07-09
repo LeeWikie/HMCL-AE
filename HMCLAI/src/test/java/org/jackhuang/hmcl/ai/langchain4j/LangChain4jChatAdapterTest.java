@@ -144,6 +144,52 @@ public final class LangChain4jChatAdapterTest {
         assertTrue(result.isEmpty());
     }
 
+    /// A multi-cycle turn now persists ONE {@link LlmMessage} per completed cycle (so a reloaded
+    /// session's bubbles match what streamed live) instead of one for the whole turn — see
+    /// ChatAgent#doSendStreaming's onSegmentComplete. convertMessages MUST merge a run of
+    /// consecutive assistant-role messages back into a single AiMessage when building the wire
+    /// request for the NEXT turn: at least Anthropic's API rejects consecutive same-role messages
+    /// with nothing between them, so sending each segment as its own AiMessage would break that
+    /// provider on the turn after a multi-cycle reply.
+    @Test
+    public void testConvertMessagesMergesConsecutiveAssistantSegments() {
+        List<LlmMessage> messages = List.of(
+                new LlmMessage("user", "帮我装个Fabric的Sodium"),
+                new LlmMessage("assistant", "好的，先查一下版本。"),
+                new LlmMessage("assistant", "已经装好了，帮你确认一下文件。"),
+                new LlmMessage("assistant", "确认完成，一切正常。"));
+
+        List<ChatMessage> result = LangChain4jChatAdapter.convertMessages(messages);
+
+        assertEquals(2, result.size(), "the 3 consecutive assistant segments must merge into 1 AiMessage");
+        assertInstanceOf(UserMessage.class, result.get(0));
+        assertInstanceOf(AiMessage.class, result.get(1));
+        String merged = ((AiMessage) result.get(1)).text();
+        assertTrue(merged.contains("好的，先查一下版本。"));
+        assertTrue(merged.contains("已经装好了，帮你确认一下文件。"));
+        assertTrue(merged.contains("确认完成，一切正常。"));
+        // Order preserved: segment 1 must appear before segment 2 before segment 3.
+        assertTrue(merged.indexOf("好的") < merged.indexOf("已经装好了"));
+        assertTrue(merged.indexOf("已经装好了") < merged.indexOf("确认完成"));
+    }
+
+    /// A run of assistant segments interrupted by a user/tool message must NOT merge across that
+    /// boundary — only genuinely CONSECUTIVE same-role runs collapse.
+    @Test
+    public void testConvertMessagesDoesNotMergeAcrossOtherRoles() {
+        List<LlmMessage> messages = List.of(
+                new LlmMessage("user", "第一个问题"),
+                new LlmMessage("assistant", "第一个回答"),
+                new LlmMessage("user", "第二个问题"),
+                new LlmMessage("assistant", "第二个回答"));
+
+        List<ChatMessage> result = LangChain4jChatAdapter.convertMessages(messages);
+
+        assertEquals(4, result.size(), "non-adjacent assistant messages must stay separate");
+        assertEquals("第一个回答", ((AiMessage) result.get(1)).text());
+        assertEquals("第二个回答", ((AiMessage) result.get(3)).text());
+    }
+
     /// Verifies that a model-based adapter can be built from LlmConfig
     /// using the factory.
     @Test

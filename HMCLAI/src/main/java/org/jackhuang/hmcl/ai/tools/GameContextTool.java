@@ -31,8 +31,9 @@ public final class GameContextTool implements ToolSpec {
     private boolean isolated;
 
     /// Records the selected instance's name and whether version isolation is on.
-    /// Isolation ON => mods/saves/config live under versions/&lt;name&gt;/; OFF => they are
-    /// shared in the base .minecraft directory across all versions.
+    /// Isolation ON => mods/saves/config live under versions/&lt;name&gt;/; OFF => this instance
+    /// follows the global/parent preset's own directory setting instead (commonly the shared
+    /// base .minecraft, but whatever that global default currently is).
     public void setInstanceInfo(@Nullable String instanceName, boolean isolated) {
         this.instanceName = instanceName;
         this.isolated = isolated;
@@ -64,8 +65,9 @@ public final class GameContextTool implements ToolSpec {
 
     @Override
     public String getDescription() {
-        return "Resolves directory paths for a Minecraft instance: runDirectory, "
-                + "modsDir, logsDir, crashReportsDir, configDir. "
+        return "Resolves directory paths for a Minecraft instance: gameDirectory, modsDir, logsDir, "
+                + "crashReportsDir, configDir, resourcePacksDir, savesDir, shaderPacksDir, plus the "
+                + "selected instance name and its version-isolation state. "
                 + "Uses the currently selected game directory.";
     }
 
@@ -91,7 +93,9 @@ public final class GameContextTool implements ToolSpec {
         }
         sb.append("versionIsolation: ").append(isolated
                 ? "ON (mods/saves/config under versions/" + (instanceName != null ? instanceName : "<name>") + "/)"
-                : "OFF (shared in base .minecraft across all versions)").append('\n');
+                : "OFF (follows the global/parent preset's own directory setting instead of its own "
+                + "versions/<name>/ folder — commonly the shared base .minecraft, but check the actual "
+                + "current global default)").append('\n');
         for (var entry : paths.entrySet()) {
             sb.append(entry.getKey()).append(": ").append(entry.getValue());
             if (Files.isDirectory(Path.of(entry.getValue()))) {

@@ -29,25 +29,124 @@ public final class DangerousCommands {
     private DangerousCommands() {
     }
 
+    /// PowerShell indirect-invocation constructs: assembling the cmdlet/verb via a variable fed to
+    /// the call operator (`& $v`), a parenthesized expression fed to the call operator (`& (...)`),
+    /// `Invoke-Expression`/`iex`, string concatenation of quoted literals (`'Remo'+'ve-Item'`), or the
+    /// `-f` format operator applied to a quoted template (`'{0}{1}' -f 'Remove','-Item'`). Every one
+    /// of these lets a verb be assembled so that no dangerous verb ever appears contiguously in the
+    /// source text, evading every verb-matching regex below. Resolving what these expressions
+    /// actually evaluate to needs a real PowerShell parser/interpreter, which is out of scope — so,
+    /// mirroring the existing fail-closed handling of an undecodable `-EncodedCommand` payload, any
+    /// command containing one of these constructs is treated as dangerous outright.
+    private static final Pattern POWERSHELL_INDIRECT_INVOCATION = Pattern.compile(
+            "(?i)(?:&\\s*\\$)"
+                    + "|(?:&\\s*\\()"
+                    + "|(?:\\b(?:iex|invoke-expression)\\b)"
+                    + "|(?:['\"][^'\"\\r\\n]{0,200}['\"]\\s*\\+\\s*['\"])"
+                    + "|(?:['\"][^'\"\\r\\n]{0,200}['\"]\\s*-f\\b)");
+
+    /// Package-visible so {@link CriticalOperations}'s path-deletion check can fail closed the same
+    /// way: an indirect-invocation construct means we cannot rule out a delete verb being assembled
+    /// through it, even when no literal delete verb appears in the text.
+    static boolean hasIndirectInvocation(@Nullable String text) {
+        return text != null && POWERSHELL_INDIRECT_INVOCATION.matcher(text).find();
+    }
+
     private static final Pattern[] PATTERNS = {
             Pattern.compile("(?i)\\brm\\s+(?:-\\S+\\s+)*(?:-[a-z]*[rf]|--(?:recursive|force|no-preserve-root))"), // rm -rf/-r/-f and --recursive/--force
             Pattern.compile("(?i)\\b(?:rmdir|rd)\\s+(?:/[a-z]+\\s+)*/s\\b"), // rmdir/rd /s (any switch order, e.g. rd /q /s)
             Pattern.compile("(?i)\\b(?:del|erase)\\b[^\\r\\n&|;]*/[sfq]\\b"), // del/erase with /s /f /q anywhere (before or after the path)
             // PowerShell recursive delete: Remove-Item and its built-in aliases (ri/rd/del/erase/rm),
             // with -Recurse or any unambiguous prefix abbreviation (-r/-re/-rec/…) PowerShell accepts.
-            Pattern.compile("(?i)(?<![\\w-])(?:remove-item|ri|rd|del|erase|rm)\\b[^\\r\\n&|;]*\\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\\b"),
+            // The exclusion class deliberately does NOT exclude \r\n (unlike the similar patterns
+            // above) — a PowerShell backtick line-continuation (`Remove-Item `\n  -Recurse -Force`)
+            // makes the following newline part of the SAME statement, so excluding it here let a
+            // backtick-continued recursive delete evade this pattern entirely.
+            Pattern.compile("(?i)(?<![\\w-])(?:remove-item|ri|rd|del|erase|rm)\\b[^&|;]*\\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\\b"),
             Pattern.compile("(?i)\\bRemove-Item\\b.*(HKLM|HKCU|HKEY)"),
             Pattern.compile("(?i)\\bformat\\s+[a-z]:"),               // format C:
             Pattern.compile("(?i)\\bmkfs\\b"),
             Pattern.compile("(?i)\\bdd\\s+if="),
             Pattern.compile("(?i)\\bdiskpart\\b"),
+            // Modern PowerShell Storage-module equivalents of format/diskpart — this launcher's own
+            // ShellTool instructs the model to emit PowerShell on this Windows host, so these are at
+            // least as reachable as the legacy cmd.exe verbs above.
+            Pattern.compile("(?i)\\b(format-volume|clear-disk|remove-partition|initialize-disk)\\b"),
             Pattern.compile("(?i)\\breg\\s+delete\\b"),
-            Pattern.compile("(?i)\\b(shutdown|reboot|halt|poweroff)\\b"),
+            // shutdown/reboot/halt/poweroff cover Unix/cmd; stop-computer/restart-computer are the
+            // native PowerShell cmdlet equivalents.
+            Pattern.compile("(?i)\\b(shutdown|reboot|halt|poweroff|stop-computer|restart-computer)\\b"),
             Pattern.compile("(?i)\\bkill(all)?\\s+-9"),
             Pattern.compile("(?i)\\bchmod\\s+-R\\s+0*0\\b"),
             Pattern.compile(">\\s*/dev/sd"),
             Pattern.compile(":\\(\\)\\s*\\{.*\\}\\s*;\\s*:"),          // fork bomb :(){ :|:& };:
+            // Windows-specific catastrophic operations with no bash counterpart to generalize from:
+            // vssadmin wipes ALL Volume Shadow Copy backups (the standard first step ransomware
+            // takes to block System Restore/File History recovery); bcdedit disables Windows
+            // Recovery Environment; wbadmin deletes Windows Server Backup catalogs.
+            Pattern.compile("(?i)\\bvssadmin\\s+delete\\s+shadows\\b"),
+            Pattern.compile("(?i)\\bbcdedit\\b.*\\brecoveryenabled\\s+no\\b"),
+            Pattern.compile("(?i)\\bwbadmin\\s+delete\\b"),
+            // PowerShell indirect invocation of an assembled verb (see the field javadoc above).
+            POWERSHELL_INDIRECT_INVOCATION,
+            // PowerShell enumerate-then-pipe-delete: Get-ChildItem/gci/ls/dir gathering a recursive
+            // file list and piping it into Remove-Item/ri/del/erase/rm. The recurse flag lives on the
+            // enumerate side of the pipe and the delete verb on the other side, so neither the
+            // recursive Remove-Item pattern above (which excludes `|`) nor a plain verb match catches
+            // it — and unlike most patterns here, it is dangerous against ANY directory, not just a
+            // recognized critical path.
+            Pattern.compile("(?i)\\b(?:get-childitem|gci|ls|dir)\\b[^\\r\\n;]*-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\\b[^\\r\\n;]*\\|[^\\r\\n;]*\\b(?:remove-item|ri|del|erase|rm)\\b"),
+            // Bash variable indirection of the command word: `<name>=<dangerous-verb>; ... $<name> ...`.
+            // General-purpose shell parsing (to resolve arbitrary variable indirection) is out of
+            // scope; this is a pragmatic heuristic for the narrow, common case of a dangerous verb
+            // assigned to a variable and later invoked through it.
+            Pattern.compile("(?i)\\b([a-z_][a-z0-9_]*)\\s*=\\s*(?:rm|dd|mkfs|shutdown|reboot|halt|poweroff|rmdir|unlink|shred|format)\\b[^\\r\\n]{0,200}?\\$\\{?\\1\\b"),
+            // Wildcard delete with -Force but no explicit recurse flag: `Remove-Item .../saves/* -Force`
+            // deletes every file in the directory just as surely as -Recurse would, but the recursive
+            // Remove-Item pattern above requires an explicit -r... flag and misses it.
+            Pattern.compile("(?i)\\b(?:remove-item|ri|del|erase|rm)\\b[^\\r\\n&|;]*\\\\?\\*[^\\r\\n&|;]*-f(?:orce)?\\b"),
     };
+
+    // ---------------------------------------------------------------------------------------------
+    // Obfuscation normalization (mid-word verb splitting, $IFS whitespace substitution)
+    // ---------------------------------------------------------------------------------------------
+
+    /// bash `${IFS}` / `$IFS` used as a whitespace substitute for a literal space between a verb and
+    /// its flags/arguments (defeats the `\s+` requirement in e.g. the GNU `rm` pattern), including the
+    /// common further obfuscation `$IFS$9` (an empty positional parameter appended right after `$IFS`
+    /// to break up the literal token without changing what the shell expands it to).
+    private static final Pattern IFS_WHITESPACE = Pattern.compile("(?i)\\$\\{?IFS\\}?(?:\\$\\d+)?");
+
+    /// bash backslash-escape-before-a-letter is a shell no-op (`r\m` expands to `rm`) but visually
+    /// splits the verb across the escape so a literal-verb regex never matches the raw text.
+    private static final Pattern BACKSLASH_ESCAPED_LETTER = Pattern.compile("\\\\(?=[A-Za-z])");
+
+    /// bash empty `''`/`""` quote runs spliced into the middle of a word are a no-op to the shell
+    /// (`r''m` / `r""m` both expand to `rm`) but split the verb the same way.
+    private static final Pattern EMPTY_QUOTE_RUN = Pattern.compile("''|\"\"");
+
+    /// cmd.exe `^` immediately before a character is a no-op escape (`r^d` expands to `rd`) used the
+    /// same way to split a verb across the escape.
+    private static final Pattern CARET_ESCAPED_CHAR = Pattern.compile("\\^(?=.)");
+
+    /// Normalizes shell-level no-op obfuscation that splits a dangerous verb/flag across escape
+    /// characters or IFS substitutions without changing what the shell actually executes, so the
+    /// verb/flag regexes above can match it. This is for DETECTION ONLY — the normalized text is
+    /// never executed, only pattern-matched. Callers should match the raw text FIRST (some patterns
+    /// rely on structure this collapses, e.g. Windows path separators, so normalizing unconditionally
+    /// could in principle turn a raw match into a miss) and only fall back to the normalized text if
+    /// the raw text didn't match, so this pass can only ADD detections, never remove one. Shared by
+    /// {@link #matchesPatterns} and {@link CriticalOperations}'s path-deletion check.
+    static String normalizeObfuscation(String s) {
+        if (s == null || s.isEmpty()) {
+            return s;
+        }
+        String out = IFS_WHITESPACE.matcher(s).replaceAll(" ");
+        out = BACKSLASH_ESCAPED_LETTER.matcher(out).replaceAll("");
+        out = EMPTY_QUOTE_RUN.matcher(out).replaceAll("");
+        out = CARET_ESCAPED_CHAR.matcher(out).replaceAll("");
+        return out;
+    }
 
     /// Returns true if the command looks destructive/irreversible and should be confirmed.
     ///
@@ -65,8 +164,20 @@ public final class DangerousCommands {
         return scanEncodedPayloads(command, DangerousCommands::matchesPatterns) != EncodedScan.NONE;
     }
 
-    /// Runs the raw danger patterns against {@code command} (no decoding).
+    /// Runs the raw danger patterns against {@code command} (no base64 decoding), first against the
+    /// text as-is and then — only if that found nothing — again against the obfuscation-normalized
+    /// text (see {@link #normalizeObfuscation}), so mid-word verb splitting / `$IFS` whitespace
+    /// substitution cannot evade detection while every existing raw-text match keeps working exactly
+    /// as before.
     private static boolean matchesPatterns(String command) {
+        if (matchesPatternsRaw(command)) {
+            return true;
+        }
+        String normalized = normalizeObfuscation(command);
+        return !normalized.equals(command) && matchesPatternsRaw(normalized);
+    }
+
+    private static boolean matchesPatternsRaw(String command) {
         for (Pattern p : PATTERNS) {
             if (p.matcher(command).find()) {
                 return true;

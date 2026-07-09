@@ -49,6 +49,7 @@ import org.jackhuang.hmcl.util.io.ResponseCodeException;
 import org.jackhuang.hmcl.util.platform.*;
 import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jackhuang.hmcl.util.versioning.VersionNumber;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -257,6 +258,7 @@ public final class LauncherHelper {
                 }).thenAcceptAsync(process -> { // process is LaunchTask's result
                     if (scriptFile == null) {
                         PROCESSES.add(new WeakReference<>(process));
+                        PROCESSES_BY_VERSION.put(selectedVersion, new WeakReference<>(process));
                         if (launcherVisibility == LauncherVisibility.CLOSE)
                             Launcher.stopApplication();
                         else
@@ -1002,6 +1004,13 @@ public final class LauncherHelper {
 
     private static final Queue<WeakReference<ManagedProcess>> PROCESSES = new ConcurrentLinkedQueue<>();
 
+    /// Same live processes as {@link #PROCESSES}, additionally keyed by instance/version id — the
+    /// flat queue above has no per-instance key, so the AI `game` domain tool's `list` (running
+    /// flag) and `stop` actions need this parallel map. Populated alongside {@link #PROCESSES} at
+    /// the one call site that has both {@code selectedVersion} and the launched {@link ManagedProcess}
+    /// in scope; never written anywhere else.
+    private static final Map<String, WeakReference<ManagedProcess>> PROCESSES_BY_VERSION = new ConcurrentHashMap<>();
+
     public static int countMangedProcesses() {
         PROCESSES.removeIf(it -> {
             ManagedProcess process = it.get();
@@ -1013,5 +1022,35 @@ public final class LauncherHelper {
     public static void stopManagedProcesses() {
         while (!PROCESSES.isEmpty())
             Optional.ofNullable(PROCESSES.poll()).map(WeakReference::get).ifPresent(ManagedProcess::stop);
+    }
+
+    /// True iff instance {@code versionId} currently has a live managed process (i.e. HMCL itself
+    /// launched it and it hasn't exited yet). Cannot see game instances started outside HMCL.
+    public static boolean isInstanceRunning(String versionId) {
+        return liveProcess(versionId) != null;
+    }
+
+    /// Stops the currently-running process for instance {@code versionId}, if any. Returns
+    /// {@code true} iff a live process was found and asked to stop.
+    public static boolean stopInstance(String versionId) {
+        ManagedProcess process = liveProcess(versionId);
+        if (process == null) {
+            return false;
+        }
+        process.stop();
+        return true;
+    }
+
+    @Nullable
+    private static ManagedProcess liveProcess(String versionId) {
+        WeakReference<ManagedProcess> ref = PROCESSES_BY_VERSION.get(versionId);
+        ManagedProcess process = ref != null ? ref.get() : null;
+        if (process == null || !process.isRunning()) {
+            if (ref != null) {
+                PROCESSES_BY_VERSION.remove(versionId, ref);
+            }
+            return null;
+        }
+        return process;
     }
 }

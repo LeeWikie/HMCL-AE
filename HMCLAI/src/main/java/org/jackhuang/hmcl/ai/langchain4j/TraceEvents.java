@@ -79,9 +79,18 @@ final class TraceEvents {
 
     /// One tool invocation: name, raw arguments, the COMPLETE result (before any truncation the
     /// model sees), success, and whether the model got a truncated view.
-    static JsonObject tool(TraceContext ctx, int cycle, String name, @Nullable String arguments,
+    ///
+    /// `callIndex` (this call's position within its cycle's batch) and `callId` (the model's own
+    /// `tool_call_id`, when the provider assigns one) let a trace reader deterministically re-pair
+    /// each `tool` event with its request slot — needed because a parallel READ_ONLY batch (see
+    /// {@code LangChain4jChatAdapter#streamTurn}) races on TraceRecorder's write lock, so the
+    /// physical order these events land in the trace file is not guaranteed to match request order.
+    static JsonObject tool(TraceContext ctx, int cycle, int callIndex, @Nullable String callId, String name,
+                           @Nullable String arguments,
                            @Nullable String fullResult, boolean success, boolean truncatedForModel) {
         JsonObject e = base("tool", ctx, cycle);
+        e.addProperty("callIndex", callIndex);
+        if (callId != null) e.addProperty("callId", callId);
         e.addProperty("name", name);
         if (arguments != null) e.addProperty("arguments", arguments);
         if (fullResult != null) e.addProperty("result", fullResult);

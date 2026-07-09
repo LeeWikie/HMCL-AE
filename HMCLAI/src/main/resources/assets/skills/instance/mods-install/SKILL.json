@@ -1,0 +1,19 @@
+{
+  "name": "mods-install",
+  "description": "How to search for and install mods correctly, respecting loader compatibility and version isolation. Use when the user wants to add/install mods or asks for mod recommendations (\"装模组\",\"加mod\",\"装mod\",\"推荐模组\").",
+  "version": "1.0",
+  "triggers": [
+    "装模组",
+    "加模组",
+    "装mod",
+    "加mod",
+    "安装模组",
+    "推荐模组",
+    "模组",
+    "install mod",
+    "fabric mod",
+    "forge mod"
+  ],
+  "requires": [],
+  "body": "# Install mods\n\n`search(action=mods, query, gameVersion, loader)` — real compatible builds + required\nloader. Omit `source` to merge Modrinth+CurseForge results (don't guess IDs from memory).\nNote the `loader` and `gameVersion` (and, if you need one exact build, the `version`)\nof the result you pick — you'll pass them straight through to the install call below.\n\n`instance(action=mods_install, id, source, instance, loader, gameVersion, version)` —\nALWAYS pass `instance` explicitly, even for \"the selected one\". Wrong/missing target\nsilently lands files in the wrong place: isolation ON puts mods under\n`versions/<name>/mods/`; OFF shares `.minecraft/mods/`, leaking into every version.\nALSO always pass `loader` and `gameVersion` — the exact values `search` already\nresolved for the mod you're installing. Omitting them makes the install silently fall\nback to that mod's single most-recently-published file across EVERY loader and MC\nversion it ships, which is how a Fabric build ends up on a Forge/NeoForge instance, or\nthe wrong game version gets installed. Pass `version` too when you need one exact,\nlocked build rather than \"newest compatible\".\n\nInstall dependencies too, e.g. Fabric API for most Fabric mods — `search` surfaces them.\nVerify with `instance(action=mods_list, instance)` or glob/read the `mods/` dir.\n\n## Don't\n- Don't put a Fabric mod on a Forge instance or vice versa (NeoForge/Quilt are distinct\n  loaders too) — check each result's loader field first, THEN pass it as `loader` to\n  `mods_install` (checking it isn't enough; the install call must carry it too).\n- Don't skip dependencies — a missing one usually crashes on launch.\n- Don't guess mod IDs/versions from memory — resolve via `search`."
+}

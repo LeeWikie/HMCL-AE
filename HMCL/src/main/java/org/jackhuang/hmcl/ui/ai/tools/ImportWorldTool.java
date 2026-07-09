@@ -208,9 +208,23 @@ public final class ImportWorldTool implements Tool {
                     ? ""
                     : "\nWarning: no level.dat was found in the imported folder; this may not be a valid Minecraft world.";
 
+            // Safety net: an old/incompatible imported world can be silently truncated or
+            // corrupted the very first time Minecraft opens it, with no prior backup to fall
+            // back to. Mark it so launch_instance takes an automatic safety snapshot right
+            // before the next launch of this instance (best-effort — must not fail the import).
+            String backupNote;
+            try {
+                WorldBackupManager.markPendingFirstLaunchBackup(instance, worldFolderName);
+                backupNote = "\nA safety backup of this world will be taken automatically before its first launch.";
+            } catch (Throwable e) {
+                backupNote = "\nWarning: could not schedule the automatic pre-launch safety backup ("
+                        + e.getMessage() + "); consider running instance(action=\"worlds_backup_create\") "
+                        + "for this world manually before launching.";
+            }
+
             return ToolResult.success("Imported world from '" + zipFileName + "' into instance '" + instance + "'.\n"
                     + "World folder: " + worldDir + "\n"
-                    + "Extracted: " + files + " files, " + dirs + " directories." + hint);
+                    + "Extracted: " + files + " files, " + dirs + " directories." + hint + backupNote);
         } catch (Throwable e) {
             return ToolResult.failure("Failed to import world from '" + zipFileName + "': " + e.getMessage());
         }

@@ -254,6 +254,29 @@ public final class AiSessionStoreTest {
         }
     }
 
+    /// A single malformed entry in the "sessions" array (e.g. a literal JSON `null`) must not
+    /// abort loading the rest of the file — otherwise loadOrQuarantine() (the only caller that
+    /// catches load()'s exceptions) reacts by moving the WHOLE file aside as corrupt, taking every
+    /// other perfectly valid session down with one bad entry.
+    @Test
+    public void testNullSessionEntryIsSkippedNotFatal() throws IOException {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-sessions-test-");
+        try {
+            Files.createDirectories(tempDir);
+            String badJson = "{\"currentSessionId\":null,\"sessions\":["
+                    + "{\"id\":\"good-1\",\"title\":\"ok\",\"messages\":[]}, null"
+                    + "]}";
+            Path file = tempDir.resolve(AiSessionStore.FILE_NAME);
+            Files.writeString(file, badJson, StandardCharsets.UTF_8);
+
+            AiSessionStore store = new AiSessionStore(tempDir);
+            assertDoesNotThrow(store::load, "one null session entry must not throw/abort the whole load");
+            assertEquals(1, store.size(), "the one well-formed session must still be loaded");
+        } finally {
+            cleanup(tempDir);
+        }
+    }
+
     private static void cleanup(Path tempDir) {
         try {
             Files.walk(tempDir)

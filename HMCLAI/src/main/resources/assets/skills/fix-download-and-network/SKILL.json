@@ -1,0 +1,25 @@
+{
+  "name": "fix-download-and-network",
+  "description": "How to fix download and network problems — slow/failed downloads, stuck progress, mirror/source switching, proxy issues. Use when the user says downloads fail or hang (\"下载失败\",\"下载慢\",\"下不动\",\"换源\",\"网络错误\").",
+  "version": "1.0",
+  "triggers": [
+    "下载失败",
+    "下载慢",
+    "下载不了",
+    "下不动",
+    "下载卡",
+    "换源",
+    "镜像",
+    "网络错误",
+    "连不上",
+    "超时",
+    "download failed",
+    "timeout"
+  ],
+  "requires": [
+    "java-runtime",
+    "choose-source-and-verify",
+    "mods-install"
+  ],
+  "body": "# Fix download & network problems\n\nFind WHERE the download breaks (source, network, proxy, disk) — most failures are\nsource/reachability, not bugs.\n\n## Diagnose first\nTracked job: `job(action=list)` / `job(action=check, jobId)` — FAILED status has the\nreal error: 404 = file/version gone; timeout/SSL = network; \"space\" = disk.\n\n## Route by symptom\n| Symptom | Cause | Go to |\n|---|---|---|\n| search ok, install fails | wrong source | choose-source-and-verify |\n| Java download stuck/fails | runtime fetch | java-runtime |\n| mod update fails | stale version | mods-install (mods_update) |\n| everything times out | proxy/offline | check 设置→网络 proxy; web_fetch a URL to isolate |\n\n## Retry rule\nRetry ONCE after fixing the cause. Still failing: STOP, report what was tried, the\nerror, and what to check (connection, VPN, disk space). Never claim success without a\ntool result.\n\n## Don't\nDon't loop retries. Don't download game files via shell — use HMCL's tools instead."
+}

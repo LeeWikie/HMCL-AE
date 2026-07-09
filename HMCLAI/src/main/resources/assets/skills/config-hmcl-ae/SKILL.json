@@ -1,0 +1,21 @@
+{
+  "name": "config-hmcl-ae",
+  "description": "How to configure HMCL-AE itself — add model providers/models, MCP servers, skills, and web search by editing the AE JSON config files. Use whenever the user asks to configure the AI assistant, add a model/provider, set up an MCP server (e.g. \"configure tavily-mcp\"), install a skill/skill-store (e.g. \"install SkillHub, CLI only\"), or enable web search.",
+  "version": "1.2",
+  "triggers": [
+    "配置ai",
+    "ai设置",
+    "mcp",
+    "联网搜索",
+    "添加模型",
+    "添加提供商",
+    "加个模型",
+    "配置模型",
+    "装技能",
+    "安装技能",
+    "provider",
+    "搜索引擎"
+  ],
+  "requires": [],
+  "body": "# Configuring HMCL-AE (the AI assistant configures itself)\n\nHMCL-AE stores its own configuration as JSON files/folders under the launcher home directory\n**`.hmcl/`**. To change it: `read` the relevant file first (so you preserve existing entries),\nthen `edit` or `write` it. Most changes take effect after the user reopens AI Settings or\nrestarts HMCL; skills need a rescan (\"重新扫描技能目录\" in AI Settings → 技能).\n\n## File map (all under `.hmcl/`)\n\n| Concern | File | Shape |\n|---|---|---|\n| Providers + global LLM params | `ai-settings.json` | object |\n| MCP servers | `ai-mcp-settings.json` | **array** |\n| Web search | `ai-search-settings.json` | object |\n| Tool permissions | `ai-tool-permissions.json` | object |\n| Skills | `ai-skills/<name>/SKILL.md` | folder + markdown |\n\nGotchas:\n1. `ai-settings.json` provider `apiKey` is Base64-encoded on disk; `ai-search-settings.json`\n   `apiKey` is plain text. Encode with `shell`: PowerShell\n   `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('sk-xxx'))`.\n2. `ai-mcp-settings.json` is an array; the rest are objects.\n\nFor exact field shapes and examples, read the target file itself — existing entries are the\nbest template. For a new MCP server, `web_fetch` its README/manifest first to get the right\ncommand/url/env. For a skill install from a URL, `web_fetch` the manifest, follow it, and\n`write` `SKILL.md` (+ companions) under `.hmcl/ai-skills/<name>/`; install only the subset the\nuser asked for (e.g. \"CLI only\").\n\n## After any change\n\nState which file(s) changed and what was added; remind the user to reopen AI Settings (or\nrestart HMCL; rescan for skills). Never invent API keys — ask if one is required and missing."
+}

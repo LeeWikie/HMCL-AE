@@ -47,7 +47,7 @@ public final class CancelJobTool implements ToolSpec {
         return "Cancels a running background job, interrupting its worker. "
                 + "Parameter: jobId (the id returned when the job was started, e.g. \"1\"). "
                 + "Cancelling an unknown or already-finished job is reported but harmless. "
-                + "Use list_jobs to discover job ids.";
+                + "Use job(action=\"list\") to discover job ids.";
     }
 
     @Override
@@ -79,14 +79,14 @@ public final class CancelJobTool implements ToolSpec {
         @Nullable String jobId = jobId(parameters);
         if (jobId == null) {
             return ToolResult.failure("cancel_job: provide 'jobId' (the id returned when the job was started). "
-                    + "Use list_jobs to see job ids.");
+                    + "Use job(action=\"list\") to see job ids.");
         }
 
         AiJobManager manager = AiJobManager.getInstance();
         AiJobManager.Job job = manager.get(jobId);
         if (job == null) {
             return ToolResult.failure("No background job with id '" + jobId + "'. "
-                    + "Use list_jobs to see current jobs.");
+                    + "Use job(action=\"list\") to see current jobs.");
         }
 
         if (job.isFinished()) {

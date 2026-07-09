@@ -1,0 +1,29 @@
+{
+  "name": "choose-source-and-verify",
+  "description": "How to search mods/resourcepacks/shaders/modpacks/worlds and get real Minecraft version strings instead of guessing. Use before installing anything or naming a version/mod, and whenever a search comes back empty (\"搜模组\",\"找资源包\",\"搜光影\",\"搜整合包\",\"支持哪些版本\").",
+  "version": "1.0",
+  "triggers": [
+    "搜索模组",
+    "找模组",
+    "搜模组",
+    "搜索资源包",
+    "找资源包",
+    "搜索光影",
+    "搜光影",
+    "搜索整合包",
+    "搜整合包",
+    "搜存档",
+    "版本列表",
+    "支持哪些版本",
+    "真实版本",
+    "search mods",
+    "search resourcepacks",
+    "search shaders",
+    "search modpacks",
+    "game versions",
+    "modrinth",
+    "curseforge"
+  ],
+  "requires": [],
+  "body": "# Search content and confirm real versions\n\nTool: `search(action, query, gameVersion?, loader?, source?)`.\n\n- `action`: `mods`, `resourcepacks`, `shaders`, `modpacks`, `worlds`\n  (CurseForge only, optional `game_version` — note the underscore, unlike `gameVersion` used\n  by every other action), `game_versions` (real, live list).\n- Omit `source` by default — queries Modrinth + CurseForge concurrently,\n  merged, best coverage. Pin one only if asked, or the other is down.\n- Call `game_versions` before naming/deciding a version or installing\n  anything — never trust training memory, versions drift. Same for mod\n  names: short generic keywords (\"sodium\"), pick from real results.\n\n## Empty or failed search\nDon't loop retrying the same source. Default dual-source already tried?\nReport as final. Pinned one and it failed? Switch to the other, retry\nONCE, then stop.\n\n## Don't\n- Don't ask the user for a version — `game_versions` has it.\n- Don't hammer retries hoping for a different result.\n- Don't silently restrict to one source without reason."
+}

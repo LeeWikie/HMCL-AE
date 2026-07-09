@@ -107,13 +107,54 @@ public final class FileReadTool implements ToolSpec {
 
         try {
             Path candidate = Path.of(child);
-            Path resolved = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(child))
-                    .toAbsolutePath().normalize();
-            if (roots.stream().noneMatch(resolved::startsWith)) {
-                return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+            Path resolved;
+            if (candidate.isAbsolute()) {
+                resolved = candidate.toAbsolutePath().normalize();
+                if (roots.stream().noneMatch(resolved::startsWith)) {
+                    return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                }
+                if (!Files.exists(resolved)) {
+                    return ToolResult.failure("Path does not exist: " + resolved);
+                }
+            } else {
+                // Try every allowed root in priority order (root[0] first, so anything that
+                // already resolves correctly there keeps doing so) and use the first root
+                // where the path actually exists. A relative path may only live under a root
+                // added later via addRoot() (e.g. the currently selected game/instance dir),
+                // so resolving against roots.get(0) alone is not enough.
+                List<Path> attempted = new ArrayList<>();
+                Path found = null;
+                for (Path root : roots) {
+                    Path candidateResolved = root.resolve(child).toAbsolutePath().normalize();
+                    attempted.add(candidateResolved);
+                    if (roots.stream().anyMatch(candidateResolved::startsWith) && Files.exists(candidateResolved)) {
+                        found = candidateResolved;
+                        break;
+                    }
+                }
+                if (found == null) {
+                    // Fall back to today's behavior (resolve against the primary root) for the
+                    // allowed-roots check, but report every root that was tried.
+                    resolved = attempted.get(0);
+                    if (roots.stream().noneMatch(resolved::startsWith)) {
+                        return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                    }
+                    StringBuilder sb = new StringBuilder("Path does not exist under any allowed root. Tried: ");
+                    for (int i = 0; i < attempted.size(); i++) {
+                        if (i > 0) sb.append(", ");
+                        sb.append(attempted.get(i));
+                    }
+                    return ToolResult.failure(sb.toString());
+                }
+                resolved = found;
             }
-            if (!Files.exists(resolved)) {
-                return ToolResult.failure("Path does not exist: " + resolved);
+            // Real-path containment: `resolved` passed the lexical/normalized check above (and is
+            // confirmed to exist), but it — or an allowed root itself — could still be a symlink
+            // pointing outside every allowed root, letting a symlink planted under an allowed root
+            // read back an arbitrary external file/directory's content.
+            Path realResolved = resolved.toRealPath();
+            if (roots.stream().noneMatch(r -> realResolved.startsWith(realOrSelf(r)))) {
+                return ToolResult.failure("Path is outside the allowed roots: " + realResolved);
             }
             if (Files.isDirectory(resolved)) {
                 StringBuilder sb = new StringBuilder();
@@ -154,6 +195,17 @@ public final class FileReadTool implements ToolSpec {
             return ToolResult.failure("IO error: " + e.getMessage());
         } catch (RuntimeException e) {
             return ToolResult.failure("Invalid path: " + e.getMessage());
+        }
+    }
+
+    /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself (already
+    /// absolute/normalized by the caller) when that fails — e.g. an allowed root that doesn't (yet)
+    /// exist on disk.
+    private static Path realOrSelf(Path p) {
+        try {
+            return p.toRealPath();
+        } catch (IOException e) {
+            return p;
         }
     }
 

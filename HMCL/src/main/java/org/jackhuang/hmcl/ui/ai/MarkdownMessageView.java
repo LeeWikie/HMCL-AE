@@ -21,10 +21,14 @@ import com.jfoenix.controls.JFXButton;
 import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.AccessibleAttribute;
+import javafx.scene.AccessibleRole;
 import javafx.scene.control.Label;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.util.Duration;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
@@ -73,11 +77,23 @@ import java.util.Arrays;
 /// strikethrough and links via the commonmark library. Used only by the AI chat.
 public final class MarkdownMessageView extends VBox {
 
-    private static final double MAX_WIDTH = 470;
+    // A conservative upper bound just under AIMainPage.AI_BUBBLE_MAX_WIDTH (720) — not an exact
+    // fit for the enclosing bubble's real horizontal padding (.ai-bubble is `10 14 10 14`, i.e.
+    // 28px). setMaxWidth is only a ceiling: the parent VBox's fillWidth layout already caps
+    // children to the true available content width, so the exact number here isn't load-bearing.
+    private static final double MAX_WIDTH = 710;
 
     private static final Parser PARSER = Parser.builder()
             .extensions(Arrays.asList(TablesExtension.create(), StrikethroughExtension.create()))
             .build();
+
+    /// Matches the {@code {{job_progress:<id>[,<id>...]}}} live-badge syntax inside inline text
+    /// (see {@link JobProgressBadge}). Deliberately permissive on the captured ids — validation
+    /// (does the id/list actually exist?) happens later, in {@link JobProgressBadge}, so a
+    /// hallucinated id renders a graceful fallback badge rather than being rejected here and
+    /// falling through to literal, confusing {@code {{...}}} text.
+    private static final java.util.regex.Pattern JOB_PROGRESS_PATTERN =
+            java.util.regex.Pattern.compile("\\{\\{job_progress:([^}]*)}}");
 
     private MarkdownMessageView() {
         getStyleClass().add("ai-markdown-view");
@@ -119,7 +135,11 @@ public final class MarkdownMessageView extends VBox {
             };
             for (javafx.scene.Node child : flow.getChildren()) {
                 if (child instanceof javafx.scene.text.Text t) {
-                    t.setFont(Font.font(null, FontWeight.BOLD, size));
+                    // Preserve any italic posture from nested emphasis (e.g. "## Some *italic*
+                    // heading") instead of unconditionally forcing FontPosture.REGULAR.
+                    FontPosture posture = t.getFont().getStyle().toLowerCase().contains("italic")
+                            ? FontPosture.ITALIC : FontPosture.REGULAR;
+                    t.setFont(Font.font(null, FontWeight.BOLD, posture, size));
                 }
             }
             return flow;
@@ -175,7 +195,7 @@ public final class MarkdownMessageView extends VBox {
         VBox list = new VBox(2);
         list.setFillWidth(true);
         list.setMaxWidth(MAX_WIDTH);
-        int index = 1;
+        int index = ordered && listNode instanceof OrderedList orderedList ? orderedList.getStartNumber() : 1;
         for (Node item = listNode.getFirstChild(); item != null; item = item.getNext()) {
             if (!(item instanceof ListItem)) continue;
             Label marker = new Label(ordered ? (index + ".") : "•");
@@ -194,11 +214,37 @@ public final class MarkdownMessageView extends VBox {
         return list;
     }
 
+    // Flat per-column floor: enough for several CJK glyphs or ~8-10 Latin chars at this
+    // view's ~13px cell font, so GridPane's auto-shrink can never squeeze a column below
+    // one word's width and force TextFlow into mid-word wrapping.
+    private static final double MIN_COLUMN_WIDTH = 60;
+
+    // Cap so a many-row table renders as a bounded, independently vertically-scrollable
+    // block instead of one very tall unbroken slab inside the non-virtualized messageList
+    // VBox. Row height is *estimated* (cell padding 4+4 + this view's ~13px cell font/line
+    // spacing + a hairline border) rather than measured via a real layout pass, since the
+    // grid is not yet attached to a Scene when this decision is made and an accurate
+    // measurement would require knowing the resolved column widths first.
+    private static final double ESTIMATED_ROW_HEIGHT = 30;
+    private static final double MAX_TABLE_HEIGHT = 260;
+
     private javafx.scene.Node renderTable(TableBlock tableBlock) {
-        GridPane grid = new GridPane();
+        TableGrid grid = new TableGrid();
         grid.getStyleClass().add("md-table");
         grid.setMaxWidth(MAX_WIDTH);
+        // Screen-reader wiring: a table rendered as a bare GridPane otherwise carries zero
+        // row/column semantics — a screen reader just sees an unstructured pile of Text
+        // nodes. TABLE_VIEW plus the ROW_COUNT/COLUMN_COUNT answers wired into TableGrid
+        // below are the closest match JavaFX's accessibility API offers a hand-built grid
+        // (see Node#queryAccessibleAttribute / AccessibleRole#TABLE_VIEW).
+        grid.setAccessibleRole(AccessibleRole.TABLE_VIEW);
         int rowIndex = 0;
+        int maxCol = 0;
+        // Column header text captured while walking TableHead, so each TableBody cell's
+        // AccessibleText below can announce "<header>: <value>" instead of a bare value.
+        // TableHead always precedes TableBody in the GFM table AST, so this list is fully
+        // populated before any TableBody row needs to read from it.
+        java.util.List<String> headerTexts = new java.util.ArrayList<>();
         // Sections: TableHead then TableBody (each holds TableRows).
         for (Node section = tableBlock.getFirstChild(); section != null; section = section.getNext()) {
             boolean header = "TableHead".equals(section.getClass().getSimpleName());
@@ -209,18 +255,151 @@ public final class MarkdownMessageView extends VBox {
                     if (!(cellNode instanceof TableCell)) continue;
                     TextFlow cellFlow = new TextFlow();
                     renderInline(cellFlow, cellNode, header, false, false);
-                    HBox cell = new HBox(cellFlow);
+                    TableCell.Alignment alignment = ((TableCell) cellNode).getAlignment();
+                    if (alignment == TableCell.Alignment.CENTER) {
+                        cellFlow.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+                    } else if (alignment == TableCell.Alignment.RIGHT) {
+                        cellFlow.setTextAlignment(javafx.scene.text.TextAlignment.RIGHT);
+                    }
+                    // Read from the AST rather than the rendered TextFlow so the accessible
+                    // text is correct even when EmojiImages swapped a glyph for an inline
+                    // image (which carries no text of its own).
+                    String plainText = plainInlineText(cellNode);
+                    if (header && col == headerTexts.size()) {
+                        headerTexts.add(plainText);
+                    }
+                    TableCellBox cell = new TableCellBox(cellFlow, rowIndex, col);
                     cell.getStyleClass().add(header ? "md-th" : "md-td");
                     cell.setPadding(new Insets(4, 8, 4, 8));
                     cell.setMaxWidth(Double.MAX_VALUE);
+                    if (alignment == TableCell.Alignment.CENTER) {
+                        cell.setAlignment(Pos.CENTER);
+                    } else if (alignment == TableCell.Alignment.RIGHT) {
+                        cell.setAlignment(Pos.CENTER_RIGHT);
+                    }
+                    cell.setAccessibleRole(AccessibleRole.TABLE_CELL);
+                    if (header) {
+                        cell.setAccessibleRoleDescription("表头");
+                        cell.setAccessibleText(plainText);
+                    } else {
+                        String headerText = col < headerTexts.size() ? headerTexts.get(col) : null;
+                        cell.setAccessibleText(headerText != null && !headerText.isBlank()
+                                ? headerText + ": " + plainText
+                                : plainText);
+                    }
                     grid.add(cell, col, rowIndex);
                     GridPane.setHgrow(cell, Priority.ALWAYS);
                     col++;
                 }
+                maxCol = Math.max(maxCol, col);
                 rowIndex++;
             }
         }
-        return grid;
+        grid.setRowAndColumnCount(rowIndex, maxCol);
+        // Without an explicit per-column minimum, GridPane's auto-sizing can shrink a
+        // short-content column narrower than a single glyph once the row's total preferred
+        // width exceeds MAX_WIDTH, forcing TextFlow to wrap mid-word/mid-character.
+        for (int i = 0; i < maxCol; i++) {
+            ColumnConstraints cc = new ColumnConstraints();
+            cc.setMinWidth(MIN_COLUMN_WIDTH);
+            cc.setHgrow(Priority.ALWAYS);
+            grid.getColumnConstraints().add(cc);
+        }
+
+        // Per-column minimums can legitimately force the grid wider than MAX_WIDTH (JavaFX
+        // resolves a min>max conflict by honoring min). Scope horizontal scrolling to just
+        // this table's row so it doesn't overflow the bubble or scroll the whole conversation.
+        ScrollPane scroll = new ScrollPane(grid);
+        scroll.getStyleClass().add("md-table-scroll");
+        scroll.setFitToWidth(false);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        // A many-row table is capped to MAX_TABLE_HEIGHT and only then gains its own
+        // vertical scrollbar — a table that already fits keeps NEVER so it never shows an
+        // unnecessary scrollbar for a handful of rows.
+        boolean overflowsHeightCap = rowIndex * ESTIMATED_ROW_HEIGHT > MAX_TABLE_HEIGHT;
+        scroll.setMaxHeight(MAX_TABLE_HEIGHT);
+        scroll.setVbarPolicy(overflowsHeightCap
+                ? ScrollPane.ScrollBarPolicy.AS_NEEDED
+                : ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setMaxWidth(MAX_WIDTH);
+        return scroll;
+    }
+
+    /// A {@link GridPane} that answers the ROW_COUNT/COLUMN_COUNT accessibility queries a
+    /// screen reader issues against an {@link AccessibleRole#TABLE_VIEW} — plain GridPane has
+    /// no notion of "how many rows/columns" since it is just a generic layout container, so
+    /// {@link javafx.scene.Node#queryAccessibleAttribute} would otherwise fall through to the default
+    /// (non-table) answers for those two attributes.
+    private static final class TableGrid extends GridPane {
+        private int rowCount;
+        private int columnCount;
+
+        void setRowAndColumnCount(int rowCount, int columnCount) {
+            this.rowCount = rowCount;
+            this.columnCount = columnCount;
+        }
+
+        @Override
+        public Object queryAccessibleAttribute(AccessibleAttribute attribute, Object... parameters) {
+            switch (attribute) {
+                case ROW_COUNT:
+                    return rowCount;
+                case COLUMN_COUNT:
+                    return columnCount;
+                default:
+                    return super.queryAccessibleAttribute(attribute, parameters);
+            }
+        }
+    }
+
+    /// An {@link HBox} that answers a cell's own ROW_INDEX/COLUMN_INDEX accessibility
+    /// queries — the coordinates a screen reader needs to announce e.g. "row 2, column 3"
+    /// while it is focused on an {@link AccessibleRole#TABLE_CELL}.
+    private static final class TableCellBox extends HBox {
+        private final int rowIndex;
+        private final int columnIndex;
+
+        TableCellBox(javafx.scene.Node content, int rowIndex, int columnIndex) {
+            super(content);
+            this.rowIndex = rowIndex;
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public Object queryAccessibleAttribute(AccessibleAttribute attribute, Object... parameters) {
+            switch (attribute) {
+                case ROW_INDEX:
+                    return rowIndex;
+                case COLUMN_INDEX:
+                    return columnIndex;
+                default:
+                    return super.queryAccessibleAttribute(attribute, parameters);
+            }
+        }
+    }
+
+    /// Concatenates the literal text of an inline AST subtree — ignoring emphasis/strike/link
+    /// formatting nodes but keeping their literal text — for use as a cell's accessible text.
+    /// Mirrors {@link #appendInline}'s traversal but collects plain text instead of building
+    /// styled {@link javafx.scene.text.Text} runs.
+    private static String plainInlineText(Node node) {
+        StringBuilder sb = new StringBuilder();
+        appendPlainInlineText(node, sb);
+        return sb.toString();
+    }
+
+    private static void appendPlainInlineText(Node parent, StringBuilder sb) {
+        for (Node node = parent.getFirstChild(); node != null; node = node.getNext()) {
+            if (node instanceof org.commonmark.node.Text text) {
+                sb.append(text.getLiteral());
+            } else if (node instanceof Code code) {
+                sb.append(code.getLiteral());
+            } else if (node instanceof SoftLineBreak || node instanceof HardLineBreak) {
+                sb.append(' ');
+            } else {
+                appendPlainInlineText(node, sb);
+            }
+        }
     }
 
     // ---- Inline-level ----
@@ -233,13 +412,7 @@ public final class MarkdownMessageView extends VBox {
 
     private void appendInline(TextFlow flow, Node node, boolean bold, boolean italic, boolean strike) {
         if (node instanceof org.commonmark.node.Text text) {
-            String literal = text.getLiteral();
-            if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(literal)) {
-                // Colour-emoji mode: split into text runs + inline emoji images.
-                flow.getChildren().addAll(EmojiImages.toNodes(literal, 13));
-            } else {
-                flow.getChildren().add(styledText(literal, bold, italic, false, strike));
-            }
+            appendTextWithJobProgress(flow, text.getLiteral(), bold, italic, strike);
         } else if (node instanceof StrongEmphasis) {
             renderInline(flow, node, true, italic, strike);
         } else if (node instanceof Emphasis) {
@@ -247,7 +420,7 @@ public final class MarkdownMessageView extends VBox {
         } else if (node instanceof Strikethrough) {
             renderInline(flow, node, bold, italic, true);
         } else if (node instanceof Code code) {
-            flow.getChildren().add(styledText(code.getLiteral(), false, false, true, strike));
+            flow.getChildren().add(styledText(code.getLiteral(), bold, italic, true, strike));
         } else if (node instanceof SoftLineBreak || node instanceof HardLineBreak) {
             flow.getChildren().add(new javafx.scene.text.Text("\n"));
         } else if (node instanceof Link link) {
@@ -269,6 +442,41 @@ public final class MarkdownMessageView extends VBox {
             renderInline(flow, node, bold, italic, strike);
         } else if (node.getFirstChild() != null) {
             renderInline(flow, node, bold, italic, strike);
+        }
+    }
+
+    /// Scans a raw text run for {@code {{job_progress:...}}} markers and splices a live
+    /// {@link JobProgressBadge} node in place of each match, rendering the surrounding text
+    /// normally (including colour-emoji substitution) around them. The common case — no marker
+    /// present — falls straight through to the original single-run rendering.
+    private void appendTextWithJobProgress(TextFlow flow, String literal, boolean bold, boolean italic,
+                                            boolean strike) {
+        java.util.regex.Matcher m = JOB_PROGRESS_PATTERN.matcher(literal);
+        int last = 0;
+        boolean matched = false;
+        while (m.find()) {
+            matched = true;
+            if (m.start() > last) {
+                appendPlainRun(flow, literal.substring(last, m.start()), bold, italic, strike);
+            }
+            flow.getChildren().add(JobProgressBadge.create(m.group(1)));
+            last = m.end();
+        }
+        if (!matched) {
+            appendPlainRun(flow, literal, bold, italic, strike);
+        } else if (last < literal.length()) {
+            appendPlainRun(flow, literal.substring(last), bold, italic, strike);
+        }
+    }
+
+    /// Renders a plain (marker-free) text run, applying colour-emoji substitution when enabled.
+    private void appendPlainRun(TextFlow flow, String literal, boolean bold, boolean italic, boolean strike) {
+        if (literal.isEmpty()) return;
+        if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(literal)) {
+            // Colour-emoji mode: split into text runs + inline emoji images.
+            flow.getChildren().addAll(EmojiImages.toNodes(literal, 13));
+        } else {
+            flow.getChildren().add(styledText(literal, bold, italic, false, strike));
         }
     }
 

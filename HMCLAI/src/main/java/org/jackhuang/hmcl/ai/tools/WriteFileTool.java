@@ -119,6 +119,19 @@ public final class WriteFileTool implements ToolSpec {
             if (roots.stream().noneMatch(resolved::startsWith)) {
                 return ToolResult.failure("Path is outside the allowed roots: " + resolved);
             }
+            // Real-path containment for an EXISTING target: mirrors EditTool's symlink-escape fix.
+            // A symlink can be planted under an allowed root (e.g. via the shell tool's `mklink` /
+            // `ln -s`, which today's DangerousCommands heuristics do not flag) pointing OUTSIDE every
+            // allowed root. Since this tool overwrites by default, writing through such a symlink
+            // would otherwise let the lexical/normalized containment check above pass while the
+            // bytes actually land in an arbitrary external file. A target that does not exist yet has
+            // nothing to resolve — that case is unaffected and still lets new files be created.
+            if (Files.exists(resolved, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                Path real = resolved.toRealPath();
+                if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
+                    return ToolResult.failure("Path is outside the allowed roots: " + real);
+                }
+            }
             if (resolved.getParent() != null) {
                 Files.createDirectories(resolved.getParent());
             }
@@ -133,6 +146,18 @@ public final class WriteFileTool implements ToolSpec {
             return ToolResult.failure("IO error: " + e.getMessage());
         } catch (RuntimeException e) {
             return ToolResult.failure("Invalid path: " + e.getMessage());
+        }
+    }
+
+    /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself when that
+    /// fails (e.g. {@code p} doesn't exist) — used only against already-normalized allowed roots,
+    /// so the fallback just means "root not present on disk", not a symlink-escape risk. Mirrors
+    /// {@link EditTool#realOrSelf}.
+    private static Path realOrSelf(Path p) {
+        try {
+            return p.toRealPath();
+        } catch (IOException e) {
+            return p;
         }
     }
 }

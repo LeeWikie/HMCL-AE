@@ -496,7 +496,14 @@ public final class Controllers {
         if (SettingsManager.userState().agreementVersionProperty().get() < 1) {
             JFXDialogLayout agreementPane = new JFXDialogLayout();
             agreementPane.setHeading(new Label(i18n("launcher.agreement")));
-            agreementPane.setBody(new Label(i18n("launcher.agreement.hint")));
+            // JFXDialogLayout.body's prefWidthProperty is bound to the outer pane's own
+            // prefWidthProperty (a JFoenix quirk), so the intended `.jfx-layout-body{-fx-pref-width:
+            // 400px}` CSS can never apply (the CSS engine can't set an already-bound property) and a
+            // wrap-less Label collapses to a single line instead. Set width + wrap explicitly here.
+            Label agreementHint = new Label(i18n("launcher.agreement.hint"));
+            agreementHint.setWrapText(true);
+            FXUtils.setLimitWidth(agreementHint, 400);
+            agreementPane.setBody(agreementHint);
             JFXHyperlink agreementLink = new JFXHyperlink(i18n("launcher.agreement"));
             agreementLink.setExternalLink(Metadata.EULA_URL);
             JFXButton yesButton = new JFXButton(i18n("launcher.agreement.accept"));

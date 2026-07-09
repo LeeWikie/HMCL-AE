@@ -28,6 +28,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
+import java.util.function.IntSupplier;
 
 /// A dangerous-write tool that launches a Minecraft instance.
 ///
@@ -43,9 +44,24 @@ import java.util.Map;
 /// [`Platform#runLater`] and returns immediately, reporting that the launch was
 /// started. It does not wait for the game to finish loading.
 ///
+/// Before dispatching the launch, it consumes any {@link WorldBackupManager}
+/// pending-first-launch markers for this instance (see
+/// {@link WorldBackupManager#consumePendingFirstLaunchBackups}) — this is the other half of
+/// the safety net {@link ImportWorldTool} sets up for a freshly-imported world, so an
+/// old/incompatible save gets one automatic snapshot before Minecraft ever touches it.
+///
 /// Permission level: DANGEROUS_WRITE. It starts an external process (the game).
 @NotNullByDefault
 public final class LaunchInstanceTool implements Tool {
+
+    private final IntSupplier worldBackupRetention;
+
+    /// @param worldBackupRetention supplies the current retention count (from AI settings),
+    ///                             applied to the automatic pre-launch safety backup of any
+    ///                             freshly-imported world (see {@link WorldBackupManager}).
+    public LaunchInstanceTool(IntSupplier worldBackupRetention) {
+        this.worldBackupRetention = worldBackupRetention;
+    }
 
     @Override
     public String getName() {
@@ -58,7 +74,9 @@ public final class LaunchInstanceTool implements Tool {
                 + "Parameters: instance (string, optional: the instance/version id to launch; "
                 + "defaults to the currently selected instance). "
                 + "Dispatches the launch on the UI thread (an account or download prompt may appear) "
-                + "and returns immediately once launching has started. This starts the game process.";
+                + "and returns immediately once launching has started. This starts the game process. "
+                + "If any world in this instance was imported since its last launch, an automatic safety "
+                + "backup of that world is taken first (see worlds_import).";
     }
 
     @Override
@@ -92,19 +110,36 @@ public final class LaunchInstanceTool implements Tool {
 
         if (!repository.hasVersion(instance)) {
             return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile. "
-                    + "Use list_instances to see available instances.");
+                    + "Use game(action=\"list\") (or instance(action=\"list\")) to see available instances.");
         }
 
         final String id = instance;
+
+        // Safety net: back up any world imported into this instance since its last launch,
+        // BEFORE Minecraft gets a chance to touch (and potentially corrupt) it. Best-effort —
+        // a failed safety backup must never block the user from playing.
+        WorldBackupManager.PendingBackupResult pendingBackups =
+                WorldBackupManager.consumePendingFirstLaunchBackups(id, worldBackupRetention.getAsInt());
+
         try {
             Platform.runLater(() -> Versions.launch(profile, id));
         } catch (Throwable e) {
             return ToolResult.failure("Failed to dispatch launch for '" + id + "': " + e.getMessage());
         }
 
-        return ToolResult.success("Launching instance '" + id + "'. "
-                + "The launch is starting on the launcher UI; an account selection or download prompt may appear. "
-                + "Check the game window or logs for progress.");
+        StringBuilder message = new StringBuilder("Launching instance '").append(id).append("'. ")
+                .append("The launch is starting on the launcher UI; an account selection or download prompt may appear. ")
+                .append("Check the game window or logs for progress.");
+        if (!pendingBackups.backedUpWorlds().isEmpty()) {
+            message.append("\nAutomatic pre-launch safety backup taken for freshly-imported world(s): ")
+                    .append(String.join(", ", pendingBackups.backedUpWorlds())).append('.');
+        }
+        if (!pendingBackups.failedWorlds().isEmpty()) {
+            message.append("\nWARNING: could not take the automatic safety backup for world(s): ")
+                    .append(String.join(", ", pendingBackups.failedWorlds()))
+                    .append(" — consider running instance(action=\"worlds_backup_create\") for them manually.");
+        }
+        return ToolResult.success(message.toString());
     }
 
     @Nullable

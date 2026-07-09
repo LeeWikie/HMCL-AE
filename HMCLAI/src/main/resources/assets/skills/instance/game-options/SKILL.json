@@ -1,0 +1,19 @@
+{
+  "name": "game-options",
+  "description": "How to read and change in-game settings (options.txt) via instance tools, including performance-relevant keys like render distance and VSync. Use when the user asks to check or change game settings, or wants tuning tips for render distance/graphics (\"渲染距离\",\"垂直同步\",\"画质\",\"游戏设置\",\"选项\").",
+  "version": "1.0",
+  "triggers": [
+    "渲染距离",
+    "垂直同步",
+    "画质",
+    "游戏设置",
+    "选项",
+    "options.txt",
+    "图形设置",
+    "vsync",
+    "视距",
+    "游戏选项"
+  ],
+  "requires": [],
+  "body": "# Read/write game options\n\nTool calls: `instance(action=get_options, instance)` reads `options.txt`;\n`instance(action=set_option, instance, key, value)` writes a single key.\n\n## Common perf-relevant keys\n- Render distance: 8–12 is a good range, not 32 — the far end costs heavy FPS.\n- Fancy graphics: off trades looks for FPS.\n- VSync: off if the user cares about input lag over screen tearing.\n\n`get_options` isn't only for changing things — use it to just report the user's current\nsettings when asked (e.g. \"what's my render distance\") without touching anything.\n\n## Don't\n- Don't set render distance to the max \"for best quality\" without a one-line FPS-cost warning.\n- Don't guess a key name — call `get_options` first to see what's actually in the file\n  before `set_option`.\n- Don't conflate this with `instance(action=set_memory)` — `options.txt` is in-game\n  settings, not JVM heap size."
+}

@@ -29,11 +29,16 @@ import java.util.Map;
 /// instance operations are migrated in.
 ///
 /// - {@code rename}: reuses {@link HMCLGameRepository#renameVersion(String, String)}.
-/// - Game settings (memory, JVM args, Java, window) are edited through the {@code config-hmcl}
+/// - Memory and JVM/GC args have dedicated actions on the {@code instance} tool
+///   ({@code set_memory} / {@code set_jvm_args}) — NEVER hand-edit those via the
+///   {@code config-hmcl} skill's raw file edit; those two actions mutate the same in-memory
+///   settings object HMCL itself holds, so they don't race {@link HMCLGameRepository}'s
+///   save-on-any-property-change behaviour the way a raw file write would.
+/// - Other game settings (Java path, window) are edited through the {@code config-hmcl}
 ///   skill, which writes the instance config files directly (HMCL's GameSettings system uses
 ///   per-instance override flags and is rewritten on exit, so direct mutation is avoided here).
-/// - Deletion is intentionally NOT here — it is the separate, dangerous, confirm-gated
-///   {@code delete_instance} tool.
+/// - Deletion is intentionally NOT here — it is the {@code instance} tool's {@code delete}
+///   action (dangerous, confirm-gated).
 @NotNullByDefault
 public final class EditInstanceTool implements Tool {
 
@@ -48,9 +53,10 @@ public final class EditInstanceTool implements Tool {
                 + "operation:\n"
                 + "- 'rename' — rename the instance. Params: instance (current name; falls back to 'query'), "
                 + "newName (the new name).\n"
-                + "For game settings (memory / JVM args / Java path / window size) use the 'config-hmcl' skill "
-                + "to edit the instance config files. To DELETE an instance use the separate 'delete_instance' "
-                + "tool (dangerous, requires confirmation).";
+                + "Memory and JVM/GC args are set via instance(action=\"set_memory\"/\"set_jvm_args\") — "
+                + "never hand-edit those. For other game settings (Java path / window size) use the "
+                + "'config-hmcl' skill to edit the instance config files. To DELETE an instance use the "
+                + "instance tool's 'delete' action (dangerous, requires confirmation).";
     }
 
     @Override
@@ -64,7 +70,8 @@ public final class EditInstanceTool implements Tool {
                 return rename(parameters);
             default:
                 return ToolResult.failure("Unknown action '" + action + "'. Supported: rename. "
-                        + "For game settings use the config-hmcl skill; to delete an instance use delete_instance.");
+                        + "For game settings use the config-hmcl skill; to delete an instance use "
+                        + "instance(action=\"delete\").");
         }
     }
 

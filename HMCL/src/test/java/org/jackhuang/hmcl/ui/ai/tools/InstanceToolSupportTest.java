@@ -23,6 +23,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Locks in the integer-parameter parsing fix: Gson decodes every JSON number as a Double, so an
 /// int arg like {@code 4096} arrives as {@code 4096.0} (or the string "4096.0"). parseInt must
@@ -52,5 +55,41 @@ public final class InstanceToolSupportTest {
         assertEquals(10, InstanceToolSupport.parseInt(args, "k", 10));
         assertEquals(10, InstanceToolSupport.parseInt((Object) null, 10));
         assertEquals(10, InstanceToolSupport.parseInt("", 10));
+    }
+
+    /// Locks in `set_instance_jvm_args`'s "explicit empty string clears the setting, entirely
+    /// absent means report-only" distinction — the reason this couldn't just reuse the
+    /// blank-means-report check `set_memory` uses (memory has no meaningful "clear" value).
+    @Test
+    void presentOrQueryFallbackTreatsAbsentKeyDifferentlyFromExplicitEmptyValue() {
+        Map<String, Object> args = new HashMap<>();
+        assertNull(InstanceToolSupport.presentOrQueryFallback(args, "jvmArgs"),
+                "neither 'jvmArgs' nor 'query' present at all must mean report-only");
+
+        args.put("jvmArgs", "");
+        assertEquals("", InstanceToolSupport.presentOrQueryFallback(args, "jvmArgs"),
+                "an explicitly-empty 'jvmArgs' is a deliberate clear request, not 'absent'");
+    }
+
+    @Test
+    void presentOrQueryFallbackHonoursQueryAliasOnlyWhenThePrimaryKeyIsAbsent() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("query", "-XX:+UseG1GC");
+        assertEquals("-XX:+UseG1GC", InstanceToolSupport.presentOrQueryFallback(args, "jvmArgs"),
+                "the generic 'query' alias must be honoured when the primary key is absent");
+
+        args.put("jvmArgs", "-XX:+UseZGC");
+        assertEquals("-XX:+UseZGC", InstanceToolSupport.presentOrQueryFallback(args, "jvmArgs"),
+                "an explicit 'jvmArgs' must win over the 'query' fallback, not the other way round");
+    }
+
+    /// Locks in the heap-size-flag detector that drives `set_instance_jvm_args`'s advisory note
+    /// steering the model back to `set_memory` instead of duplicating `-Xmx`/`-Xms` here.
+    @Test
+    void mentionsHeapSizeFlagDetectsXmxAndXmsCaseInsensitively() {
+        assertTrue(InstanceToolSupport.mentionsHeapSizeFlag("-Xmx4096m"));
+        assertTrue(InstanceToolSupport.mentionsHeapSizeFlag("-XX:+UseG1GC -XMS2048M"));
+        assertFalse(InstanceToolSupport.mentionsHeapSizeFlag("-XX:+UseG1GC -XX:MaxGCPauseMillis=200"));
+        assertFalse(InstanceToolSupport.mentionsHeapSizeFlag(""));
     }
 }

@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jackhuang.hmcl.game.LauncherHelper;
 import org.jackhuang.hmcl.game.Version;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
@@ -51,8 +52,10 @@ public final class ListInstancesTool implements Tool {
     @Override
     public String getDescription() {
         return "Lists the installed Minecraft instances (versions) of the currently selected HMCL profile. "
-                + "Takes no parameters. Returns each instance's id, release type, run directory and mods directory, "
-                + "and marks the currently selected instance. Read-only.";
+                + "Takes no parameters. Returns each instance's id, release type, run directory, mods directory, "
+                + "and whether HMCL currently has it running; marks the currently selected instance. Read-only. "
+                + "'running' can only be true for instances HMCL itself launched and is still tracking — it cannot "
+                + "see a copy of the game started outside HMCL.";
     }
 
     @Override
@@ -96,6 +99,9 @@ public final class ListInstancesTool implements Tool {
             }
             if (selected) {
                 sb.append(" (selected)");
+            }
+            if (LauncherHelper.isInstanceRunning(id)) {
+                sb.append(" (running)");
             }
             sb.append('\n');
 

@@ -47,7 +47,7 @@ public final class CheckJobTool implements ToolSpec {
     public String getDescription() {
         return "Reports the status of one background job and, if it has finished, the full result text. "
                 + "Parameter: jobId (the id returned when the job was started, e.g. \"1\"). Read-only. "
-                + "Use list_jobs to discover job ids.";
+                + "Use job(action=\"list\") to discover job ids.";
     }
 
     @Override
@@ -79,13 +79,13 @@ public final class CheckJobTool implements ToolSpec {
         @Nullable String jobId = jobId(parameters);
         if (jobId == null) {
             return ToolResult.failure("check_job: provide 'jobId' (the id returned when the job was started). "
-                    + "Use list_jobs to see job ids.");
+                    + "Use job(action=\"list\") to see job ids.");
         }
 
         AiJobManager.Job job = AiJobManager.getInstance().get(jobId);
         if (job == null) {
             return ToolResult.failure("No background job with id '" + jobId + "'. "
-                    + "It may have never existed or been pruned. Use list_jobs to see current jobs.");
+                    + "It may have never existed or been pruned. Use job(action=\"list\") to see current jobs.");
         }
 
         StringBuilder sb = new StringBuilder();
@@ -95,9 +95,9 @@ public final class CheckJobTool implements ToolSpec {
         sb.append("Label: ").append(job.getLabel()).append('\n');
 
         if (!job.isFinished()) {
-            long elapsed = Math.max(0L, System.currentTimeMillis() - job.getStartedAtMillis());
-            sb.append("Still running (").append(elapsed / 1000).append("s elapsed). ")
-                    .append("Check again later, or cancel_job ").append(job.getId()).append(" to stop it.");
+            sb.append(AiJobManager.describeRunning(job)).append(' ')
+                    .append("Check again later, or job(action=\"cancel\", jobId=\"").append(job.getId())
+                    .append("\") to stop it.");
             return ToolResult.success(sb.toString());
         }
 

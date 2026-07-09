@@ -67,6 +67,22 @@ public interface LlmStreamCallback {
     default void onToolResult(String toolName, boolean success, String resultSummary) {
     }
 
+    /// Called when one CYCLE of the agent's tool loop finishes producing its text segment — right
+    /// before that cycle's tool call(s) run, or right before the turn ends if it had none. Fired
+    /// once per cycle that produced non-blank text, in order; joining every segment (in order,
+    /// blank-line separated) reproduces {@link #onComplete}'s full text.
+    ///
+    /// Persisting each segment as its own message (instead of waiting for {@link #onComplete} to
+    /// persist one combined blob) is what keeps a reloaded session's bubbles matching what the live
+    /// stream actually rendered — the live UI already renders segments as separate bubbles; without
+    /// this, reloading silently merged them into one.
+    ///
+    /// Default no-op for callbacks that don't need per-segment granularity.
+    ///
+    /// @param segment this cycle's finalized text (leaked tool markup already stripped)
+    default void onSegmentComplete(String segment) {
+    }
+
     /// Called when the streaming response has completed successfully.
     ///
     /// @param fullResponse the complete concatenated response text

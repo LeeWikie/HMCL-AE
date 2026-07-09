@@ -151,6 +151,34 @@ public final class AiModelDiscoveryServiceTest {
         assertTrue(models.isEmpty());
     }
 
+    /// "data" present but not an array (e.g. a tampered/hostile custom-endpoint response) must not
+    /// throw — Gson's getAsJsonArray() throws IllegalStateException for this shape.
+    @Test
+    public void testDataNotAnArrayReturnsEmptyWithoutThrowing() {
+        AiModelDiscoveryService service = new AiModelDiscoveryService();
+        List<String> models = service.parseModelsResponse("{\"data\": \"not-an-array\"}");
+        assertTrue(models.isEmpty());
+    }
+
+    /// An array entry that isn't a JSON object (e.g. a bare string) must be skipped, not throw.
+    @Test
+    public void testDataEntryNotAnObjectIsSkippedWithoutThrowing() {
+        AiModelDiscoveryService service = new AiModelDiscoveryService();
+        List<String> models = service.parseModelsResponse(
+                "{\"data\": [\"just-a-string\", {\"id\": \"gpt-4o\"}]}");
+        assertEquals(List.of("gpt-4o"), models);
+    }
+
+    /// An "id" that isn't a JSON primitive (e.g. a nested object) must be skipped, not throw —
+    /// Gson's getAsString() throws UnsupportedOperationException for a non-primitive element.
+    @Test
+    public void testIdNotAPrimitiveIsSkippedWithoutThrowing() {
+        AiModelDiscoveryService service = new AiModelDiscoveryService();
+        List<String> models = service.parseModelsResponse(
+                "{\"data\": [{\"id\": {\"nested\": true}}, {\"id\": \"gpt-4o\"}]}");
+        assertEquals(List.of("gpt-4o"), models);
+    }
+
     /// deriveModelsUrl strips chat/completions suffix.
     @Test
     public void testDeriveModelsUrlFromChatCompletions() {

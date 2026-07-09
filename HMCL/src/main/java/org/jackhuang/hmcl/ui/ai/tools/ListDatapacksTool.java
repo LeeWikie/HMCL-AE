@@ -58,7 +58,7 @@ public final class ListDatapacksTool implements Tool {
                 + "Parameters: world (required, the save folder name under 'saves/'), "
                 + "instance (optional, the instance id; defaults to the currently selected instance). "
                 + "Read-only. Use this instead of ls/dir over the datapacks folder. "
-                + "To add a datapack use install_datapack.";
+                + "To add a datapack use instance(action=\"worlds_datapacks_install\").";
     }
 
     @Override

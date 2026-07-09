@@ -1,0 +1,29 @@
+{
+  "name": "launch-and-verify",
+  "description": "How to launch a game instance, check what's currently running, force-stop a stuck process, and verify a fix actually worked. Use whenever the user wants to start/stop the game or you need to confirm a change fixed something (\"启动游戏\",\"打开游戏\",\"运行一下\",\"强制关闭\",\"卡住了强退\").",
+  "version": "1.0",
+  "triggers": [
+    "启动游戏",
+    "打开游戏",
+    "运行游戏",
+    "开始游戏",
+    "试一下",
+    "试玩",
+    "停止游戏",
+    "强制关闭",
+    "强制停止",
+    "强退",
+    "卡死了",
+    "验证修复",
+    "看看好了没",
+    "launch game",
+    "start game",
+    "run the game",
+    "stop game",
+    "force quit",
+    "kill game",
+    "verify fix"
+  ],
+  "requires": [],
+  "body": "# Launch, monitor, and stop the game\n\nTool: `game(action, instance)`.\n\n- `launch(instance)` — starts the process. May trigger an account/download\n  prompt. Returns immediately, doesn't wait for loading — success only\n  means \"process started,\" not \"game works.\"\n- `list()` — instances HMCL currently has running. Only sees processes it\n  launched itself; a copy started outside HMCL won't show.\n- `stop(instance)` — force-kills a tracked process. Hard kill, not\n  graceful — warn about unsaved progress first.\n\n## Verify-a-fix pattern\nAfter fixing a suspected cause (bad mod, memory, Java, loader): offer to\n`launch(instance)`, ask if the problem is gone. Don't declare success\nyourself — a successful launch only proves the process started.\n\n## Don't\n- `list()` empty doesn't mean nothing's running — may be outside tracking.\n- Never `stop` without warning about unsaved progress.\n- Never claim a fix worked without user confirmation."
+}

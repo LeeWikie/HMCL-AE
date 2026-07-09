@@ -1,0 +1,28 @@
+{
+  "name": "config-hmcl",
+  "description": "How to read and modify native HMCL launcher configuration that has NO dedicated tool action — Java path pinning, game directories, launcher theme/background, proxy, window size, auto-join server — by editing HMCL's JSON config files directly (not via the instance/game domain tools). Instance memory, JVM/GC args, and game options DO have dedicated tool actions (instance(action=\"set_memory\"/\"set_jvm_args\"/\"set_option\")) — use those instead, never raw-edit those three. Use this skill when the user asks to change Java path, window size, auto-join server, game directory, launcher theme/background, or proxy.",
+  "version": "1.3",
+  "triggers": [
+    "游戏目录",
+    "窗口大小",
+    "全屏",
+    "启动器背景",
+    "启动器主题",
+    "换背景",
+    "换主题",
+    "代理",
+    "jvm参数",
+    "启动参数",
+    "启动器设置",
+    "自动进服",
+    "指定java",
+    "换java路径",
+    "java路径",
+    "手动选java",
+    "gc调优",
+    "g1gc",
+    "zgc"
+  ],
+  "requires": [],
+  "body": "# Configuring native HMCL\n\nHMCL stores settings as schema-versioned JSON files. For the settings this skill actually\ncovers below (the ones with no dedicated tool action), use `read`/`edit`/`write` directly on\nthe files — raw file editing, not the `instance` tool. Keep each file's `\"$schema\"` key intact\nor HMCL discards the file as invalid.\n\n## Do NOT raw-edit these three — dedicated tools exist\n\n- Memory → `instance(action=\"set_memory\", maxMemoryMB)`.\n- JVM/GC args → `instance(action=\"set_jvm_args\", jvmArgs)`.\n- Game options (`options.txt`) → `instance(action=\"set_option\", key, value)`.\n\nThese exist precisely so `instance-game-settings.json` is never hand-edited for them.\n`HMCLGameRepository` caches every LOADED instance's game settings in memory and does a\nfull-file overwrite the next time ANY OTHER property on that same instance changes (memory,\nisolation, a mod toggle, …). A raw file write never updates that in-memory copy, so a\nhand-edited value for one of these three can be silently clobbered — with no error, no\nwarning — the very next time something unrelated changes for that instance. The dedicated\ntool actions mutate the SAME in-memory object HMCL itself holds, so they don't have this\nproblem. If asked to change one of these three, call the tool action, report the\nprevious/new value it returns, and stop — do not also touch the JSON file \"just in case\".\n\n## Critical: in-memory settings, not just exit-time rewrite\n\nHMCL holds `launcher-settings.json` / `game-settings.json` in memory and **overwrites them on\nexit** — edit those only while HMCL is closed (or via the UI), then tell the user to reopen it.\n`instance-game-settings.json` is ALSO cached in memory for every loaded instance (see above),\nso it is only safe to raw-edit for fields with no dedicated tool action (Java path, window\nsize, etc.) — and even then, tell the user a restart/relaunch of that instance is needed\nbefore the change applies; do not assume editing it live is risk-free.\n\n## File locations (`<.hmcl>` = `<launch dir>/.hmcl`)\n\n| Concern | File |\n|---|---|\n| Launcher (theme, proxy, language, background, download) | `<.hmcl>/config/launcher-settings.json` |\n| User settings (Java list, log retention) | `%APPDATA%/.hmcl/config/user-settings.json` |\n| Game directories / profiles | `<.hmcl>/config/game-directories.json` |\n| Game settings presets (\"global\") | `<.hmcl>/config/game-settings.json` (`presets` array) |\n| Per-instance overrides | `<gameDir>/versions/<ver>/.hmcl/config/instance-game-settings.json` |\n\nMemory (`maxMemory`) and JVM args (`jvmOptions`) live in the last two files too, but are listed\nhere for reading/reference only — never write them directly; use the tool actions above.\n\n## overrideProperties gotcha\n\n`instance-game-settings.json` only applies a field if its name is ALSO listed in\n`\"overrideProperties\"` — otherwise it silently inherits from `\"parent\"`. Set BOTH the value\nAND add the key to `overrideProperties`, e.g. `\"windowType\":\"FULLSCREEN\"` alone does nothing.\nTo change a setting globally, edit the matching preset in `game-settings.json` instead (no\n`overrideProperties` needed there).\n\n## After any change\n\nState which file(s) changed, whether it needs HMCL closed/reopened or just an instance\nrelaunch, and never fabricate account credentials or IDs."
+}

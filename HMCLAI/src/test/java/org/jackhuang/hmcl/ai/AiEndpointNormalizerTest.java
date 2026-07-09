@@ -156,4 +156,22 @@ public final class AiEndpointNormalizerTest {
         String result = AiEndpointNormalizer.normalize("api.example.com", "unknown-family");
         assertEquals("https://api.example.com", result);
     }
+
+    /// A public hostname that merely BEGINS with digits resembling a private-range prefix (e.g. a
+    /// "magic DNS" style name that really resolves to an attacker-chosen public IP) must NOT be
+    /// classified as local — a naive String.startsWith("10.") check would wrongly downgrade this
+    /// to plaintext http://, exposing the Bearer API key to network interception.
+    @Test
+    public void testHostnameResemblingPrivatePrefixIsNotLocal() {
+        String result = AiEndpointNormalizer.normalize("10.0.0.1.attacker.example",
+                AiProtocolFamily.OPENAI_COMPLETIONS.getId());
+        assertTrue(result.startsWith("https://"), "a hostname is never local just because it starts with '10.'");
+    }
+
+    /// A genuine dotted-quad IPv4 literal outside every private/loopback range stays https.
+    @Test
+    public void testPublicIpLiteralStaysHttps() {
+        String result = AiEndpointNormalizer.normalize("8.8.8.8:443", AiProtocolFamily.OPENAI_COMPLETIONS.getId());
+        assertTrue(result.startsWith("https://"));
+    }
 }

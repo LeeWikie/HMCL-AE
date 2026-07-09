@@ -69,8 +69,9 @@ public final class GrepTool implements ToolSpec {
     @Override
     public String getDescription() {
         return "Search file contents by regular expression. Pass 'pattern' (Java regex), "
-                + "optional 'path' (sub-directory to search) and optional 'glob' (filename "
-                + "filter like *.json). Returns matching 'path:line: text' lines.";
+                + "optional 'path' (sub-directory or single file to search) and optional 'glob' "
+                + "(filename filter like *.json, ignored when 'path' names a single file). "
+                + "Returns matching 'path:line: text' lines.";
     }
 
     @Override
@@ -86,7 +87,7 @@ public final class GrepTool implements ToolSpec {
                  "type": "object",
                  "properties": {
                    "pattern": {"type": "string", "description": "Java regular expression to search for."},
-                   "path": {"type": "string", "description": "Optional sub-directory (relative to config root or absolute) to search under."},
+                   "path": {"type": "string", "description": "Optional sub-directory or single file (relative to config root or absolute) to search under."},
                    "glob": {"type": "string", "description": "Optional filename glob filter, e.g. *.json or *.log."}
                  },
                  "required": ["pattern"]
@@ -119,6 +120,28 @@ public final class GrepTool implements ToolSpec {
         } else {
             base = roots.get(0);
         }
+        if (!Files.exists(base)) {
+            return ToolResult.failure("Path does not exist: " + base);
+        }
+        // Real-path containment: `base` passed the lexical/normalized check above, but it (or an
+        // allowed root itself) could still be a symlink pointing outside every allowed root.
+        List<Path> realRoots = realRootsOf(roots);
+        Path realBase = realOrSelf(base);
+        if (realRoots.stream().noneMatch(realBase::startsWith)) {
+            return ToolResult.failure("Path is outside the allowed roots: " + realBase);
+        }
+
+        if (Files.isRegularFile(base)) {
+            List<String> results = new ArrayList<>();
+            Path fileName = base.getFileName();
+            String rel = fileName != null ? fileName.toString() : base.toString();
+            searchFile(base, rel, pattern, results);
+            if (results.isEmpty()) {
+                return ToolResult.success("(no matches)");
+            }
+            return ToolResult.success(String.join("\n", results));
+        }
+
         if (!Files.isDirectory(base)) {
             return ToolResult.failure("Not a directory: " + base);
         }
@@ -134,28 +157,19 @@ public final class GrepTool implements ToolSpec {
             var it = walk.filter(Files::isRegularFile).iterator();
             while (it.hasNext() && results.size() < MAX_MATCHES && filesScanned[0] < MAX_FILES) {
                 Path file = it.next();
+                // Files::isRegularFile follows symlinks, so a symlink planted under an allowed
+                // root but pointing OUTSIDE it would otherwise be searched (and its matching lines
+                // leaked into the result) despite living outside every allowed root.
+                Path realFile = realOrSelf(file);
+                if (realRoots.stream().noneMatch(realFile::startsWith)) {
+                    continue;
+                }
                 if (matcher != null && file.getFileName() != null && !matcher.matches(file.getFileName())) {
                     continue;
                 }
-                try {
-                    if (Files.size(file) > MAX_FILE_SIZE) continue;
-                } catch (IOException e) {
-                    continue;
-                }
-                filesScanned[0]++;
-                List<String> lines;
-                try {
-                    lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    continue; // binary / unreadable
-                }
-                for (int i = 0; i < lines.size() && results.size() < MAX_MATCHES; i++) {
-                    if (pattern.matcher(lines.get(i)).find()) {
-                        String rel = base.relativize(file).toString();
-                        String text = lines.get(i).strip();
-                        if (text.length() > 200) text = text.substring(0, 200) + "…";
-                        results.add(rel + ":" + (i + 1) + ": " + text);
-                    }
+                String rel = base.relativize(file).toString();
+                if (searchFile(file, rel, pattern, results)) {
+                    filesScanned[0]++;
                 }
             }
         } catch (IOException e) {
@@ -166,5 +180,52 @@ public final class GrepTool implements ToolSpec {
             return ToolResult.success("(no matches)");
         }
         return ToolResult.success(String.join("\n", results));
+    }
+
+    private static List<Path> realRootsOf(List<Path> roots) {
+        List<Path> real = new ArrayList<>(roots.size());
+        for (Path r : roots) {
+            real.add(realOrSelf(r));
+        }
+        return real;
+    }
+
+    /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself (already
+    /// absolute/normalized by the caller) when that fails — e.g. a broken symlink, or a race where
+    /// the file vanished between being listed and checked.
+    private static Path realOrSelf(Path p) {
+        try {
+            return p.toRealPath();
+        } catch (IOException e) {
+            return p;
+        }
+    }
+
+    /// Scans a single file for [pattern] matches, appending formatted `rel:line: text`
+    /// entries to [results] (capped at [MAX_MATCHES], each line truncated to 200 chars).
+    /// Shared by both the single-file and directory-walk search paths.
+    ///
+    /// @return `true` if the file was within [MAX_FILE_SIZE] and thus actually scanned
+    ///         (even if it turned out unreadable/binary); `false` if skipped due to size.
+    private static boolean searchFile(Path file, String rel, Pattern pattern, List<String> results) {
+        try {
+            if (Files.size(file) > MAX_FILE_SIZE) return false;
+        } catch (IOException e) {
+            return false;
+        }
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return true; // binary / unreadable, but still counts as scanned
+        }
+        for (int i = 0; i < lines.size() && results.size() < MAX_MATCHES; i++) {
+            if (pattern.matcher(lines.get(i)).find()) {
+                String text = lines.get(i).strip();
+                if (text.length() > 200) text = text.substring(0, 200) + "…";
+                results.add(rel + ":" + (i + 1) + ": " + text);
+            }
+        }
+        return true;
     }
 }

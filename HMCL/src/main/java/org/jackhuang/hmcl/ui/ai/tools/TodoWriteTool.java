@@ -30,8 +30,15 @@ import java.util.Map;
 /// An AI-accessible tool that lets the agent maintain a visible, ordered TODO list
 /// for a multi-step task. Each call REPLACES the whole list, so the model both adds
 /// steps and updates their status (pending → in_progress → done) through the same
-/// tool. The UI renders the latest list as a pinned card above the chat so the user
-/// can see exactly where the agent is.
+/// tool. The list serves TWO audiences at once: it's the agent's own durable plan —
+/// something to check completed work off against instead of quietly losing track of
+/// it mid-task — and the UI renders the same latest list as a pinned card above the
+/// chat so the user can see exactly where the agent is. Neither purpose replaces the
+/// other.
+///
+/// Entries are TASK-UNIT granularity, not one line per sub-item: installing a batch of
+/// mods is one entry ("安装 Mods") covering the whole batch, plus a second entry for
+/// verification — never a separate line per mod. See {@link #getDescription()}'s example.
 ///
 /// Because the structured-schema parser only supports flat fields, the list is passed
 /// as a single JSON-string parameter `todos`: an array of
@@ -64,15 +71,24 @@ public final class TodoWriteTool implements ToolSpec {
 
     @Override
     public String getDescription() {
-        return "Maintain a visible TODO checklist for a multi-step task so the user can see your progress. "
-                + "Call this at the START of any task that needs several steps to lay out the plan, then call it "
-                + "again after EACH step to update statuses — exactly one item should be 'in_progress' at a time. "
-                + "Each call REPLACES the entire list. "
+        return "Maintain a persistent TODO checklist for a multi-step task. This serves BOTH you and the "
+                + "user, not just one: it's YOUR OWN durable plan — check items off against it instead of "
+                + "quietly losing track of what you already finished — and it's also a live progress card the "
+                + "user sees above the chat. "
+                + "GRANULARITY IS TASK-UNIT, NOT PER-ITEM: each entry is one coherent phase of work, never one "
+                + "line per sub-item — e.g. installing a batch of mods is a SINGLE entry '安装 Mods' covering "
+                + "the whole batch, plus a second entry '验证安装结果'; do NOT create a separate line per mod. "
+                + "Call this at the START of any task that needs several such phases to lay out the plan, then "
+                + "call it again the moment a phase actually finishes to check it off — exactly one item "
+                + "'in_progress' at a time. "
+                + "Each call REPLACES the entire list, so when the plan changes this MUST be an UPDATE to the "
+                + "existing list: keep every item that's still valid, adjust what changed, carry over anything "
+                + "already finished as 'done'. NEVER silently drop unfinished items and start a brand-new list "
+                + "in their place — that discards real progress and the user's visibility into it. "
                 + "Parameter 'todos' is a JSON array string; each item is "
                 + "{\"content\": string, \"status\": \"pending\"|\"in_progress\"|\"done\"}. "
-                + "Example: [{\"content\":\"查看现有实例\",\"status\":\"done\"},"
-                + "{\"content\":\"安装 Fabric 加载器\",\"status\":\"in_progress\"},"
-                + "{\"content\":\"安装 Sodium\",\"status\":\"pending\"}].";
+                + "Example: [{\"content\":\"安装 Mods\",\"status\":\"in_progress\"},"
+                + "{\"content\":\"验证安装结果\",\"status\":\"pending\"}].";
     }
 
     @Override
@@ -97,7 +113,7 @@ public final class TodoWriteTool implements ToolSpec {
                  "$schema": "https://json-schema.org/draft/2020-12/schema",
                  "type": "object",
                  "properties": {
-                   "todos": {"type": "string", "description": "A JSON array of todo objects. Each: {content:string, status:'pending'|'in_progress'|'done'}. Send it as a JSON-encoded string. The whole list is replaced on every call."}
+                   "todos": {"type": "string", "description": "A JSON array of task-unit todo objects (not one per sub-item). Each: {content:string, status:'pending'|'in_progress'|'done'}. Send it as a JSON-encoded string. The whole list is replaced on every call, so send an UPDATE of the existing list — carry over finished items as 'done', never drop them to start a new list."}
                  },
                  "required": ["todos"]
                }

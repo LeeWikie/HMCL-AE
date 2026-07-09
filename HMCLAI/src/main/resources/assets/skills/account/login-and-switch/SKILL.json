@@ -1,0 +1,23 @@
+{
+  "name": "login-and-switch",
+  "description": "How to log in with Microsoft, add an offline account, switch the active account, or check who's logged in. Use when the user wants to log in, sign in, add or change account (\"登录\",\"账号\",\"换号\",\"微软登录\",\"离线账号\",\"正版登录\").",
+  "version": "1.0",
+  "triggers": [
+    "登录",
+    "登陆",
+    "账号",
+    "帐号",
+    "换号",
+    "微软",
+    "微软登录",
+    "离线账号",
+    "正版",
+    "正版登录",
+    "login",
+    "sign in",
+    "account",
+    "switch account"
+  ],
+  "requires": [],
+  "body": "# Log in and switch accounts\n\nUse `account(action, ...)` only — never shell/browser scripting/file editing.\n\n- `account(action=list)` — logged-in accounts (username, type, active one).\n- `account(action=microsoft_login)` — native OAuth dialog, no params.\n- `account(action=add_offline, username)` — offline account, active by default.\n- `account(action=select, username)` — switches active account.\n\nMicrosoft/正版 needed for online-mode servers, Realms, real skin/name. Offline is\nusername-only, can't join online-mode servers/Realms — only suggest offline if\nuser explicitly wants it or has no Microsoft account.\n\nMicrosoft login: call `account(action=microsoft_login)`, tell user \"已打开登录窗口，请在弹出的窗口里\n完成微软登录。\" (interactive, you can't do it for them), then after they confirm,\n`list` to verify the account appeared.\n\nDon't: script a \"login\" via shell; create offline when Microsoft/正版 was asked\nfor; claim success before `list` confirms it."
+}

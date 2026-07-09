@@ -72,7 +72,10 @@ public final class ChatAgent {
     /// is evicted so a long wandering chat can't accrete every playbook into the prompt.
     /// Only touched on the agent's single-thread executor.
     private final java.util.LinkedHashSet<String> activeSkills = new java.util.LinkedHashSet<>();
-    private static final int MAX_ACTIVE_SKILLS = 3;
+    /// Raised from 3 (scenario-skill era) alongside the shift to smaller operation-level skills —
+    /// 12 × the new ~1000-char body cap is still less prompt weight than the old 3 × 6000, while
+    /// covering far more concrete operations per turn. See AiPromptBuilder#SKILL_BODY_MAX_CHARS.
+    private static final int MAX_ACTIVE_SKILLS = 12;
 
     /// Provider-reported prompt (input) token count of the FIRST model call of the most recent
     /// streaming turn — i.e. the size of the persisted context (system + history + user) before
@@ -97,6 +100,22 @@ public final class ChatAgent {
     public AiSession getSession() { return session; }
     public AiSettings getSettings() { return settings; }
 
+    /// Shuts down this agent's dedicated single-thread executor. Call this when the agent is
+    /// discarded (e.g. evicted from a session cache) — {@code newSingleThreadExecutor}'s core
+    /// thread never times out on its own, so a discarded agent whose executor is never shut down
+    /// permanently leaks one blocked worker thread. Idempotent; safe to call more than once.
+    public void shutdown() {
+        executor.shutdownNow();
+        if (client instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception ignored) {
+                // Best-effort: the client's own shutdown (if any) must never prevent the agent
+                // itself from being discarded.
+            }
+        }
+    }
+
     /// System instruction used to summarise the running conversation into a compact,
     /// continuation-style brief so the chat can continue with far fewer tokens.
     private static final String COMPACT_SYSTEM_PROMPT = String.join("\n",
@@ -109,13 +128,18 @@ public final class ChatAgent {
             "action to take). Be specific and preserve names/versions/IDs; drop chit-chat and verbose logs.");
 
     /// Compresses the current session into a continuation-style summary using a single
-    /// non-streaming model call, then replaces the session history with that summary.
+    /// non-streaming model call, then replaces the session history with that summary
+    /// followed by the raw tail of the last {@value #COMPACT_KEEP_TURNS} turns.
     ///
     /// Runs on the agent's executor (off the FX thread). On success the session is
-    /// {@link AiSession#clear() cleared} and a single assistant message holding the
-    /// summary is added; the returned future completes with the raw summary text. If
-    /// the conversation is empty (or the model returns nothing) the session is left
-    /// untouched and the future completes with an empty string.
+    /// {@link AiSession#clear() cleared}, an assistant message holding the summary is
+    /// added, and the most recent {@value #COMPACT_KEEP_TURNS} turns (see
+    /// {@link #lastRawTurns}) are re-appended verbatim — including their persisted
+    /// {@link LlmMessage.ToolPayload tool records} — so a summary that compresses or
+    /// loses fidelity on the last file diff/tool result doesn't destroy the only copy of
+    /// it. The returned future completes with the raw summary text. If the conversation
+    /// is empty (or the model returns nothing) the session is left untouched and the
+    /// future completes with an empty string.
     public CompletableFuture<String> compact() {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -126,10 +150,17 @@ public final class ChatAgent {
         }, executor);
     }
 
-    /// Runs the single summarisation call and replaces the session history with the summary,
-    /// prefixed by {@code header} (the manual /compact path and the automatic path use different
-    /// headers so the user can tell which happened). Returns the raw summary text, or an empty
-    /// string when the history is empty or the model returns nothing (session left untouched).
+    /// Number of most-recent turns kept RAW (not folded into the summary) across a compaction —
+    /// see {@link #lastRawTurns}. A fixed small constant is deliberate: this is meant to stop the
+    /// last turn or two's tool output/diffs from being lossily paraphrased, not to implement a
+    /// token-budget-aware sliding window.
+    private static final int COMPACT_KEEP_TURNS = 2;
+
+    /// Runs the single summarisation call and replaces the session history with the summary
+    /// (prefixed by {@code header} — the manual /compact path and the automatic path use different
+    /// headers so the user can tell which happened) followed by the raw tail of the last
+    /// {@link #COMPACT_KEEP_TURNS} turns. Returns the raw summary text, or an empty string when
+    /// the history is empty or the model returns nothing (session left untouched).
     private String doCompact(String header) throws LlmException {
         List<LlmMessage> history = session.getMessages();
         if (history.isEmpty()) {
@@ -149,9 +180,45 @@ public final class ChatAgent {
             return "";
         }
         summary = summary.strip();
+        // Snapshot the raw tail BEFORE clearing — session.clear() empties the session's own
+        // backing list, but `history` (and the sublist view over it) is an independent copy
+        // (see AiSession#getMessages), so the LlmMessage instances — including their
+        // ToolPayload — stay intact to re-append after the summary.
+        List<LlmMessage> keepRaw = lastRawTurns(history, COMPACT_KEEP_TURNS);
         session.clear();
         session.addMessage(new LlmMessage("assistant", header + "\n" + summary));
+        for (LlmMessage m : keepRaw) {
+            session.addMessage(m);
+        }
         return summary;
+    }
+
+    /// Returns the tail of {@code history} covering its last {@code keepTurns} turns, verbatim
+    /// (same {@link LlmMessage} instances — tool records keep their {@link LlmMessage.ToolPayload}
+    /// intact). A turn is a user message (any {@code "user"}-role message, including synthetic
+    /// {@link LlmMessage#KIND_EVENT} ones) together with everything that follows it up to — but
+    /// not including — the next user message (its tool records and assistant reply/segments).
+    ///
+    /// If {@code history} has fewer than {@code keepTurns} user messages, the whole history from
+    /// the first turn onward is returned (nothing to summarise away). Any messages BEFORE the
+    /// first user-role message (there normally are none — the session never stores the system
+    /// prompt) are excluded either way.
+    private static List<LlmMessage> lastRawTurns(List<LlmMessage> history, int keepTurns) {
+        if (keepTurns <= 0 || history.isEmpty()) {
+            return Collections.emptyList();
+        }
+        int turnsSeen = 0;
+        int start = history.size();
+        for (int i = history.size() - 1; i >= 0; i--) {
+            if ("user".equals(history.get(i).getRole())) {
+                start = i;
+                turnsSeen++;
+                if (turnsSeen == keepTurns) {
+                    break;
+                }
+            }
+        }
+        return turnsSeen == 0 ? Collections.emptyList() : history.subList(start, history.size());
     }
 
     /// If auto-compaction is enabled and the running conversation has reached
@@ -212,8 +279,12 @@ public final class ChatAgent {
     /// reported prompt-token count, so it stays robust whether or not the provider reports usage
     /// (the non-streaming path reports none, so the heuristic carries it there).
     private int estimateContextTokens() {
-        String prompt = promptBuilder != null ? promptBuilder.build(activeSkills) : FALLBACK_SYSTEM_PROMPT;
-        int chars = prompt.length();
+        // Sum the two halves independently (rather than calling the combined build()) so this
+        // stays accurate even if buildMessages()'s split placement changes — e.g. the volatile
+        // suffix living in the wire-only copy of the last message, not the system prompt.
+        int chars = promptBuilder != null
+                ? promptBuilder.buildStablePrefix().length() + promptBuilder.buildVolatileSuffix(activeSkills).length()
+                : FALLBACK_SYSTEM_PROMPT.length();
         for (LlmMessage m : session.getMessages()) {
             String c = m.getContent();
             if (c != null) {
@@ -400,6 +471,13 @@ public final class ChatAgent {
             /// onToolResult (the adapter runs tools serially, so activity→result pairs
             /// never interleave within a turn).
             @Nullable private String lastToolArgs;
+            /// The most recently persisted segment message (see onSegmentComplete), so onComplete
+            /// can attach the final usage report to it instead of writing a duplicate message.
+            @Nullable private LlmMessage lastSegmentMessage;
+            /// How much of `reasoning` has already been attached to a segment — each new segment
+            /// gets only the DELTA since the last one, never the whole accumulator, so a multi-cycle
+            /// turn's reasoning is neither duplicated across segments nor dropped after the first.
+            private int reasoningAttachedThrough = 0;
             @Override public void onToken(String t) {
                 synchronized (full) { full.append(t); }
                 callback.onToken(t);
@@ -445,6 +523,36 @@ public final class ChatAgent {
                 callback.onToolResult(name, success, summary);
             }
             @Override public boolean isCancelled() { return cancelled != null && cancelled.getAsBoolean(); }
+            @Override public void onSegmentComplete(String segment) {
+                if (segment == null || segment.isBlank()) {
+                    return;
+                }
+                if ((cancelled != null && cancelled.getAsBoolean()) || interruptWritten.get()) {
+                    // Turn is being/was stopped — leave this to the interrupted-partial persister
+                    // instead of also writing a normal segment message for it.
+                    return;
+                }
+                // Persisting each cycle's segment AS ITS OWN message (instead of waiting for
+                // onComplete to persist one combined blob) is what keeps a reloaded session's
+                // bubbles matching what the live stream actually rendered — multiple bubbles during
+                // streaming were previously getting collapsed into one on reload.
+                LlmMessage segMessage = new LlmMessage("assistant", segment);
+                segMessage.setTurnId(turnId);
+                segMessage.setModel(settings.getModel());
+                if (usage != null) {
+                    segMessage.setUsage(usage);
+                }
+                String reasoningDelta;
+                synchronized (reasoning) {
+                    reasoningDelta = reasoning.substring(Math.min(reasoningAttachedThrough, reasoning.length())).strip();
+                    reasoningAttachedThrough = reasoning.length();
+                }
+                if (!reasoningDelta.isEmpty()) {
+                    segMessage.setReasoning(reasoningDelta);
+                }
+                session.addMessage(segMessage);
+                lastSegmentMessage = segMessage;
+            }
             @Override public void onComplete(String c) {
                 interruptPersist.compareAndSet(persister, null);
                 if ((cancelled != null && cancelled.getAsBoolean()) || interruptWritten.get()) {
@@ -463,18 +571,29 @@ public final class ChatAgent {
                 } else {
                     synchronized (full) { f = full.toString(); }
                 }
-                LlmMessage aiMessage = new LlmMessage("assistant", f);
-                if (usage != null) {
-                    aiMessage.setUsage(usage);
+                if (lastSegmentMessage == null) {
+                    // No segment was ever persisted via onSegmentComplete (e.g. the adapter reported
+                    // no text through that path at all) — fall back to the old single-message
+                    // behaviour so a turn never silently produces zero messages.
+                    if (!f.isBlank()) {
+                        LlmMessage aiMessage = new LlmMessage("assistant", f);
+                        if (usage != null) {
+                            aiMessage.setUsage(usage);
+                        }
+                        String r;
+                        synchronized (reasoning) { r = reasoning.toString().strip(); }
+                        if (!r.isEmpty()) {
+                            aiMessage.setReasoning(r);
+                        }
+                        aiMessage.setTurnId(turnId);
+                        aiMessage.setModel(settings.getModel());
+                        session.addMessage(aiMessage);
+                    }
+                } else if (usage != null) {
+                    // Refresh usage on the last segment in case a later report arrived after it was
+                    // first persisted (usage is reported once per model call / cycle).
+                    lastSegmentMessage.setUsage(usage);
                 }
-                String r;
-                synchronized (reasoning) { r = reasoning.toString().strip(); }
-                if (!r.isEmpty()) {
-                    aiMessage.setReasoning(r);
-                }
-                aiMessage.setTurnId(turnId);
-                aiMessage.setModel(settings.getModel());
-                session.addMessage(aiMessage);
                 callback.onComplete(f);
             }
             @Override public void onError(LlmException e) {
@@ -504,8 +623,8 @@ public final class ChatAgent {
 
     private List<LlmMessage> buildMessages() {
         List<LlmMessage> all = new ArrayList<>();
-        String prompt = promptBuilder != null ? promptBuilder.build(activeSkills) : FALLBACK_SYSTEM_PROMPT;
-        all.add(new LlmMessage("system", prompt));
+        String stablePrefix = promptBuilder != null ? promptBuilder.buildStablePrefix() : FALLBACK_SYSTEM_PROMPT;
+        all.add(new LlmMessage("system", stablePrefix));
         // Tool records are history/UI artifacts — never sent to the model (a bare "tool" role
         // without the provider's tool-call plumbing would be rejected by the APIs).
         List<LlmMessage> outbound = new ArrayList<>();
@@ -514,8 +633,42 @@ public final class ChatAgent {
                 outbound.add(m);
             }
         }
-        all.addAll(trimToRequestBudget(outbound, prompt.length()));
+        List<LlmMessage> trimmed = trimToRequestBudget(outbound, stablePrefix.length());
+        attachVolatileSuffix(trimmed);
+        all.addAll(trimmed);
         return Collections.unmodifiableList(all);
+    }
+
+    /// Appends {@link AiPromptBuilder#buildVolatileSuffix} to the LAST message of {@code trimmed}
+    /// (the current turn's freshly-added user message) — everything that changes turn-to-turn
+    /// (runtime context, active skill playbooks, policy, language directive, …) lives here instead
+    /// of the system message, so a byte changing there doesn't invalidate a provider's prefix-hash
+    /// cache over {@link #buildMessages()}'s stable system prompt + the older, unchanging turns of
+    /// conversation history.
+    ///
+    /// Mutates {@code trimmed} IN PLACE (replacing its last element's reference) but never touches
+    /// the underlying {@link LlmMessage} object itself — that object may be the SAME instance held
+    /// by {@code session.getMessages()}, and mutating it would leak this synthetic wire-only block
+    /// into the chat UI and permanently bake a stale runtime snapshot into persisted history.
+    private void attachVolatileSuffix(List<LlmMessage> trimmed) {
+        if (promptBuilder == null || trimmed.isEmpty()) {
+            return;
+        }
+        int lastIndex = trimmed.size() - 1;
+        LlmMessage original = trimmed.get(lastIndex);
+        // Pass the CURRENT turn's raw text so buildVolatileSuffix can decide whether dev mode
+        // (a literal "[Dev]" tag — see AiPromptBuilder#isDevModeTriggered) fires THIS turn only;
+        // it must never be folded into `activeSkills`, which is sticky for the rest of the
+        // conversation (see that field's doc comment) — dev mode is explicitly NOT sticky.
+        String volatileSuffix = promptBuilder.buildVolatileSuffix(activeSkills, original.getContent());
+        if (volatileSuffix.isBlank()) {
+            return;
+        }
+        LlmMessage wireOnly = new LlmMessage(original.getRole(),
+                original.getContent() + "\n\n<turn-context>\n" + volatileSuffix + "\n</turn-context>");
+        wireOnly.setKind(original.getKind());
+        wireOnly.setTurnId(original.getTurnId());
+        trimmed.set(lastIndex, wireOnly);
     }
 
     /// Returns the NEWEST tail of {@code history} that fits the request token budget

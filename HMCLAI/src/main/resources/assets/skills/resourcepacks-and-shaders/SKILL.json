@@ -1,0 +1,22 @@
+{
+  "name": "resourcepack-and-shader-setup",
+  "description": "How to get resource packs and shaders actually showing up in-game — match the loader chain for shaders, then point the user to the right in-game menu. Use when the user mentions shaders, resource packs or textures (\"光影\",\"材质包\",\"资源包\").",
+  "version": "1.0",
+  "triggers": [
+    "光影",
+    "材质包",
+    "资源包",
+    "材质",
+    "画质包",
+    "皮肤包",
+    "shader",
+    "shaders",
+    "resource pack",
+    "texture pack",
+    "iris"
+  ],
+  "requires": [
+    "resourcepacks-and-shaders"
+  ],
+  "body": "# Resource packs & shaders\n\nGoal: the pack/shader actually shows up in-game — that means matching the game version, and for\nshaders, having the right loader (Iris/OptiFine) installed first. See `resourcepacks-and-shaders`\nfor the tool calls: searching, installing, checking loader compatibility, avoiding the OptiFine\nvs Sodium/Iris conflict.\n\n## Where to enable them in-game (not covered by the operation skill)\n- Shaders: 视频设置 → 光影 (Iris) / Shaders (OptiFine).\n- Resource packs: 选项 → 资源包."
+}

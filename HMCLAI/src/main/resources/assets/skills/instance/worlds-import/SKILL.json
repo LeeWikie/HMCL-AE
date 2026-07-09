@@ -1,0 +1,17 @@
+{
+  "name": "worlds-import",
+  "description": "How to import a downloaded world/map zip into an instance and diagnose a \"missing\" world. Use when the user has a save zip to add or thinks a world disappeared (\"导入地图\",\"导入存档\",\"存档丢了\",\"地图没了\",\"import world\").",
+  "version": "1.0",
+  "triggers": [
+    "导入地图",
+    "导入存档",
+    "导入地图包",
+    "存档丢了",
+    "存档不见了",
+    "地图没了",
+    "import world",
+    "import map"
+  ],
+  "requires": [],
+  "body": "# Worlds import\n\n## Call\n- `instance(action=worlds_import, instance, zip)` — imports a downloaded world/map zip into that\n  instance's saves.\n\n## Gotchas\n- Safety net (automatic, no action needed): an imported world is marked for a one-time safety\n  backup that `launch_instance` takes automatically right before that world's FIRST launch after\n  import — protects an old/incompatible save from being silently truncated the first time\n  Minecraft opens it. This is a code-level guarantee (see `WorldBackupManager`), not something you\n  need to call yourself — don't run `worlds_backup_create` \"just in case\" right after an import\n  unless the user specifically asks for an extra manual snapshot.\n- Getting the zip onto disk isn't this tool's job — ask the user for the path (or the download\n  URL) first.\n- If it refuses, a zip-slip guard tripped: layout is wrong. It must contain a world folder with\n  `level.dat` at the zip's top level or one directory down. Re-zip and retry.\n- \"存档不见了/坏了\" is usually the wrong-instance illusion, not real loss: each instance can have\n  its OWN saves dir (version isolation). Run `instance(action=worlds_list, instance)` on the\n  instance the user expects — don't guess paths. Then check\n  `instance(action=worlds_backup_list, instance, world)` and the OS recycle bin.\n- Moving a world to another PC = copy the world folder (or a backup snapshot);\n  `instance(action=open_folder)` helps the user find it."
+}

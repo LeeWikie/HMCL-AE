@@ -24,6 +24,7 @@ import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.GameSettings;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
+import org.jackhuang.hmcl.util.platform.SystemInfo;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -31,6 +32,8 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static org.jackhuang.hmcl.util.DataSizeUnit.MEGABYTES;
 
 /// A tool that sets the maximum JVM heap memory (-Xmx, in MiB) for a single
 /// Minecraft instance of the selected profile.
@@ -116,6 +119,19 @@ public final class SetInstanceMemoryTool implements Tool {
                     + "use at least 256 MiB.");
         }
 
+        // Upper-bound sanity check: mirrors the same physical-RAM comparison LauncherHelper's
+        // pre-launch advisory already performs (game/LauncherHelper.java, "launch.advice.not_enough_space"),
+        // just moved earlier so a bogus value is rejected at set_memory time instead of only
+        // surfacing as a launch-time warning after the fact. A value at or below physical RAM is
+        // always allowed (HMCL itself only warns, never blocks, on a merely-tight-but-under value).
+        long totalMemoryMB = (long) MEGABYTES.convertFromBytes(SystemInfo.getTotalMemorySize());
+        if (totalMemoryMB > 0 && maxMemoryMB > totalMemoryMB) {
+            return ToolResult.failure("Requested maximum memory (" + maxMemoryMB + " MiB) exceeds this machine's "
+                    + "physical RAM (" + totalMemoryMB + " MiB total). Setting -Xmx above physical RAM will make "
+                    + "the game fail to start or thrash badly; pick a value at or below " + totalMemoryMB + " MiB "
+                    + "(leave headroom for the OS and other programs — typically no more than ~70-80% of total RAM).");
+        }
+
         if (repository.isInstanceGameSettingsReadOnly(instance)) {
             return ToolResult.failure("The game settings of instance '" + instance + "' are read-only and cannot be "
                     + "modified. Its current maximum heap is " + currentEffective + " MiB.");
@@ -133,6 +149,16 @@ public final class SetInstanceMemoryTool implements Tool {
                     return;
                 }
                 setting.maxMemoryProperty().setValue(maxMemoryMB);
+                // maxMemory's effective (launch-time) value is only read from THIS instance when
+                // its name is also listed in overrideProperties (see GameSettings.Effective#get /
+                // isOverridden) — the exact "overrideProperties gotcha" the config-hmcl skill warns
+                // hand-editors about. The settings UI's own binder (IndependentSettingBinder) always
+                // pairs a setValue with this registration; without it, the value set above is
+                // persisted to disk but silently ignored at effective-settings/launch time whenever
+                // the parent preset's maxMemory differs from it — i.e. this tool would report
+                // success while the game keeps launching with the OLD/inherited memory, exactly the
+                // kind of silent no-op a dedicated tool exists to prevent.
+                setting.getOverrideProperties().add(GameSettings.PROPERTY_MAX_MEMORY);
                 repository.saveGameSettings(instance); // explicit save in addition to the auto-save listener
                 result.set(ToolResult.success("Set maximum heap memory of instance '" + instance + "' to "
                         + maxMemoryMB + " MiB (-Xmx" + maxMemoryMB + "m). Previous effective value: "

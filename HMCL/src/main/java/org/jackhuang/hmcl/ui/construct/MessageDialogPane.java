@@ -64,6 +64,7 @@ public final class MessageDialogPane extends HBox {
     }
 
     private final HBox actions;
+    private final VBox vbox;
 
     private @Nullable ButtonBase cancelButton;
 
@@ -105,6 +106,7 @@ public final class MessageDialogPane extends HBox {
 
             vbox.getChildren().setAll(titlePane, content, actions);
         }
+        this.vbox = vbox;
 
         this.getChildren().setAll(graphic, vbox);
 
@@ -118,6 +120,15 @@ public final class MessageDialogPane extends HBox {
     public void addButton(Node btn) {
         btn.addEventHandler(ActionEvent.ACTION, e -> fireEvent(new DialogCloseEvent()));
         actions.getChildren().add(btn);
+    }
+
+    /// Inserts an arbitrary extra control (e.g. a "remember this choice" checkbox) between the
+    /// message body and the action buttons row. Unlike {@link #addButton}, this does NOT wire the
+    /// node's ActionEvent to close the dialog — appropriate for controls the user toggles/edits
+    /// before finally pressing one of the real action buttons (a checkbox fires ActionEvent on
+    /// every toggle, which would otherwise dismiss the dialog the instant it's checked).
+    public void addExtraContent(Node node) {
+        vbox.getChildren().add(vbox.getChildren().size() - 1, node);
     }
 
     public void setCancelButton(@Nullable ButtonBase btn) {
@@ -156,6 +167,13 @@ public final class MessageDialogPane extends HBox {
         public Builder addAction(Node actionNode) {
             dialog.addButton(actionNode);
             actionNode.getStyleClass().add("dialog-accept");
+            return this;
+        }
+
+        /// Adds an arbitrary extra control (e.g. a "remember this choice" checkbox) below the
+        /// message body and above the action buttons — see {@link MessageDialogPane#addExtraContent}.
+        public Builder extraContent(Node node) {
+            dialog.addExtraContent(node);
             return this;
         }
 

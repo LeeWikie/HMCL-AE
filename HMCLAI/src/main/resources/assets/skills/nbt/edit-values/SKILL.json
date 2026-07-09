@@ -1,0 +1,18 @@
+{
+  "name": "edit-values",
+  "description": "Read and write world/player NBT values (gamemode, position, custom tags) through the hidden nbt tool domain, with mandatory overview-backup-verify steps (\"改存档\",\"改坐标\",\"传送\",\"游戏模式\",\"改模式\",\"nbt\",\"改数据\").",
+  "version": "1.0",
+  "triggers": [
+    "改存档",
+    "改坐标",
+    "传送",
+    "游戏模式",
+    "改模式",
+    "nbt",
+    "改数据",
+    "编辑存档",
+    "修改存档"
+  ],
+  "requires": [],
+  "body": "NBT tools hidden by default — confirm the user enabled \"NBT 工具\" in AI 设置; if not, tell them\nto enable it and stop.\n\nOrder, always:\n1. `instance(action=worlds_info, world)` or `nbt(action=read, ...)` for an overview. World must\n   NOT be open in-game — tools detect the session lock; ask the user to quit, don't retry.\n2. `instance(action=worlds_backup_create, world)`, even if auto-backup also runs.\n3. `nbt(action=get, ..., nbtPath)` — read the EXACT current value, show old vs new, `ask()` to\n   confirm anything non-obvious.\n4. `nbt(action=set, ..., nbtPath, value)` — one logical change per call. Keep types exact:\n   gamemode is int (0 survival/1 creative/2 adventure/3 spectator); `Pos` is 3 doubles.\n5. `nbt(action=get, ...)` again to verify, report the confirmed value.\n\nNever edit NBT via shell/hex — only `nbt` actions keep compression and atomic writes correct."
+}

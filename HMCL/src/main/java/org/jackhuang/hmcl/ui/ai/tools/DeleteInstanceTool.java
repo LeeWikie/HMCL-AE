@@ -90,7 +90,7 @@ public final class DeleteInstanceTool implements Tool {
         if (!InstanceToolSupport.bool(parameters, "confirm")) {
             return ToolResult.failure("Not confirmed: this will DELETE the instance '" + instance
                     + "' and all of its files from disk. If the recycle-bin preference is off this is IRREVERSIBLE. "
-                    + "Re-invoke delete_instance with confirm=true to proceed.");
+                    + "Re-invoke instance(action=\"delete\", instance=\"" + instance + "\", confirm=true) to proceed.");
         }
 
         // Recoverable path: move the version's on-disk directory to the recycle bin, then let the

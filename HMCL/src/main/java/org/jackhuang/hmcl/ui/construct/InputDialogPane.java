@@ -53,7 +53,10 @@ public class InputDialogPane extends JFXDialogLayout implements DialogAware {
     public InputDialogPane(String text, String initialValue, FutureCallback<String> onResult) {
         textField = new JFXTextField(initialValue);
 
-        this.setHeading(new HBox(new Label(text)));
+        Label headingLabel = new Label(text);
+        headingLabel.setWrapText(true);
+        FXUtils.setLimitWidth(headingLabel, 400);
+        this.setHeading(new HBox(headingLabel));
         this.setBody(new VBox(textField));
 
         lblCreationWarning = new Label();

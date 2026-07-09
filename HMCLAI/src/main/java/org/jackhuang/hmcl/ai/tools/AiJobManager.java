@@ -40,8 +40,8 @@ import java.util.function.Consumer;
 /// agent's turn until they finish. {@link AiJobManager} lets a tool instead hand
 /// its work to a background daemon-thread pool and return immediately with a short
 /// {@code jobId}; the agent can keep going and later poll the job's status / result
-/// (via the {@code list_jobs} / {@code check_job} tools) or cancel it
-/// ({@code cancel_job}).
+/// (via the job tool's {@code list} / {@code check} actions) or cancel it
+/// ({@code job(action="cancel")}).
 ///
 /// This mirrors the static, decoupled style of {@link ToolProgress}: it knows
 /// nothing about the UI. The UI (or any other consumer) observes job completion by
@@ -55,12 +55,45 @@ import java.util.function.Consumer;
 /// the JVM alive.
 public final class AiJobManager {
 
+    /// Exact marker substring the job tool's {@code check} action emits when a job hasn't finished yet
+    /// (e.g. "Still running (12s elapsed)."). Shared here — rather than duplicated as a string
+    /// literal — so the langchain4j adapter's loop guards can recognise "technically successful
+    /// but zero new information" poll results without depending on the HMCL-module tool class
+    /// (the module dependency direction is HMCL → HMCLAI, not the reverse), and both sides stay
+    /// in sync if the wording ever changes.
+    public static final String STILL_RUNNING_MARKER = "Still running";
+
     /// The single shared instance. There is intentionally one manager per process.
     private static final AiJobManager INSTANCE = new AiJobManager();
 
     /// Returns the shared {@link AiJobManager}.
     public static AiJobManager getInstance() {
         return INSTANCE;
+    }
+
+    /// Builds the RUNNING-state status text the job tool's {@code check} action shows: the
+    /// elapsed time, plus — when the tool driving {@code job} has reported one via the
+    /// job-id-keyed {@link ToolProgress} bus — a live completion percentage and phase message.
+    /// A tool that never reports progress (the common case) gets exactly the historical
+    /// {@code "Still running (Ns elapsed)."} text, unchanged; this is purely additive.
+    ///
+    /// @param job a job whose {@link Job#getStatus()} is {@link Status#RUNNING}
+    /// @return the status text, always starting with {@link #STILL_RUNNING_MARKER}
+    public static String describeRunning(Job job) {
+        long elapsed = Math.max(0L, System.currentTimeMillis() - job.getStartedAtMillis());
+        StringBuilder sb = new StringBuilder(STILL_RUNNING_MARKER)
+                .append(" (").append(elapsed / 1000).append("s elapsed");
+
+        ToolProgress.Event progress = ToolProgress.latestForJob(job.getId());
+        if (progress != null && !progress.indeterminate()) {
+            int percent = (int) Math.round(Math.max(0.0, Math.min(1.0, progress.fraction())) * 100);
+            sb.append(", ").append(percent).append('%');
+            String message = progress.message();
+            if (message != null && !message.isBlank()) {
+                sb.append(" - ").append(message);
+            }
+        }
+        return sb.append(").").toString();
     }
 
     /// The lifecycle state of a {@link Job}.
@@ -98,10 +131,10 @@ public final class AiJobManager {
         private volatile @Nullable ToolResult result;
         private volatile @Nullable String error;
         private volatile long finishedAtMillis;
-        /// Whether the MODEL has already seen this job's terminal outcome via check_job /
-        /// list_jobs in its own tool loop. An acknowledged job must not additionally fire the
-        /// auto-continue prompt — in a real session a 15-install batch produced a dozen junk
-        /// "延迟回执" turns because the model had already confirmed everything via list_jobs.
+        /// Whether the MODEL has already seen this job's terminal outcome via the job tool's
+        /// check/list actions in its own tool loop. An acknowledged job must not additionally fire
+        /// the auto-continue prompt — in a real session a 15-install batch produced a dozen junk
+        /// "延迟回执" turns because the model had already confirmed everything via job(action="list").
         private volatile boolean acknowledged;
 
         private Job(String id, int seq, String toolName, String label,
@@ -140,8 +173,8 @@ public final class AiJobManager {
             return acknowledged;
         }
 
-        /// Marks this job's terminal outcome as seen by the model. Called by check_job /
-        /// list_jobs when they include a SUCCEEDED/FAILED/CANCELLED status in a tool result.
+        /// Marks this job's terminal outcome as seen by the model. Called by the job tool's
+        /// check/list actions when they include a SUCCEEDED/FAILED/CANCELLED status in a tool result.
         public void markAcknowledged() {
             this.acknowledged = true;
         }
@@ -245,7 +278,11 @@ public final class AiJobManager {
     /// Runs a job's work, translating its outcome into a terminal state. Never throws.
     private void runJob(Job job) {
         try {
-            ToolResult result = job.work.call();
+            // Bind this job's id as ToolProgress.currentJobId() for the duration of the
+            // synchronous work, so a tool that reports progress (directly, or via a helper that
+            // reads currentJobId() up front to close over it before an async thread hop) gets
+            // its updates attributed to THIS job — see ToolProgress's class doc.
+            ToolResult result = ToolProgress.runInJobScope(job.id, job.work);
             if (result == null) {
                 complete(job, Status.FAILED,
                         ToolResult.failure("Background task returned no result."), "Tool returned no result.");
@@ -275,6 +312,10 @@ public final class AiJobManager {
             // Publish status last so a reader that sees a terminal status also sees result/error.
             job.status = status;
         }
+        // A finished job must never leave a stale in-progress percentage behind for
+        // describeRunning()/check_job to find, even if the tool never itself called
+        // ToolProgress.finish for its job id.
+        ToolProgress.clearJob(job.id);
         notifier.execute(() -> fireCompletion(job));
         pruneFinished();
         notifier.execute(this::fireChange); // serialize change notifications off the worker/FX thread

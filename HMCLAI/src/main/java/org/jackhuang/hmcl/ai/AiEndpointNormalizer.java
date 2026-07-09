@@ -119,27 +119,55 @@ public final class AiEndpointNormalizer {
             host = host.substring(0, colonIdx);
         }
 
-        return "localhost".equalsIgnoreCase(host)
-                || host.startsWith("127.")
-                || host.startsWith("192.168.")
-                || host.startsWith("10.")
-                || host.startsWith("172.16.")
-                || host.startsWith("172.17.")
-                || host.startsWith("172.18.")
-                || host.startsWith("172.19.")
-                || host.startsWith("172.20.")
-                || host.startsWith("172.21.")
-                || host.startsWith("172.22.")
-                || host.startsWith("172.23.")
-                || host.startsWith("172.24.")
-                || host.startsWith("172.25.")
-                || host.startsWith("172.26.")
-                || host.startsWith("172.27.")
-                || host.startsWith("172.28.")
-                || host.startsWith("172.29.")
-                || host.startsWith("172.30.")
-                || host.startsWith("172.31.")
-                || host.equals("0.0.0.0")
-                || host.startsWith("[::1]");
+        if ("localhost".equalsIgnoreCase(host) || "0.0.0.0".equals(host)
+                || "[::1]".equals(host) || "::1".equals(host)) {
+            return true;
+        }
+
+        int[] octets = parseIPv4(host);
+        if (octets == null) {
+            return false; // not a bare IPv4 literal — never classify an arbitrary hostname as local
+        }
+        if (octets[0] == 127) return true; // 127.0.0.0/8
+        if (octets[0] == 10) return true; // 10.0.0.0/8
+        if (octets[0] == 192 && octets[1] == 168) return true; // 192.168.0.0/16
+        return octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31; // 172.16.0.0/12
+    }
+
+    /// Parses {@code host} as a strict dotted-quad IPv4 literal (exactly 4 numeric octets, each
+    /// 0-255, no extra characters). Deliberately NOT a string-prefix check: a public hostname that
+    /// merely BEGINS with digits resembling a private-range prefix (e.g. a "magic DNS" name like
+    /// `10.0.0.1.attacker.example` that really resolves to an attacker-chosen public IP) must never
+    /// be misclassified as local — that would silently downgrade the request to plaintext `http://`,
+    /// exposing the Bearer API key to network interception for what is actually a remote server.
+    @Nullable
+    private static int[] parseIPv4(String host) {
+        String[] parts = host.split("\\.", -1);
+        if (parts.length != 4) {
+            return null;
+        }
+        int[] octets = new int[4];
+        for (int i = 0; i < 4; i++) {
+            String part = parts[i];
+            if (part.isEmpty() || part.length() > 3) {
+                return null;
+            }
+            for (int j = 0; j < part.length(); j++) {
+                if (!Character.isDigit(part.charAt(j))) {
+                    return null;
+                }
+            }
+            int value;
+            try {
+                value = Integer.parseInt(part);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+            if (value < 0 || value > 255) {
+                return null;
+            }
+            octets[i] = value;
+        }
+        return octets;
     }
 }

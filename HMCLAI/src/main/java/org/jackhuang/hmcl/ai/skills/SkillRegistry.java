@@ -35,10 +35,33 @@ public final class SkillRegistry {
 
     public synchronized void refresh() {
         skills.clear();
-        if (skillsDir != null) {
-            SkillLoader.seedBuiltinSkills(skillsDir);
+        // Dedupe by name — two manifests declaring the same name (e.g. a user copies an existing
+        // skill folder to customize it and forgets to rename it) would otherwise both survive
+        // here, and SkillMatcher/SkillIndex/activeSkillBlock treat them as independent hits,
+        // injecting the same skill name's playbook body TWICE into one prompt. Keep the first one
+        // seen — built-ins first (loaded below), then disk-scanned ones, so a same-named user copy
+        // never shadows the real built-in.
+        Set<String> seenNames = new HashSet<>();
+        // Built-in skills: loaded straight from bundled classpath JSON, in memory — never written
+        // under skillsDir (see SkillLoader#loadBuiltinSkills's doc comment for why the old
+        // seedBuiltinSkills()-into-skillsDir step, and its hash-based hand-edit protection, are no
+        // longer part of this path).
+        for (SkillManifest m : SkillLoader.loadBuiltinSkills()) {
+            String key = m.getName() != null ? m.getName().toLowerCase(Locale.ROOT) : null;
+            if (key != null && !seenNames.add(key)) {
+                continue;
+            }
+            skills.add(m);
         }
-        skills.addAll(SkillLoader.scanDirectory(skillsDir));
+        if (skillsDir != null) {
+            for (SkillManifest m : SkillLoader.scanDirectory(skillsDir)) {
+                String key = m.getName() != null ? m.getName().toLowerCase(Locale.ROOT) : null;
+                if (key != null && !seenNames.add(key)) {
+                    continue;
+                }
+                skills.add(m);
+            }
+        }
         syncDisabledFromDisk();
     }
 
@@ -111,8 +134,17 @@ public final class SkillRegistry {
         }
     }
 
+    /// Static index injected into every system prompt: SCENARIO-level skills only (one directory
+    /// component under the skills dir). Operation-level skills (two components — the split-out
+    /// playbooks a scenario orchestrates via `requires:`) are deliberately excluded here: at the
+    /// ~90-skill scale, listing every one of them in a prompt block present on EVERY turn would
+    /// far outweigh the point of splitting scenarios apart in the first place. They're still fully
+    /// reachable — via a scenario's `requires:` expansion (see AiPromptBuilder#matchSkills) or a
+    /// direct `load_skill` call once the model knows the name from an active playbook.
     public String summarizeEnabled() {
-        List<SkillManifest> active = enabled();
+        List<SkillManifest> active = enabled().stream()
+                .filter(s -> SkillLoader.isScenarioLevel(skillsDir, s))
+                .toList();
         if (active.isEmpty()) return "(no enabled skills)";
         StringBuilder sb = new StringBuilder();
         for (SkillManifest s : active) {
@@ -120,9 +152,30 @@ public final class SkillRegistry {
             if (s.getDescription() != null) {
                 sb.append(": ").append(s.getDescription());
             }
-            if (s.getPath() != null) {
-                // Progressive disclosure: the agent reads the full SKILL.md on demand.
-                sb.append(" (read this file for full instructions: ").append(s.getPath()).append(")");
+            // Progressive disclosure: the agent calls load_skill(name) for the full playbook —
+            // NOT the generic read tool, so tool-call UI/trace shows a real skill invocation.
+            sb.append(" (call load_skill(name=\"").append(s.getName()).append("\") for the full playbook)");
+            sb.append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    /// On-demand full skill index for {@code load_skill}'s no-args discovery call — deliberately
+    /// separate from {@link #summarizeEnabled()}, which is injected into EVERY system prompt and is
+    /// scoped to scenario-level skills only for that reason (see its doc comment). This method is
+    /// only ever invoked in response to an explicit tool call, so listing every enabled skill of
+    /// BOTH levels here (currently ~30 total) is cheap and gives the model the one thing
+    /// {@code summarizeEnabled()} deliberately omits: operation-level skill names it hasn't already
+    /// learned via a `requires:` expansion or a BM25 match.
+    public String listAllForDiscovery() {
+        List<SkillManifest> active = enabled();
+        if (active.isEmpty()) return "(no enabled skills)";
+        StringBuilder sb = new StringBuilder();
+        for (SkillManifest s : active) {
+            String level = SkillLoader.isScenarioLevel(skillsDir, s) ? "scenario" : "operation";
+            sb.append("- ").append(s.getName()).append(" [").append(level).append(']');
+            if (s.getDescription() != null) {
+                sb.append(": ").append(s.getDescription());
             }
             sb.append('\n');
         }

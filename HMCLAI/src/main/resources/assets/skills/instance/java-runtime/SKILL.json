@@ -1,0 +1,22 @@
+{
+  "name": "java-runtime",
+  "description": "How to diagnose and fix a Java-version mismatch between what a Minecraft version needs and what's installed, including downloading the right runtime. Use when the user mentions Java/JDK/JRE problems or the game fails to start with a Java-version error (\"java不对\",\"java版本\",\"装java\",\"UnsupportedClassVersionError\").",
+  "version": "1.0",
+  "triggers": [
+    "java",
+    "jdk",
+    "jre",
+    "java版本",
+    "java不对",
+    "装java",
+    "下载java",
+    "换java",
+    "unsupportedclassversionerror",
+    "32位java",
+    "64位java"
+  ],
+  "requires": [
+    "config-hmcl"
+  ],
+  "body": "# Java runtime compatibility\n\n## Version table (memorise)\n- MC ≤1.16.x → Java 8 (some tolerate 11)\n- 1.17–1.17.1 → Java 16+\n- 1.18–1.20.4 → Java 17+\n- 1.20.5+ / 1.21+ → Java 21+\nForge on old versions is strict about Java 8; modern NeoForge follows the game's rule.\n\n## Diagnose\n1. `instance(action=list_java)` — discovered runtimes (version + path).\n2. `instance(action=details, instance)` — game version implies required Java from above.\n3. Wrong Java shows up as an immediate crash with `UnsupportedClassVersionError`.\n\n## Fix\n`instance(action=download_java, gameVersion or javaVersion)` — likely backgrounded; call\n`job(action=check, jobId)` before declaring done. HMCL auto-selects a suitable Java per\ninstance by default; only pin one manually when auto-selection picked wrong. There is no\n`instance` action for pinning — it's a raw JSON edit (`javaType`/`customJavaPath` fields in\n`game-settings.json` / `instance-game-settings.json`) via the `config-hmcl` skill.\n\n32-bit Java caps around 1.5 GB heap — if `instance(action=list_java)` shows only 32-bit, download 64-bit.\n\n## Don't\nDon't install Java via shell/winget — `instance(action=download_java)` keeps it managed by HMCL."
+}

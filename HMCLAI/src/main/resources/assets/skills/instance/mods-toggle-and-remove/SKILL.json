@@ -1,0 +1,20 @@
+{
+  "name": "mods-toggle-and-remove",
+  "description": "How to enable/disable, remove, or update an installed mod without hand-editing files — including isolating a crash-causing mod. Use when the user wants a mod toggled, deleted, or updated, or asks whether a specific mod is causing a crash (\"禁用模组\",\"删除模组\",\"更新模组\",\"是不是这个mod导致崩溃\").",
+  "version": "1.0",
+  "triggers": [
+    "禁用模组",
+    "启用模组",
+    "关闭模组",
+    "删除模组",
+    "卸载模组",
+    "更新模组",
+    "这个mod是不是有问题",
+    "toggle mod",
+    "disable mod",
+    "remove mod",
+    "update mod"
+  ],
+  "requires": [],
+  "body": "# Toggle, remove, and update mods\n\n`instance(action=mods_toggle, mod, enable, instance)` — enable/disable a mod file. Never\nhand-rename `.jar`/`.jar.disabled` yourself; this keeps HMCL's mod list in sync.\n\n`instance(action=mods_delete, mod, instance, DESTRUCTIVE)` — remove a mod (recycle-bins\nwhen possible). Refuses on 0-or-multi-match names — run `mods_list` first for an exact id.\n\n`instance(action=mods_check_updates, instance)` then `instance(action=mods_update, mod,\ninstance)` — update to the newest build instead of installing a duplicate copy\n(duplicate jars are a classic crash cause).\n\n## Crash isolation\n1. Spot the suspect mod in the crash log/stack trace.\n2. `instance(action=mods_toggle, mod, enable=false, instance)`, relaunch to confirm it stops.\n3. Tell the user; offer to leave disabled or `mods_delete` — don't decide for them.\n\n## Don't\n- Don't rename mod files by hand — go through `mods_toggle`.\n- Don't `mods_delete` an ambiguous name without checking `mods_list` first."
+}

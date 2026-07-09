@@ -1,0 +1,35 @@
+{
+  "name": "optimize-performance",
+  "description": "How to make Minecraft run smoother — raise FPS, cut lag/stutter, set memory and install performance mods. Use when the user complains about lag, low FPS, stutter, freezing, or \"卡\",\"掉帧\",\"优化\",\"提升性能\",\"太卡了\".",
+  "version": "1.1",
+  "triggers": [
+    "卡顿",
+    "掉帧",
+    "太卡",
+    "很卡",
+    "好卡",
+    "卡爆",
+    "优化",
+    "提升性能",
+    "性能",
+    "流畅",
+    "帧数",
+    "帧率",
+    "榨帧",
+    "拉满",
+    "极限设置",
+    "最高帧率",
+    "speedrun",
+    "fps",
+    "lag",
+    "stutter"
+  ],
+  "requires": [
+    "create-instance",
+    "set-memory",
+    "mods-install",
+    "game-options",
+    "launch-and-verify"
+  ],
+  "body": "# Optimize Minecraft performance\n\nGoal: measurably improve FPS / reduce stutter. Orchestrate the skills below; add only\nscenario-specific judgment calls here.\n\n## Flow\n1. `instance(action=details)` — check the loader. Sodium needs **Fabric** (or NeoForge w/\n   port); if vanilla/Forge-only, ask whether to run `create-instance` first.\n2. `set-memory` — modded default 4–6 GB, vanilla ~2 GB; never more than ~half the\n   machine's physical RAM.\n3. `mods-install` — Fabric perf stack, confirm MC-version compatibility: Sodium\n   (core FPS), Lithium (game-logic), FerriteCore (memory), EntityCulling (culling), Iris\n   only if shaders wanted.\n4. `game-options` — render distance 8–12, disable fancy graphics, VSync off if\n   input lag matters.\n5. `launch-and-verify` — ask if FPS improved; if not, check for a heavy mod (shaders,\n   Distant Horizons) to disable.\n\n## Don't\n- Sodium requires Fabric — don't install it on a non-Fabric instance.\n- Don't pair OptiFine with Fabric performance mods (incompatible)."
+}

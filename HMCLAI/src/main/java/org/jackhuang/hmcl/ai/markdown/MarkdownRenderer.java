@@ -75,26 +75,43 @@ public final class MarkdownRenderer {
                 + "</style></head><body>" + bodyHtml + "</body></html>";
     }
 
+    /// Matches a GFM table delimiter row (`|---|---|`, `|:--|:--|`, `|:-:|:-:|`, ...) regardless of
+    /// colon-alignment placement/spacing — a plain `.contains("|---")`/`.contains("| ---")` check
+    /// misses any column whose delimiter starts with a colon (left/center alignment), which is
+    /// common in real GFM tables.
+    private static final java.util.regex.Pattern TABLE_DELIMITER_ROW =
+            java.util.regex.Pattern.compile(
+                    "(?m)^[ \\t]*\\|?[ \\t]*:?-{1,}:?[ \\t]*(\\|[ \\t]*:?-{1,}:?[ \\t]*)+\\|?[ \\t]*$");
+
     /// Quick heuristic to determine whether text contains Markdown formatting
     /// that would benefit from HTML rendering. Returns {@code false} for plain
     /// prose so callers can fall back to a lightweight JavaFX Label.
     public static boolean containsMarkdownSyntax(String text) {
         if (text == null || text.isEmpty()) return false;
+        // Inline live job-progress badge marker (see MarkdownMessageView/JobProgressBadge in the
+        // HMCL module). Plain prose carrying only this marker and no other Markdown construct —
+        // e.g. "已安装 {{job_progress:1}}，还有什么别的要求吗？" — would otherwise be judged
+        // "not Markdown" and fall back to a bare Label, and the marker would render as inert
+        // literal text instead of a live badge. `{{job_progress:` is deliberately distinctive
+        // enough that a plain substring check can't collide with real prose/Markdown.
+        if (text.contains("{{job_progress:")) return true;
         // Code blocks or inline code
         if (text.contains("```") || text.contains("`")) return true;
-        // Headers
-        if (text.matches("(?s).*^#{1,6}\\s.*")) return true;
+        // Headers — (?m) so `^` matches the start of ANY line, not just the whole string; without
+        // it a heading/list/blockquote that follows any intro prose (the common LLM-output shape,
+        // e.g. "这是结果：\n- item1") was never detected.
+        if (text.matches("(?sm).*^#{1,6}\\s.*")) return true;
         // Tables
-        if (text.contains("|---") || text.contains("| ---")) return true;
+        if (TABLE_DELIMITER_ROW.matcher(text).find()) return true;
         // Bold / italic
         if (text.contains("**") || text.contains("__") || text.contains("*") || text.contains("_")) return true;
         // Lists
-        if (text.matches("(?s).*^[\\-*+]\\s.*")) return true;
-        if (text.matches("(?s).*^\\d+\\.\\s.*")) return true;
+        if (text.matches("(?sm).*^[\\-*+]\\s.*")) return true;
+        if (text.matches("(?sm).*^\\d+\\.\\s.*")) return true;
         // Links or images
         if (text.contains("](") || text.contains("![")) return true;
         // Blockquotes
-        if (text.matches("(?s).*^>\\s.*")) return true;
+        if (text.matches("(?sm).*^>\\s.*")) return true;
         return false;
     }
 }

@@ -20,7 +20,6 @@ package org.jackhuang.hmcl.ai;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -159,22 +158,37 @@ public final class AiModelDiscoveryService {
     ///
     /// @param responseBody the raw JSON response body
     /// @return the parsed model id list (empty on parse failure)
+    /// Upper bound on how many model ids a single response can contribute — a hostile or
+    /// MITM-tampered custom-endpoint response could otherwise return an enormous list, which the
+    /// sole caller (AISettingsPage's "load models" dialog) renders as one JavaFX row per entry on
+    /// the FX Application thread with no limit of its own.
+    private static final int MAX_MODELS = 1000;
+
     List<String> parseModelsResponse(String responseBody) {
         try {
             JsonObject root = GSON.fromJson(responseBody, JsonObject.class);
-            if (root == null || !root.has("data")) {
+            if (root == null || !root.has("data") || !root.get("data").isJsonArray()) {
                 return Collections.emptyList();
             }
             JsonArray data = root.getAsJsonArray("data");
-            List<String> models = new ArrayList<>(data.size());
-            for (int i = 0; i < data.size(); i++) {
+            int count = Math.min(data.size(), MAX_MODELS);
+            List<String> models = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                if (!data.get(i).isJsonObject()) {
+                    continue;
+                }
                 JsonObject entry = data.get(i).getAsJsonObject();
-                if (entry.has("id")) {
+                if (entry.has("id") && entry.get("id").isJsonPrimitive()) {
                     models.add(entry.get("id").getAsString());
                 }
             }
             return models;
-        } catch (JsonParseException | ClassCastException e) {
+        } catch (RuntimeException e) {
+            // Covers JsonParseException / ClassCastException (malformed JSON) as well as the
+            // IllegalStateException / UnsupportedOperationException Gson throws from
+            // getAsJsonArray()/getAsJsonObject()/getAsString() when a tampered or hostile response
+            // has an unexpected shape — any of those must fall back to the documented "empty list
+            // on parse failure" behavior instead of throwing out of this method.
             return Collections.emptyList();
         }
     }

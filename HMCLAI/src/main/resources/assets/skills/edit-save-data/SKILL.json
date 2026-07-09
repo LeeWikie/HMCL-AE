@@ -1,0 +1,25 @@
+{
+  "name": "edit-save-data",
+  "description": "Orchestrates safe world/player NBT edits (inventory, position, gamemode, moving player data, offline UUIDs) by routing to the edit-values and transfer-player-data skills. Use when the user wants to change save data (\"改存档\",\"背包\",\"传送\",\"坐标\",\"游戏模式\",\"玩家数据\").",
+  "version": "1.0",
+  "triggers": [
+    "改存档",
+    "背包",
+    "物品栏",
+    "传送",
+    "改坐标",
+    "游戏模式",
+    "改模式",
+    "玩家数据",
+    "转移背包",
+    "搬背包",
+    "nbt",
+    "离线uuid",
+    "改数据"
+  ],
+  "requires": [
+    "edit-values",
+    "transfer-player-data"
+  ],
+  "body": "# Edit save data (NBT) — carefully\n\nGoal: make precise, reversible edits to world/player NBT data. These are CATASTROPHIC-class\noperations: a bad write corrupts the world. The `nbt` tools enforce backups; you enforce precision.\n\n- Reading or setting a specific value (position, gamemode, or any other NBT path) — see\n  `edit-values` for the tool calls and rules.\n- Moving a player's inventory or full player data between players/worlds, including offline-UUID\n  handling — see `transfer-player-data`.\n\n## Don't\n- Don't touch a world the game currently has open. The tools detect the session lock and refuse —\n  don't fight that; ask the user to quit the world first."
+}

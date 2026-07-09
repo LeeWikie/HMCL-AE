@@ -38,6 +38,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 
 /// Factory for building {@link ChatAgent} instances and performing lightweight
 /// connection tests without engaging the full conversation pipeline.
@@ -122,22 +123,65 @@ public final class ChatAgentFactory {
 
     /// Same as above, plus a separate {@code criticalConfirmHandler} for the red second-tier
     /// confirmation of catastrophic operations (see {@link org.jackhuang.hmcl.ai.tools.CriticalOperations}).
+    /// Equivalent to passing {@code null} for both the per-tool permission store and the Plan Mode
+    /// supplier (see the full overload below).
     public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
                                    AiPromptBuilder promptBuilder,
                                    @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
                                    @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler) {
+        return build(settings, session, tools, promptBuilder, confirmHandler, criticalConfirmHandler, null, null);
+    }
+
+    /// Adds the per-tool/action/path override store (see
+    /// {@link org.jackhuang.hmcl.ai.tools.AiToolPermissionStore}, Part A) and a {@code planMode}
+    /// supplier so the per-call enforcement path ({@code LangChain4jToolAdapter.execute}) can BLOCK
+    /// writes while investigate-only Plan Mode is active (see {@code AiExecutionPolicy.check}).
+    /// {@code planMode} is re-queried on every tool call, not read once here — the caller (the chat
+    /// UI) can flip Plan Mode at any point during a long-lived agent's life. Equivalent to passing
+    /// {@code null} for the unattended-turn supplier (see the full overload below) — i.e. every turn
+    /// is treated as attended.
+    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
+                                   AiPromptBuilder promptBuilder,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.AiToolPermissionStore permissionStore,
+                                   @Nullable BooleanSupplier planMode) {
+        return build(settings, session, tools, promptBuilder, confirmHandler, criticalConfirmHandler,
+                permissionStore, planMode, null);
+    }
+
+    /// Full builder: adds an {@code unattended} supplier so the per-call enforcement path can
+    /// hard-BLOCK a dangerous/critical operation — instead of merely asking — while the current
+    /// turn may be running with nobody watching (e.g. a synthetic auto-continuation fired after a
+    /// background job finished). Re-queried on every tool call, same reasoning as {@code planMode}.
+    /// See {@code AiExecutionPolicy}'s class doc for why this cannot be relaxed by mode, by the
+    /// dangerous-confirmation toggle, or by a per-tool permission override.
+    public static ChatAgent build(AiSettings settings, AiSession session, ToolRegistry tools,
+                                   AiPromptBuilder promptBuilder,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler,
+                                   @Nullable org.jackhuang.hmcl.ai.tools.AiToolPermissionStore permissionStore,
+                                   @Nullable BooleanSupplier planMode,
+                                   @Nullable BooleanSupplier unattended) {
         LlmConfig config = buildConfig(settings);
+        // Thread the REAL dangerouslySkipPermissions flag straight into the policy's own bypass
+        // field (rather than relying on AiSettings#getApprovalModeEnum() to fake it via a more
+        // permissive mode, as before the SAFE/ASK/YOLO merge) — with a single Auto mode there is no
+        // "more permissive mode" left to fake it with, and AiExecutionPolicy.check() already treats
+        // this flag as the one true skip-everything escape hatch (see its own doc).
         org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
                         settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
-                        settings.isFileWriteConfirmEnabled());
-        AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler, session.getId());
+                        settings.isFileWriteConfirmEnabled(), settings.isDangerouslySkipPermissions());
+        AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler,
+                session.getId(), permissionStore, planMode, unattended);
         // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
         // truncation) to the LangChain4j adapter when that is the active backend.
         if (client instanceof org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter adapter) {
             adapter.setAgentLimits(settings.getMaxToolCycles(),
                     settings.getMaxContextMessages(), settings.getToolResultMaxChars(),
                     ChatAgent.resolveContextWindow(settings));
+            adapter.setModelName(config.getModel());
         }
         // NOTE: the context-window budget is applied at request-build time inside
         // ChatAgent.buildMessages — the session itself always keeps the FULL history
@@ -306,21 +350,25 @@ public final class ChatAgentFactory {
     ///               to disable tools
     /// @return an AiChatClient ready for use
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools) {
-        // Connection-test / non-interactive paths: no safety enforcement needed.
+        // Connection-test / non-interactive paths: no safety enforcement needed (there is no tool
+        // registry to even wire a tool adapter into, so the mode/flags here are otherwise inert).
         return resolveClient(config, tools, new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
-                org.jackhuang.hmcl.ai.AiApprovalMode.YOLO, false), null, null, null);
+                org.jackhuang.hmcl.ai.AiApprovalMode.AUTO, false), null, null, null, null, null, null);
     }
 
     private static AiChatClient resolveClient(LlmConfig config, @Nullable ToolRegistry tools,
                                               org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy,
                                               @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler confirmHandler,
                                               @Nullable org.jackhuang.hmcl.ai.tools.ToolConfirmHandler criticalConfirmHandler,
-                                              @Nullable String sessionId) {
+                                              @Nullable String sessionId,
+                                              @Nullable org.jackhuang.hmcl.ai.tools.AiToolPermissionStore permissionStore,
+                                              @Nullable BooleanSupplier planMode,
+                                              @Nullable BooleanSupplier unattended) {
         String provider = config.getProvider();
         AiProtocolFamily family = provider != null ? AiProtocolFamily.fromId(provider) : null;
 
         LangChain4jToolAdapter toolAdapter = tools != null
-                ? new LangChain4jToolAdapter(tools, policy, confirmHandler, criticalConfirmHandler)
+                ? new LangChain4jToolAdapter(tools, policy, confirmHandler, criticalConfirmHandler, permissionStore, planMode, unattended)
                 : null;
         if (toolAdapter != null) {
             toolAdapter.setSessionId(sessionId);

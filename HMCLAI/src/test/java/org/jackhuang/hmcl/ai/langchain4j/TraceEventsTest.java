@@ -71,15 +71,24 @@ public class TraceEventsTest {
 
     @Test
     public void toolCapturesCompleteResultAndTruncationFlag() {
-        JsonObject e = TraceEvents.tool(CTX, 2, "read", "{\"path\":\"log\"}",
+        JsonObject e = TraceEvents.tool(CTX, 2, 1, "call-abc", "read", "{\"path\":\"log\"}",
                 "the full untruncated 20000-char result...", true, true);
 
         assertEquals("tool", e.get("type").getAsString());
+        assertEquals(1, e.get("callIndex").getAsInt(), "callIndex lets a reader re-pair this event with its request slot");
+        assertEquals("call-abc", e.get("callId").getAsString());
         assertEquals("read", e.get("name").getAsString());
         assertEquals("{\"path\":\"log\"}", e.get("arguments").getAsString());
         assertTrue(e.get("result").getAsString().contains("full untruncated"));
         assertTrue(e.get("success").getAsBoolean());
         assertTrue(e.get("truncatedForModel").getAsBoolean(), "records that the model saw a truncated view");
+    }
+
+    @Test
+    public void toolOmitsCallIdWhenNull() {
+        JsonObject e = TraceEvents.tool(CTX, 2, 0, null, "read", null, "ok", true, false);
+        assertFalse(e.has("callId"), "callId is omitted (not written as JSON null) when the provider gave none");
+        assertEquals(0, e.get("callIndex").getAsInt());
     }
 
     @Test

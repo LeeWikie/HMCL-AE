@@ -65,6 +65,9 @@ dependencies {
     implementation(libs.commonmark.ext.gfm.strikethrough)
     implementation(libs.commonmark.ext.autolink)
     implementation("libs:JFoenix")
+    // JSON/code editor control (org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane), used by the
+    // MCP server config dialog (org.jackhuang.hmcl.ui.ai.AISettingsPage#editMcpServer).
+    implementation(libs.richtextfx)
     implementation(libs.jwebp)
     implementation(libs.fxsvgimage)
     implementation(libs.java.info)

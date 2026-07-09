@@ -50,8 +50,11 @@ import java.util.stream.Stream;
 /// - [`HMCLGameRepository#readModpackConfiguration(String)`] for modpack origin.
 ///
 /// Memory / JVM-args / Java-path are intentionally NOT reported here: HMCL stores
-/// them in the rewritten GameSettings system; use the `config-hmcl` skill to view
-/// or edit those.
+/// them in the rewritten GameSettings system. Memory and JVM/GC args have dedicated
+/// `instance` tool actions (`set_memory`, `set_jvm_args` — both also REPORT the current
+/// value when called without a new value) — use those, never a raw `config-hmcl`-skill
+/// file edit, for those two. Java path still has no dedicated action; use the
+/// `config-hmcl` skill to view or edit that one.
 ///
 /// Permission level: READ_ONLY. It never modifies any launcher state.
 @NotNullByDefault
@@ -68,7 +71,8 @@ public final class InstanceDetailsTool implements Tool {
                 + "(Forge/NeoForge/Fabric/Quilt/OptiFine/LiteLoader) and their versions, enabled/disabled mod counts, "
                 + "whether it originated from a modpack, and its run directory. "
                 + "Parameter: instance (optional; defaults to the currently selected instance). Read-only. "
-                + "For memory / JVM args / Java path use the config-hmcl skill instead.";
+                + "For memory / JVM args use instance(action=\"set_memory\"/\"set_jvm_args\") (also reports "
+                + "the current value); for Java path use the config-hmcl skill instead.";
     }
 
     @Override

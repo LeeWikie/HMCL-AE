@@ -17,6 +17,8 @@
  */
 package org.jackhuang.hmcl.ai.tools;
 
+import java.util.Map;
+
 /// Extension of {@link Tool} that provides permission, source, and
 /// structured-schema metadata for use by {@link ToolRegistry} and
 /// LangChain4j adapters.
@@ -30,6 +32,27 @@ public interface ToolSpec extends Tool {
     /// Returns the security permission level for this tool.
     default ToolPermission getPermission() {
         return ToolPermission.CONTROLLED_WRITE;
+    }
+
+    /// Action-aware permission: domain tools whose {@code action} parameter spans multiple
+    /// permission levels (e.g. a merged `instance` tool where `list` is read-only but `delete` is
+    /// dangerous) override this instead of — or in addition to — the no-arg {@link #getPermission()}.
+    /// The default just ignores {@code parameters} and defers to the no-arg overload, so every
+    /// existing single-permission tool needs no change.
+    default ToolPermission getPermission(Map<String, Object> parameters) {
+        return getPermission();
+    }
+
+    /// The tool's WORST-CASE (highest-risk) permission across every action it can resolve to via
+    /// {@link #getPermission(Map)} — used by the settings/catalog UI ({@code ToolRegistry#getPermission},
+    /// {@code AiToolCatalog}) to display a single risk level for a merged domain tool without
+    /// silently understating it. The default just defers to the no-arg {@link #getPermission()},
+    /// so a single-permission tool needs no change; a domain tool whose
+    /// {@link #getPermission(Map)} override spans multiple levels (e.g. `instance`: `list` is
+    /// READ_ONLY but `delete` is DANGEROUS_WRITE) should override this to return its actual
+    /// maximum instead of leaving the settings page to report the conservative no-arg default.
+    default ToolPermission getMaxPermission() {
+        return getPermission();
     }
 
     /// Returns the origin of this tool (local code, MCP, search, etc.).

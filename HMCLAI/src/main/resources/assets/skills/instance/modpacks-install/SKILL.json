@@ -1,0 +1,17 @@
+{
+  "name": "modpacks-install",
+  "description": "How to find and install a modpack as its own instance, and how to update one later — use when the user wants to install, play, or upgrade a modpack (\"整合包\",\"装整合\",\"modpack\",\"mrpack\").",
+  "version": "1.0",
+  "triggers": [
+    "整合包",
+    "装整合",
+    "玩整合",
+    "装包",
+    "modpack",
+    "mrpack",
+    "curseforge包",
+    "整合"
+  ],
+  "requires": [],
+  "body": "# 安装整合包\n\n1. `search(action=modpacks, query)` — 拿真实、当前的搜索结果，绝不凭记忆报整合包名字/版本。\n2. 有歧义就 `ask` 用户选具体哪个/哪个版本。\n3. `instance(action=modpacks_install, id)` — 会创建一个全新的**独立实例**，绝不把整合包\n   装进已有实例里合并。这通常是后台任务：先 `job(action=check)` 确认完成，再告诉用户装好了。\n4. 用户本地已下载的整合包 zip 路径同样可以作为来源直接安装。\n5. 装完后：`instance(action=details)` 核对加载器和游戏版本是否正确；包体较大的话\n   `instance(action=set_memory, maxMemoryMB=4096~6144以上)`，如果运行时上下文显示内存\n   紧张，要提前提醒用户硬件可能吃力。\n\n## 更新整合包\n整合包要整体换新版本，不能逐个手动升级包内的 mod（会破坏整合包内部的版本搭配）：\n把新版本装成一个全新实例，再把旧实例的存档/options.txt 等数据迁移过去；旧实例先留着，\n等新实例确认能正常运行后再交给用户决定是否删除。\n\n## 别做\n- 别把新整合包合并进已有实例。\n- 别用 instance(action=mods_update) 逐个升级整合包里的 mod。\n- 别不搜索就报整合包名称/版本号。"
+}

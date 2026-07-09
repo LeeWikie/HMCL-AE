@@ -93,7 +93,7 @@ public final class SetSkinTool implements ToolSpec {
                 + "Offline accounts support every source; the skin is applied at next launch via authlib-injector and is local-only "
                 + "(not your real Mojang skin). Online (Microsoft / authlib-injector) accounts support ONLY a local PNG upload — "
                 + "this changes the real account skin and needs network + valid credentials; capes and skin-station presets are not "
-                + "supported for online accounts. Use list_accounts to see account names and types.";
+                + "supported for online accounts. Use account(action=\"list\") to see account names and types.";
     }
 
     @Override
@@ -347,7 +347,8 @@ public final class SetSkinTool implements ToolSpec {
             try {
                 List<Account> accounts = new ArrayList<>(Accounts.getAccounts());
                 if (accounts.isEmpty()) {
-                    future.complete(new Object[]{null, "No accounts are logged in. Use add_offline_account or microsoft_login first."});
+                    future.complete(new Object[]{null, "No accounts are logged in. Use account(action=\"add_offline\") "
+                            + "or account(action=\"microsoft_login\") first."});
                     return;
                 }
                 Account target;
@@ -365,7 +366,7 @@ public final class SetSkinTool implements ToolSpec {
                     target = Accounts.getSelectedAccount();
                     if (target == null) {
                         future.complete(new Object[]{null, "No account is selected and no 'username' was given. "
-                                + "Use list_accounts to see names, or pass 'username'."});
+                                + "Use account(action=\"list\") to see names, or pass 'username'."});
                         return;
                     }
                 }

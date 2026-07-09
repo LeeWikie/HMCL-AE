@@ -1,0 +1,201 @@
+/*
+ * Hello Minecraft! Launcher - Agent Experience
+ * Copyright (C) 2026 huangyuhui <huanghongxun2008@126.com> and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package org.jackhuang.hmcl.ui.ai.tools;
+
+import org.jackhuang.hmcl.ai.tools.ToolPermission;
+import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.ai.tools.ToolSpec;
+import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jackhuang.hmcl.setting.Profile;
+import org.jackhuang.hmcl.setting.Profiles;
+import org.jetbrains.annotations.NotNullByDefault;
+
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.BooleanSupplier;
+
+/// A controlled-write tool that removes a single shader pack (a `.zip` archive or an unpacked
+/// folder) from an instance's `shaderpacks` directory.
+///
+/// Resolution mirrors {@link DeleteModTool}: the `shaderpacks` folder is located through
+/// HMCL's launcher APIs ([`Profiles#getSelectedProfile()`] /
+/// [`Profiles#getSelectedInstance()`] / [`HMCLGameRepository#getRunDirectory(String)`]),
+/// then every top-level entry recognised as an installed pack by {@link ListResourcePacksTool}
+/// (a folder, or a `.zip` file) is matched against the `shader` parameter by a case-insensitive
+/// substring. The tool refuses to act unless exactly one entry matches (zero or several is an
+/// error), so it can never delete the wrong shader pack by accident.
+///
+/// Deletion is recoverable when possible: the entry is routed to the OS recycle
+/// bin / trash via {@link FileTrash} when the user's "delete to recycle bin"
+/// preference (supplied to the constructor and read live on every call) is enabled
+/// and the platform supports it; otherwise it is permanently deleted.
+///
+/// Permission level: {@link ToolPermission#CONTROLLED_WRITE} at this leaf-tool level — exactly
+/// like {@link DeleteModTool}, the merged `instance` facade elevates the `shaders_delete`
+/// action to {@link ToolPermission#DANGEROUS_WRITE} in its own {@code getPermission(Map)}.
+@NotNullByDefault
+public final class DeleteShaderTool implements ToolSpec {
+
+    /// Whether to route the deletion to the OS recycle bin (recoverable) instead of
+    /// permanently deleting it; read live on each call.
+    private final BooleanSupplier toRecycleBin;
+
+    /// @param toRecycleBin whether to prefer the OS recycle bin (recoverable) over a
+    ///                     permanent delete; typically `aiSettings::isDeleteToRecycleBin`.
+    public DeleteShaderTool(BooleanSupplier toRecycleBin) {
+        this.toRecycleBin = toRecycleBin;
+    }
+
+    @Override
+    public String getName() {
+        return "delete_shader";
+    }
+
+    @Override
+    public ToolPermission getPermission() {
+        return ToolPermission.CONTROLLED_WRITE;
+    }
+
+    @Override
+    public boolean supportsStructuredSchema() {
+        return true;
+    }
+
+    @Override
+    public String getInputSchemaJson() {
+        return """
+               {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                   "shader": {"type": "string", "description": "The shader pack file/folder name, or a case-insensitive substring of it that matches exactly one entry in the shaderpacks folder (matches both '.zip' archives and unpacked folders)."},
+                   "instance": {"type": "string", "description": "Optional instance/version id; defaults to the currently selected instance."}
+                 },
+                 "required": ["shader"]
+               }
+               """;
+    }
+
+    @Override
+    public String getDescription() {
+        return "Removes a single shader pack (a '.zip' archive or an unpacked folder) from an instance's shaderpacks folder. "
+                + "Parameters: shader (required, the pack file/folder name or a case-insensitive substring that matches exactly one entry), "
+                + "instance (optional, the instance/version id; defaults to the currently selected instance). "
+                + "The entry is moved to the system recycle bin when possible (recoverable), otherwise permanently deleted. "
+                + "Fails if the substring matches zero or more than one entry, so it never deletes the wrong shader pack. "
+                + "Returns the removed entry name and whether it was recycled or permanently deleted.";
+    }
+
+    @Override
+    public ToolResult execute(Map<String, Object> parameters) {
+        Object shaderObj = parameters.get("shader");
+        if (shaderObj == null || shaderObj.toString().trim().isEmpty()) {
+            return ToolResult.failure("Missing required parameter 'shader' (the shader pack file/folder name or a substring of it).");
+        }
+        String shaderQuery = shaderObj.toString().trim();
+
+        Profile profile;
+        try {
+            profile = Profiles.getSelectedProfile();
+        } catch (Throwable e) {
+            return ToolResult.failure("No profile is currently selected: " + e.getMessage());
+        }
+        HMCLGameRepository repository = profile.getRepository();
+
+        if (!repository.isLoaded()) {
+            try {
+                repository.refreshVersions();
+            } catch (Throwable e) {
+                return ToolResult.failure("Failed to load installed instances: " + e.getMessage());
+            }
+        }
+
+        InstanceToolSupport.ResolvedInstance resolvedTarget =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (resolvedTarget.failure() != null) {
+            return resolvedTarget.failure();
+        }
+        String instanceId = resolvedTarget.name();
+
+        Path shadersDir;
+        try {
+            shadersDir = repository.getRunDirectory(instanceId).resolve("shaderpacks");
+        } catch (Throwable e) {
+            return ToolResult.failure("Failed to resolve shaderpacks directory: " + e.getMessage());
+        }
+        if (!Files.isDirectory(shadersDir)) {
+            return ToolResult.failure("Shaderpacks directory does not exist for instance '" + instanceId + "': " + shadersDir);
+        }
+
+        // Collect candidate entries — a folder (unpacked pack) or a '.zip' archive, exactly what
+        // ListResourcePacksTool reports as an installed pack — and match by case-insensitive
+        // substring, exactly like DeleteModTool.
+        List<Path> candidates = new ArrayList<>();
+        String queryLower = shaderQuery.toLowerCase(Locale.ROOT);
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(shadersDir)) {
+            for (Path entry : stream) {
+                String name = entry.getFileName().toString();
+                boolean isPackKind = Files.isDirectory(entry)
+                        || (Files.isRegularFile(entry) && name.toLowerCase(Locale.ROOT).endsWith(".zip"));
+                if (isPackKind && name.toLowerCase(Locale.ROOT).contains(queryLower)) {
+                    candidates.add(entry);
+                }
+            }
+        } catch (IOException e) {
+            return ToolResult.failure("Failed to list shaderpacks directory: " + e.getMessage());
+        }
+
+        if (candidates.isEmpty()) {
+            return ToolResult.failure("No shader pack matching '" + shaderQuery + "' was found in " + shadersDir
+                    + ". Use instance(action=\"packs_list_local\") to see the installed packs.");
+        }
+        if (candidates.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Ambiguous: '").append(shaderQuery).append("' matches ").append(candidates.size()).append(" entries:\n");
+            for (Path c : candidates) {
+                sb.append("  - ").append(c.getFileName()).append('\n');
+            }
+            sb.append("Please refine the 'shader' parameter to match exactly one entry.");
+            return ToolResult.failure(sb.toString().trim());
+        }
+
+        Path target = candidates.get(0);
+        String entryName = target.getFileName().toString();
+        boolean wasFolder = Files.isDirectory(target);
+
+        boolean recycled;
+        try {
+            recycled = FileTrash.delete(target, toRecycleBin.getAsBoolean());
+        } catch (Throwable e) {
+            return ToolResult.failure("Failed to delete shader pack '" + entryName + "': " + e.getMessage());
+        }
+
+        return ToolResult.success((recycled
+                ? "Moved shader pack '" + entryName + "' to the system recycle bin (recoverable).\n"
+                : "Permanently deleted shader pack '" + entryName + "' from disk.\n")
+                + "  instance: " + instanceId + "\n"
+                + "  kind    : " + (wasFolder ? "folder" : "zip archive") + "\n"
+                + "  path    : " + target);
+    }
+}

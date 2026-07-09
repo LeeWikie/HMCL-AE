@@ -1,0 +1,20 @@
+{
+  "name": "resourcepacks-and-shaders",
+  "description": "How to install resource packs and shaders correctly — pick packs matching the game version, ensure the shader loader (Iris/OptiFine) exists before installing a shader pack — use when the user mentions shaders, resource packs or textures (\"光影\",\"材质包\",\"资源包\").",
+  "version": "1.0",
+  "triggers": [
+    "光影",
+    "材质包",
+    "资源包",
+    "材质",
+    "画质包",
+    "皮肤包",
+    "shader",
+    "shaders",
+    "resource pack",
+    "texture pack",
+    "iris"
+  ],
+  "requires": [],
+  "body": "# 材质包与光影\n\n1. `search(action=resourcepacks|shaders, query)` 找包 -> `instance(action=resourcepacks_install\n   |shaders_install, id, instance)` 装到指定实例。\n2. 删除已安装的包：`instance(action=resourcepacks_delete, pack, instance, DESTRUCTIVE)` /\n   `instance(action=shaders_delete, shader, instance, DESTRUCTIVE)` —— 按文件名/文件夹名的\n   子串匹配（大小写不敏感），0 个或多个匹配都会拒绝执行，先 `packs_list_local` 确认唯一匹配\n   再删；删除时优先进回收站（取决于回收站设置）。\n\n## 光影的关键前提：加载器\n光影包本身什么都不做，必须先有光影加载器：\n1. `instance(action=details)` 查该实例的 mod 加载器。\n   - **Fabric/Quilt** → 需要 **Iris**（+ Sodium 搭配）：先 `instance(action=mods_list)`\n     看是否已装，缺了就 `instance(action=mods_install, id=iris/sodium)` 补上。\n   - **NeoForge/Forge** → 需要对应的 Iris 移植版（如 Oculus 系）：搜索时匹配加载器+\n     游戏版本，确实没有对应版本就如实告诉用户，别硬装。\n   - **OptiFine** 是另一条路线，但和 Sodium/Iris 冲突 —— 绝不在同一实例里同时装两套。\n2. 确认加载器齐了再 `instance(action=shaders_install, id, instance)`。\n3. 装完提醒用户去游戏内 视频设置 → 光影(Iris) / Shaders(OptiFine) 里启用。\n\n## 材质包相对简单，但要看版本\n材质包格式要大致匹配游戏版本；版本不符游戏里会显示不兼容(红色)，可能仍能用但要提前\n提醒用户。装完提示用户去 选项 → 资源包 里启用。\n\n## 性能提醒\n光影很吃性能。如果用户之前提过卡顿，或运行时上下文显示硬件较弱，主动提醒并建议轻量\n光影或不装，别在弱设备上默默装重光影。"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "worlds-backup",
+  "description": "How to snapshot a singleplayer world before risky changes and roll it back safely. Use when the user wants to back up or restore a save (\"备份存档\",\"回档\",\"恢复存档\",\"world backup\",\"restore world\").",
+  "version": "1.0",
+  "triggers": [
+    "存档",
+    "备份",
+    "备份存档",
+    "回档",
+    "恢复存档",
+    "存档快照",
+    "world backup",
+    "restore world",
+    "snapshot"
+  ],
+  "requires": [],
+  "body": "# Worlds backup & restore\n\nGoal: never let a risky world edit become permanent.\n\n## Calls\n- `instance(action=worlds_backup_create, instance, world)` — timestamped snapshot; auto-prunes\n  beyond retention. The ONLY backup mechanism now.\n- `instance(action=worlds_backup_list, instance, world)` — snapshots newest-first, with `backupId`.\n- `instance(action=worlds_backup_restore, instance, world, backupId)` — DESTRUCTIVE, red-confirm,\n  auto-backs-up current state first.\n\n## Rules\n- Before ANY restore, delete, or NBT edit on a world: `worlds_backup_create` first. Always.\n- NEVER restore while the game has that world open — ask the user to quit first.\n- Don't guess the backupId: `worlds_backup_list`, let the user pick via `ask`, then restore with\n  the chosen id.\n- No world named: `worlds_list` first to confirm which one, then back it up; report the retention\n  count."
+}

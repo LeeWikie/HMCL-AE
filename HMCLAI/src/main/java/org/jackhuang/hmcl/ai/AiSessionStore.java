@@ -125,6 +125,14 @@ public final class AiSessionStore {
 
         if (data.sessions != null) {
             for (AiSession session : data.sessions) {
+                // Skip a malformed entry (e.g. a literal JSON `null` in the "sessions" array)
+                // instead of letting session.getId() NPE — mirrors importFromJson()'s identical
+                // guard below. Without this, one bad entry aborted the whole loop, and the only
+                // caller that catches it (loadOrQuarantine()) reacts by moving the ENTIRE file
+                // aside as corrupt, taking every other perfectly valid session down with it.
+                if (session == null || session.getId() == null) {
+                    continue;
+                }
                 sessions.put(session.getId(), session);
             }
         }

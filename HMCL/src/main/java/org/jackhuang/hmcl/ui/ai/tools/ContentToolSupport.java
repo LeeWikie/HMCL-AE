@@ -358,27 +358,36 @@ final class ContentToolSupport {
     }
 
     /// Builds a [TaskListener] that bridges an HMCL task chain's live progress onto the
-    /// decoupled [ToolProgress] bus, so the chat UI can render a real-time progress card.
+    /// decoupled [ToolProgress] bus, so the chat UI can render a real-time progress card —
+    /// and, when this operation is running as a background job, so `check_job` can surface a
+    /// live percentage for that specific job.
     ///
     /// It tracks the currently *running* significant subtask and forwards that subtask's
     /// {@code progressProperty} (fraction; negative = indeterminate) together with a phase
     /// label (the subtask name when meaningful, otherwise the operation label). HMCL mutates
     /// the progress property on the JavaFX thread, so the property listener is added/removed
     /// on that same thread to avoid racing with JavaFX's (non-thread-safe) listener lists.
+    ///
+    /// The job id (if any) is read via {@code ToolProgress.currentJobId()} right here, on the
+    /// caller's own thread — which, for a backgrounded tool, is the {@code AiJobManager} worker
+    /// thread executing this job's work synchronously — and closed over for use inside the
+    /// {@code Platform.runLater} callbacks below, which by then run on the FX thread and so
+    /// could no longer see a thread-local set on the worker thread.
     static TaskListener progressListener(String operation) {
+        String jobId = ToolProgress.currentJobId();
         return new TaskListener() {
             /// The subtask we are currently mirroring (confined to the JavaFX thread).
             private Task<?> tracked;
             private final InvalidationListener onProgress = o -> {
                 Task<?> current = tracked;
                 if (current != null) {
-                    ToolProgress.publish(operation, current.progressProperty().get(), phaseOf(current, operation));
+                    ToolProgress.publish(jobId, operation, current.progressProperty().get(), phaseOf(current, operation));
                 }
             };
 
             @Override
             public void onStart() {
-                ToolProgress.begin(operation, operation + "…");
+                ToolProgress.begin(jobId, operation, operation + "…");
             }
 
             @Override
@@ -392,7 +401,7 @@ final class ContentToolSupport {
                     }
                     tracked = task;
                     task.progressProperty().addListener(onProgress);
-                    ToolProgress.publish(operation, task.progressProperty().get(), phaseOf(task, operation));
+                    ToolProgress.publish(jobId, operation, task.progressProperty().get(), phaseOf(task, operation));
                 });
             }
 
@@ -403,7 +412,7 @@ final class ContentToolSupport {
                         tracked.progressProperty().removeListener(onProgress);
                         tracked = null;
                     }
-                    ToolProgress.finish(operation, success, success ? operation + " 完成" : operation + " 失败");
+                    ToolProgress.finish(jobId, operation, success, success ? operation + " 完成" : operation + " 失败");
                 });
             }
         };
@@ -565,5 +574,11 @@ final class ContentToolSupport {
 
     static boolean isCurseForgeAvailable() {
         return CurseForgeRemoteAddonRepository.isAvailable();
+    }
+
+    /// The shared daemon worker pool, for callers (e.g. the `search` domain tool's dual-source
+    /// fan-out) that need to run more than one blocking network call concurrently themselves.
+    static ExecutorService worker() {
+        return WORKER;
     }
 }

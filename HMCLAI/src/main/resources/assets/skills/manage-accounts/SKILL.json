@@ -1,0 +1,26 @@
+{
+  "name": "manage-accounts",
+  "description": "How to log in, add, or switch Minecraft accounts (Microsoft / offline), and change account skins/capes. Use when the user wants to log in, sign in, add or change account, or change skin, \"登录\",\"账号\",\"换号\",\"微软登录\",\"离线账号\",\"正版登录\",\"皮肤\",\"披风\".",
+  "version": "1.1",
+  "triggers": [
+    "登录",
+    "登陆",
+    "账号",
+    "帐号",
+    "换号",
+    "微软",
+    "离线账号",
+    "正版",
+    "皮肤",
+    "披风",
+    "login",
+    "sign in",
+    "account",
+    "skin"
+  ],
+  "requires": [
+    "login-and-switch",
+    "set-skin"
+  ],
+  "body": "# Manage Minecraft accounts\n\nOrchestrates account login/switching and skin/cape customization. This file holds\nonly the scenario-level judgment call; see the required skills for exact tool calls.\n\n## Which account type to pick\n- **Microsoft (正版)**: required to play online-mode servers, Realms, and to use\n  the player's real skin/name. Pick this whenever the user has or wants a\n  Microsoft account.\n- **Offline (离线)**: no Microsoft account needed, just a chosen username.\n  CANNOT join online-mode servers or Realms, and cannot set a real skin online.\n  Only suggest offline if the user explicitly wants it or has no Microsoft account.\n\n## Routing\n- Log in, add an offline account, switch/list accounts -> login-and-switch.\n- Change skin, cape, or player model (换皮肤/披风/模型) -> set-skin. Keep\n  in mind: cape and skin presets are offline-account-only; a Microsoft/online\n  account only accepts a local PNG upload and never gets a cape through this tool.\n\n## Don't\n- Don't script a \"login\" via shell or edit account files — auth must go through\n  the account tool's own flow.\n- Don't create an offline account when the user asked for Microsoft/正版."
+}

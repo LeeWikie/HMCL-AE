@@ -112,6 +112,14 @@ public final class EditTool implements ToolSpec {
             if (!Files.isRegularFile(resolved)) {
                 return ToolResult.failure("File does not exist: " + resolved);
             }
+            // Real-path containment: the file must already exist (checked above), so it's safe to
+            // resolve symlinks here — a symlink planted under an allowed root but pointing OUTSIDE
+            // it would otherwise let an edit through the lexical/normalized containment check above
+            // and overwrite an arbitrary external file's content.
+            Path real = resolved.toRealPath();
+            if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
+                return ToolResult.failure("Path is outside the allowed roots: " + real);
+            }
             String content = Files.readString(resolved, StandardCharsets.UTF_8);
             int count = countOccurrences(content, oldString);
             if (count == 0) {
@@ -129,6 +137,17 @@ public final class EditTool implements ToolSpec {
             return ToolResult.failure("IO error: " + e.getMessage());
         } catch (RuntimeException e) {
             return ToolResult.failure("Edit failed: " + e.getMessage());
+        }
+    }
+
+    /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself when that
+    /// fails (e.g. {@code p} doesn't exist) — used only against already-normalized allowed roots,
+    /// so the fallback just means "root not present on disk", not a symlink-escape risk.
+    private static Path realOrSelf(Path p) {
+        try {
+            return p.toRealPath();
+        } catch (IOException e) {
+            return p;
         }
     }
 

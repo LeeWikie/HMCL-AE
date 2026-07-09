@@ -1,0 +1,21 @@
+{
+  "name": "set-memory",
+  "description": "How to set per-instance memory allocation with sane defaults by pack weight, and how to respond to an OutOfMemory crash without just cranking the number forever. Use when the user asks about memory/RAM allocation or reports an OutOfMemory crash (\"内存不足\",\"爆内存\",\"OutOfMemory\",\"分配内存\",\"改内存\").",
+  "version": "1.0",
+  "triggers": [
+    "内存",
+    "爆内存",
+    "内存溢出",
+    "内存不足",
+    "分配内存",
+    "改内存",
+    "oom",
+    "outofmemory",
+    "堆内存",
+    "ram",
+    "内存设置",
+    "内存大小"
+  ],
+  "requires": [],
+  "body": "# Set instance memory\n\nTool call: `instance(action=set_memory, instance, maxMemoryMB)`.\n\n## Sane defaults\n- Vanilla: 2–4 GB\n- Modded: 4–6 GB\n- Heavy packs: 6–8 GB\n\nMore is NOT better — an oversized heap causes GC stutter. Never allocate beyond ~70% of\nphysical RAM; check `system_info` (or the runtime context) for actual RAM before picking\na number.\n\n## OutOfMemory crash\nRaise memory ONE step (e.g. 4096 → 6144), not straight to the max, then verify. If it\nstill OOMs with plenty allocated, suspect a leaking mod, not insufficient memory — hand\noff to `diagnose-crash` instead of raising memory forever.\n\n## Don't\n- Don't edit JVM args by hand for memory — `set_memory` is the tool.\n- Don't allocate \"all the RAM just in case\" — explain the GC-stutter tradeoff briefly.\n- Don't keep raising memory past two failed attempts without checking for a mod leak."
+}

@@ -27,6 +27,43 @@ public class RedactorTest {
         assertEquals(path, Redactor.redact(path));
     }
 
+    /// Regression guard: a raw trace event containing a properly JSON-quoted secret field
+    /// (`{"password":"hunter2ABCDEF"}`, `{"accessToken":"…"}`) must be scrubbed too — not just the
+    /// unquoted `key: value` / `key=value` shape. Before this, the closing quote right after the
+    /// key broke SECRET_KEYVAL_PATTERN's match, so any JSON-shaped tool argument or API response
+    /// carrying a secret (a common shape, since TraceRecorder writes whole JSON lines) reached the
+    /// uploadable trace file completely unredacted.
+    @Test
+    public void scrubsJsonQuotedSecrets() {
+        String redacted = Redactor.redact("{\"password\":\"hunter2ABCDEF\"}");
+        assertFalse(redacted.contains("hunter2ABCDEF"), "quoted password value must be scrubbed");
+        assertTrue(redacted.contains("\"password\":\"[REDACTED]\""));
+
+        String tokenRedacted = Redactor.redact("{\"accessToken\":\"eyJhbGciOiJIUzI1NiJ9.abc123.def456\"}");
+        assertFalse(tokenRedacted.contains("eyJhbGciOiJIUzI1NiJ9"), "quoted JWT-shaped token must be scrubbed");
+        assertTrue(tokenRedacted.contains("[REDACTED]"));
+
+        // still parseable JSON after redaction, and non-secret fields survive untouched
+        JsonObject o = new JsonObject();
+        o.addProperty("client_secret", "s3cr3t-value-123");
+        o.addProperty("note", "just some prose");
+        JsonObject back = JsonParser.parseString(Redactor.redact(o.toString())).getAsJsonObject();
+        assertEquals("[REDACTED]", back.get("client_secret").getAsString());
+        assertEquals("just some prose", back.get("note").getAsString());
+    }
+
+    /// Regression guard: `\b` is a WORD boundary and `_` is a word character, so a bare `token`
+    /// alternative in the pattern never matched the "token" inside "refresh_token"/"client_token"
+    /// (no boundary between two word characters) — exactly the field names HMCL's own account
+    /// system uses for Microsoft/Yggdrasil OAuth credentials.
+    @Test
+    public void scrubsRefreshAndClientTokenKeys() {
+        assertTrue(Redactor.redact("refresh_token: abcdef123456xyz").contains("[REDACTED]"));
+        assertTrue(Redactor.redact("client_token=abcdef123456xyz").contains("[REDACTED]"));
+        String jsonRedacted = Redactor.redact("{\"refreshToken\":\"eyJhbGciOiJIUzI1NiJ9.abc123.def456\"}");
+        assertFalse(jsonRedacted.contains("eyJhbGciOiJIUzI1NiJ9"));
+    }
+
     @Test
     public void nullAndEmptyPassThrough() {
         assertNull(Redactor.redact(null));

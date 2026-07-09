@@ -1,0 +1,22 @@
+{
+  "name": "create-instance",
+  "description": "Create a new Minecraft instance with a mod loader via instance(action=create, gameVersion, loader, ...). Use when the user wants to install/set up a new version or modded instance (\"装个版本\",\"新建版本\",\"装Fabric\",\"Forge\",\"NeoForge\",\"Quilt\").",
+  "version": "1.0",
+  "triggers": [
+    "装个版本",
+    "安装版本",
+    "装版本",
+    "新建版本",
+    "新建实例",
+    "创建实例",
+    "fabric",
+    "forge",
+    "neoforge",
+    "quilt",
+    "install version",
+    "create instance",
+    "装个我的世界"
+  ],
+  "requires": [],
+  "body": "# Create an instance\n\n`instance(action=create, gameVersion, loader[, loaderVersion, name])`\n\n- Call `search(action=game_versions)` first for REAL, live MC versions — never guess a\n  version string from memory.\n- Pick loader by intent if unstated: Fabric for Sodium/performance and most mods,\n  Forge/NeoForge for big or pre-existing modpacks, Quilt only if asked.\n- Check `instance(action=list)` first so you don't create a duplicate.\n- `loaderVersion`/`name` are optional — omit for sensible defaults.\n- Downloads game + loader files, so it can be slow. Treat as a background job — poll\n  with `job(action=check)` instead of assuming it finished instantly.\n\nDon't: pick a loader mismatching what the user/modpack needs; invent a version instead\nof calling `search(action=game_versions)`."
+}

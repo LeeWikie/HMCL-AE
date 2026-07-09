@@ -128,4 +128,103 @@ public final class DangerousCommandsTest {
         String twice = b64Utf8(once);
         assertTrue(DangerousCommands.isDangerous("echo " + twice + " | base64 -d | base64 -d | sh"));
     }
+
+    /// A PowerShell backtick line-continuation makes the following newline part of the SAME
+    /// statement — the recursive-delete pattern's exclusion class previously excluded \r\n,
+    /// letting this evade detection even though it is the exact same command as
+    /// "Remove-Item -Recurse -Force <path>" on one line.
+    @Test
+    void backtickContinuedRemoveItemIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous("Remove-Item `\r\n  -Recurse -Force C:\\Users\\me\\world"));
+    }
+
+    /// Modern PowerShell Storage-module cmdlets that do the same thing as legacy format/diskpart.
+    @Test
+    void powershellStorageCmdletsAreFlagged() {
+        assertTrue(DangerousCommands.isDangerous("Format-Volume -DriveLetter D -FileSystem NTFS -Confirm:$false"));
+        assertTrue(DangerousCommands.isDangerous("Clear-Disk -Number 1 -RemoveData -Confirm:$false"));
+        assertTrue(DangerousCommands.isDangerous("Remove-Partition -DiskNumber 1 -PartitionNumber 2"));
+        assertTrue(DangerousCommands.isDangerous("Initialize-Disk -Number 1"));
+    }
+
+    /// PowerShell's own power-control cmdlets, the native equivalents of shutdown/reboot.
+    @Test
+    void powershellPowerControlCmdletsAreFlagged() {
+        assertTrue(DangerousCommands.isDangerous("Stop-Computer -Force"));
+        assertTrue(DangerousCommands.isDangerous("Restart-Computer -Force"));
+    }
+
+    /// Windows-specific catastrophic ops with no bash counterpart: shadow-copy wipe (the standard
+    /// first step ransomware takes to block System Restore/File History recovery) and disabling
+    /// the Windows Recovery Environment.
+    @Test
+    void windowsBackupAndRecoveryDestructionIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous("vssadmin delete shadows /all /quiet"));
+        assertTrue(DangerousCommands.isDangerous("bcdedit /set {default} recoveryenabled no"));
+        assertTrue(DangerousCommands.isDangerous("wbadmin delete backup -keepVersions:0"));
+    }
+
+    /// Bypass #1: PowerShell indirect invocation — the verb is assembled via a variable, string
+    /// concatenation, or the `-f` format operator and invoked through `&`/`iex`, so no dangerous verb
+    /// ever appears contiguously in the text. Fail-closed: any such construct is dangerous outright.
+    @Test
+    void powershellIndirectInvocationIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous(
+                "$v='Remo'+'ve-Item'; & $v -Recurse -Force C:\\Users\\me\\world"));
+        assertTrue(DangerousCommands.isDangerous(
+                "& ('{0}{1}' -f 'Remove','-Item') -Recurse -Force C:\\Users\\me\\world"));
+        assertTrue(DangerousCommands.isDangerous(
+                "$op='ri'; & $op -Recurse -Force C:\\Users\\me\\world"));
+        assertTrue(DangerousCommands.isDangerous(
+                "iex ('Remo'+'ve-Item C:\\Users\\me\\world -Recurse -Force')"));
+    }
+
+    /// Bypass #2: mid-word verb splitting — a shell no-op (bash backslash-escape, empty ''/"" quote
+    /// run, cmd.exe `^` escape) spliced into the middle of a verb defeats a literal-verb regex.
+    @Test
+    void midWordVerbSplittingIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous("r\\m -rf /path"));
+        assertTrue(DangerousCommands.isDangerous("r\"\"m -rf /path"));
+        assertTrue(DangerousCommands.isDangerous("r''m -rf /path"));
+        assertTrue(DangerousCommands.isDangerous("r^d /s /q C:\\Users\\me\\.minecraft\\saves"));
+        assertTrue(DangerousCommands.isDangerous("d^el /s /q C:\\Users\\me\\.minecraft\\saves"));
+    }
+
+    /// Bypass #3: PowerShell enumerate-then-pipe-delete — Get-ChildItem gathers a recursive file
+    /// list and pipes it into Remove-Item; the recurse flag and the delete verb are on opposite
+    /// sides of `|`, evading both the plain verb check and the recursive Remove-Item pattern (which
+    /// excludes `|` between the verb and its flag). Dangerous against ANY directory.
+    @Test
+    void enumerateThenPipeDeleteIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous(
+                "Get-ChildItem C:\\Users\\me\\.minecraft\\saves -Recurse -File | Remove-Item -Force"));
+        assertTrue(DangerousCommands.isDangerous(
+                "gci D:\\projects -Recurse | rm"));
+    }
+
+    /// Bypass #4: bash variable indirection of the command word — the verb is assigned to a
+    /// variable and invoked through `$name` later in the line, so no `rm ` (verb + whitespace)
+    /// ever appears contiguously.
+    @Test
+    void bashVariableIndirectionOfVerbIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous("x=rm; $x -rf /home/user/data"));
+        assertTrue(DangerousCommands.isDangerous("a=rm; b=-rf; $a $b /home/user/data"));
+    }
+
+    /// Bypass #5: wildcard delete with `-Force` but no explicit recurse flag — deletes every file in
+    /// the directory just as surely as `-Recurse`, but the recursive Remove-Item pattern requires an
+    /// explicit `-r...` flag and misses it.
+    @Test
+    void wildcardForceDeleteWithNoRecurseFlagIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous(
+                "Remove-Item C:\\Users\\me\\.minecraft\\saves\\* -Force"));
+    }
+
+    /// Bypass #6: bash `${IFS}` (and the further-obfuscated `$IFS$9`) used as a whitespace
+    /// substitute defeats the `\s+` requirement in the GNU `rm` pattern.
+    @Test
+    void ifsWhitespaceSubstitutionIsFlagged() {
+        assertTrue(DangerousCommands.isDangerous("rm${IFS}-rf${IFS}/home/user/data"));
+        assertTrue(DangerousCommands.isDangerous("rm$IFS$9-rf$IFS$9/home/user/data"));
+    }
 }

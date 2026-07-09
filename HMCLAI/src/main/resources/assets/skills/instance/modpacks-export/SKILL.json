@@ -1,0 +1,16 @@
+{
+  "name": "modpacks-export",
+  "description": "How to export a local instance as a shareable .mrpack modpack file — use when the user wants to share, back up, or package their instance/mod setup (\"导出整合包\",\"分享我的整合包\",\"打包成mrpack\").",
+  "version": "1.0",
+  "triggers": [
+    "导出整合包",
+    "打包整合包",
+    "导出实例",
+    "分享整合包",
+    "打包mrpack",
+    "export modpack",
+    "mrpack导出"
+  ],
+  "requires": [],
+  "body": "# 导出整合包\n\n`instance(action=modpacks_export, instance)` — 把指定实例打包成 Modrinth 格式的 `.mrpack`\n文件。这是后台任务：先 `job(action=check)` 确认完成，再回复用户。\n\n完成后：\n- 告诉用户文件生成的具体位置。\n- 说明这个 `.mrpack` 是通用格式，任何兼容 Modrinth 的启动器都能导入，也包括直接拖回\n  HMCL-AE：对着这个文件用 `instance(action=modpacks_install, id=<文件路径>)` 就能重新\n  装成一个实例。\n\n## 别做\n- 别手动用 shell 打包/压缩实例目录 —— 导出工具会正确处理 mod 依赖清单和覆盖文件结构，\n  手动压缩产物很可能不是合法的 mrpack。\n- 别在任务还没跑完时就宣称导出成功，先 `job(action=check)`。"
+}

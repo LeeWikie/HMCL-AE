@@ -71,7 +71,7 @@ public final class DeleteWorldTool implements Tool {
                 + "If confirm is not exactly true, NOTHING is deleted and the tool reports the path, file count and "
                 + "total size that WOULD be removed; you must then re-invoke with confirm=true to actually delete. "
                 + "Only use this when the user has clearly asked to delete that specific world. "
-                + "Consider backup_world first.";
+                + "Consider instance(action=\"worlds_backup_create\") first.";
     }
 
     @Override
@@ -117,6 +117,23 @@ public final class DeleteWorldTool implements Tool {
             return ToolResult.failure("World '" + world + "' was not found at: " + worldDir);
         }
 
+        // Best-effort lock check, mirroring World#delete()'s own guard (World.java) — a running
+        // game instance holds the world's session.lock, and deleting/trashing it out from under a
+        // live session should be refused just like the sibling World.delete() already refuses via
+        // WorldLockedException. A directory that isn't a well-formed World (e.g. legacy/corrupt,
+        // missing level.dat) skips this check rather than blocking a deletion the user explicitly
+        // asked for.
+        try {
+            org.jackhuang.hmcl.game.World w = new org.jackhuang.hmcl.game.World(worldDir);
+            if (w.isLocked()) {
+                return ToolResult.failure("World '" + world + "' of instance '" + instance
+                        + "' is currently open in a running game instance (its session.lock is held) — "
+                        + "close the world/game first, then retry.");
+            }
+        } catch (IOException ignored) {
+            // Not a well-formed World — proceed; there is nothing lock-related to protect.
+        }
+
         // Tally what would be / is being deleted, so the report is concrete.
         long[] stats = new long[2]; // [0] = file count, [1] = total bytes
         try (Stream<Path> walk = Files.walk(worldDir)) {
@@ -143,7 +160,8 @@ public final class DeleteWorldTool implements Tool {
                     + "' of instance '" + instance + "' and all of its files. This action is IRREVERSIBLE.\n"
                     + "Path: " + worldDir + "\n"
                     + "Files: " + stats[0] + " (total " + stats[1] + " bytes)\n"
-                    + "Re-invoke delete_world with confirm=true to proceed (consider backup_world first).");
+                    + "Re-invoke instance(action=\"worlds_delete\", world=\"" + world + "\", confirm=true) to proceed "
+                    + "(consider instance(action=\"worlds_backup_create\", world=\"" + world + "\") first).");
         }
 
         boolean trashed;

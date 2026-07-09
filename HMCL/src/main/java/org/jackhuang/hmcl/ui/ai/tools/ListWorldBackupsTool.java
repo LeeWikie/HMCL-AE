@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 /// Read-only: lists all versioned snapshots of a world created by
-/// {@code create_world_backup}, newest first, with timestamp id, file count and
+/// {@code instance(action="worlds_backup_create")}, newest first, with timestamp id, file count and
 /// size. Backed by {@link WorldBackupManager}.
 @NotNullByDefault
 public final class ListWorldBackupsTool implements Tool {
@@ -40,11 +40,13 @@ public final class ListWorldBackupsTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Lists the versioned backups (snapshots) of a single world created by create_world_backup, newest "
+        return "Lists the versioned backups (snapshots) of a single world created by "
+                + "instance(action=\"worlds_backup_create\"), newest "
                 + "first: each snapshot's id (a yyyyMMdd-HHmmss timestamp), file count and total size. "
                 + "Parameters: world (required, the save folder name under 'saves/'), "
                 + "instance (optional, defaults to the currently selected instance). Read-only. "
-                + "Use a snapshot id with restore_world_backup to roll the world back to that point.";
+                + "Use a snapshot id with instance(action=\"worlds_backup_restore\") to roll the world back to "
+                + "that point.";
     }
 
     @Override
@@ -73,7 +75,7 @@ public final class ListWorldBackupsTool implements Tool {
                     WorldBackupManager.listBackups(instance, world);
             if (backups.isEmpty()) {
                 return ToolResult.success("World '" + world + "' has no AI backups yet "
-                        + "(use create_world_backup to make one).");
+                        + "(use instance(action=\"worlds_backup_create\") to make one).");
             }
             StringBuilder sb = new StringBuilder();
             sb.append("Backups of world '").append(world).append("' (").append(backups.size()).append("), newest first:\n");
@@ -83,7 +85,7 @@ public final class ListWorldBackupsTool implements Tool {
                         .append("  —  ").append(info.fileCount()).append(" files, ")
                         .append(WorldBackupManager.humanBytes(info.sizeBytes())).append('\n');
             }
-            sb.append("Restore with restore_world_backup(world, backupId=<id>).");
+            sb.append("Restore with instance(action=\"worlds_backup_restore\", world=..., backupId=<id>).");
             return ToolResult.success(sb.toString());
         } catch (Throwable e) {
             return ToolResult.failure("Failed to list backups of world '" + world + "': " + e.getMessage());

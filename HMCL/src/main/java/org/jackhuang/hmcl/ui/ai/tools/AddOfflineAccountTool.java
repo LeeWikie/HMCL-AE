@@ -19,6 +19,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import javafx.application.Platform;
 import org.jackhuang.hmcl.auth.offline.OfflineAccount;
+import org.jackhuang.hmcl.auth.offline.OfflineAccountFactory;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -72,7 +73,13 @@ public final class AddOfflineAccountTool implements Tool {
                         future.complete("An offline account named '" + username + "' already exists.");
                         return;
                     }
-                    OfflineAccount account = Accounts.FACTORY_OFFLINE.create(username, null);
+                    // Must NOT pass a null uuid: OfflineAccountFactory#create(String, UUID) forwards
+                    // it straight into `new OfflineAccount(...)`, which does `requireNonNull(profileID)`
+                    // — every brand-new username would throw NPE unconditionally. Derive the same
+                    // deterministic UUID the null-aware 5-arg overload (used by the real "Add offline
+                    // account" UI) falls back to when no uuid is explicitly supplied.
+                    OfflineAccount account = Accounts.FACTORY_OFFLINE.create(
+                            username, OfflineAccountFactory.getUUIDFromUserName(username));
                     Accounts.getAccounts().add(account);
                     if (select) {
                         Accounts.setSelectedAccount(account);

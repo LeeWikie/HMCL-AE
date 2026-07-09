@@ -1,0 +1,24 @@
+{
+  "name": "java-and-memory",
+  "description": "How to fix Java-version and memory problems — wrong Java for the Minecraft version, downloading the right runtime, setting instance memory, OutOfMemory crashes. Use when the user mentions Java or memory (\"java不对\",\"内存\",\"爆内存\",\"OutOfMemory\").",
+  "version": "1.0",
+  "triggers": [
+    "java",
+    "jdk",
+    "jre",
+    "内存",
+    "爆内存",
+    "内存溢出",
+    "内存不足",
+    "堆内存",
+    "outofmemory",
+    "oom",
+    "分配内存",
+    "改内存"
+  ],
+  "requires": [
+    "set-memory",
+    "java-runtime"
+  ],
+  "body": "# Java & memory\n\nGoal: the right Java for the game version, and a sane memory setting — together these are the\n#1 \"game won't even start\" cause after mods.\n\n## Route\n- Wrong/missing Java runtime, picking or downloading a version → `java-runtime`.\n- Memory allocation, OutOfMemory crashes → `set-memory`.\n\n## Diagnose first\nA wrong-Java failure shows up as an immediate crash with `UnsupportedClassVersionError` or a\nlauncher warning. An OOM crash shows `OutOfMemoryError` in the log. If it's not obvious which\none you're looking at, `diagnose-crash` handles reading the log — this skill only fixes the\ncause once it's identified, it doesn't read logs itself.\n\n## Don't\n- Don't guess between Java-version and memory as the cause — check the log via `diagnose-crash`\n  when unsure.\n- Don't keep raising memory as a blanket fix — repeated OOM despite generous memory means a mod\n  is leaking, not that more RAM is needed."
+}

@@ -76,7 +76,8 @@ public final class InstallModTool implements Tool {
     @Override
     public String getDescription() {
         return "Downloads a mod into the selected instance's mods folder. "
-                + "Parameters: id (string, required: the Modrinth/CurseForge project id or slug from search_mods), "
+                + "Parameters: id (string, required: the Modrinth/CurseForge project id or slug from "
+                + "search(action=\"mods\")), "
                 + "source (string, optional: \"modrinth\" (default) or \"curseforge\"), "
                 + "loader (string, optional: fabric/forge/neoforge/quilt - filters to a matching version), "
                 + "gameVersion (string, optional Minecraft version like \"1.20.1\" - filters to a matching version), "
@@ -90,7 +91,8 @@ public final class InstallModTool implements Tool {
         // Fall back to "query" since the tool schema currently advertises a single param.
         String id = extractString(parameters, "id", extractString(parameters, "query", null));
         if (id == null || id.isBlank()) {
-            return ToolResult.failure("Missing required parameter: id (the mod slug/project id from search_mods)");
+            return ToolResult.failure("Missing required parameter: id (the mod slug/project id from "
+                    + "search(action=\"mods\"))");
         }
 
         String source = extractString(parameters, "source", "modrinth");

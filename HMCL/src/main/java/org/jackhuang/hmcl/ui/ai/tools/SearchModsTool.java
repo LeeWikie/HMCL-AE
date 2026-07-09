@@ -60,7 +60,7 @@ public final class SearchModsTool implements Tool {
                 + "loader (string, optional: fabric/forge/neoforge/quilt - used to hint the user, not a hard filter), "
                 + "source (string, optional: \"modrinth\" (default) or \"curseforge\"). "
                 + "Returns up to " + MAX_RESULTS + " results with slug, title, author and short description. "
-                + "Use the returned slug with install_mod to install. Read-only.";
+                + "Use the returned slug with instance(action=\"mods_install\") to install. Read-only.";
     }
 
     @Override
@@ -140,8 +140,8 @@ public final class SearchModsTool implements Tool {
             }
         }
 
-        sb.append("\nTo install one, call install_mod with id=<slug> and source=")
-                .append("curseforge".equalsIgnoreCase(source) ? "\"curseforge\"" : "\"modrinth\"").append('.');
+        sb.append("\nTo install one, call instance(action=\"mods_install\", id=<slug>, source=")
+                .append("curseforge".equalsIgnoreCase(source) ? "\"curseforge\"" : "\"modrinth\"").append(").");
 
         return ToolResult.success(sb.toString());
     }

@@ -65,11 +65,15 @@ public final class ToolRegistry {
         return tools.get(name);
     }
 
-    /// Returns the tool's permission. Tools implementing {@link ToolSpec}
-    /// declare their own; others default to {@link ToolPermission#CONTROLLED_WRITE}.
+    /// Returns the tool's WORST-CASE permission (see {@link ToolSpec#getMaxPermission()}) for
+    /// display purposes (e.g. the settings page's per-tool permission row). Tools implementing
+    /// {@link ToolSpec} declare their own; others default to {@link ToolPermission#CONTROLLED_WRITE}.
+    /// Deliberately NOT the same as what a specific call resolves to at runtime — see
+    /// {@code LangChain4jToolAdapter#resolvePermission} for the action-aware resolution actually
+    /// enforced during execution.
     public ToolPermission getPermission(String name) {
         Tool t = tools.get(name);
-        if (t instanceof ToolSpec spec) return spec.getPermission();
+        if (t instanceof ToolSpec spec) return spec.getMaxPermission();
         return ToolPermission.CONTROLLED_WRITE;
     }
 

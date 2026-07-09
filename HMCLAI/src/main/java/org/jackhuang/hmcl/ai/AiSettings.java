@@ -128,13 +128,6 @@ public final class AiSettings {
         @Nullable
         private String selectedProfileId = null;
 
-        @SerializedName("titleNamingEnabled")
-        private boolean titleNamingEnabled = DEFAULT_TITLE_NAMING_ENABLED;
-
-        @SerializedName("titleNamingModelId")
-        @Nullable
-        private String titleNamingModelId = null;
-
         @SerializedName("autoLogAnalysisEnabled")
         private boolean autoLogAnalysisEnabled = DEFAULT_AUTO_LOG_ANALYSIS_ENABLED;
 
@@ -253,8 +246,6 @@ public final class AiSettings {
     private final ObjectProperty<@Nullable Long> seed;
     private final StringProperty reasoningEffort;
     private final BooleanProperty stream;
-    private final BooleanProperty titleNamingEnabled;
-    private final StringProperty titleNamingModelId;
     private final BooleanProperty autoLogAnalysisEnabled;
     private final BooleanProperty autoCrashAnalysisEnabled;
     private final BooleanProperty toolCallDisplayEnabled;
@@ -300,9 +291,6 @@ public final class AiSettings {
     @Nullable
     private String selectedProfileId = null;
 
-    /// Default value for the title-naming enabled flag.
-    static final boolean DEFAULT_TITLE_NAMING_ENABLED = true;
-
     /// Default value for the auto log-analysis enabled flag.
     static final boolean DEFAULT_AUTO_LOG_ANALYSIS_ENABLED = true;
 
@@ -312,8 +300,10 @@ public final class AiSettings {
     /// Default value for the tool-call display enabled flag.
     static final boolean DEFAULT_TOOL_CALL_DISPLAY_ENABLED = true;
 
-    /// Default approval mode id (`"safe"`).
-    static final String DEFAULT_APPROVAL_MODE = "safe";
+    /// Default approval mode id (`"auto"` — see {@link AiApprovalMode}'s doc for the SAFE/ASK/YOLO
+    /// merge this replaced; old persisted values of `"safe"`/`"ask"`/`"yolo"` still load fine via
+    /// {@link AiApprovalMode#fromId(String)}).
+    static final String DEFAULT_APPROVAL_MODE = "auto";
 
     /// Default value for the dangerous-action confirmation enabled flag.
     static final boolean DEFAULT_DANGEROUS_ACTION_CONFIRMATION_ENABLED = true;
@@ -336,8 +326,11 @@ public final class AiSettings {
     /// Default value for the tool-call logging flag.
     public static final boolean DEFAULT_TOOL_CALL_LOGGING_ENABLED = true;
 
-    /// Default value for the shell-tool enabled flag.
-    public static final boolean DEFAULT_SHELL_TOOL_ENABLED = true;
+    /// Default value for the shell-tool enabled flag. Off by default: every routine operation
+    /// (mod toggle, memory/Java, world backups, accounts, …) now has a dedicated tool that's
+    /// safer and more reliable than a hand-rolled shell command — shell is left for genuine edge
+    /// cases the user can opt into.
+    public static final boolean DEFAULT_SHELL_TOOL_ENABLED = false;
 
     /// Default value for the web-access (search/fetch) tools enabled flag.
     public static final boolean DEFAULT_WEB_ACCESS_ENABLED = true;
@@ -362,7 +355,10 @@ public final class AiSettings {
     public static final boolean DEFAULT_DANGEROUSLY_SKIP_PERMISSIONS = false;
 
     /// Default for the (high-risk) save-NBT editing tool suite being enabled.
-    public static final boolean DEFAULT_NBT_TOOLS_ENABLED = true;
+    /// Default OFF, like global memory — NBT editing is high-risk (direct save/player-data
+    /// writes) and niche enough that it should be an opt-in the user consciously reaches for
+    /// in AI 设置, not something on by default.
+    public static final boolean DEFAULT_NBT_TOOLS_ENABLED = false;
 
     /// Default for auto-generating a short conversation title from the opening exchange.
     public static final boolean DEFAULT_AUTO_TITLE_ENABLED = true;
@@ -425,8 +421,6 @@ public final class AiSettings {
         this.seed = new SimpleObjectProperty<>(this, "seed", null);
         this.reasoningEffort = new SimpleStringProperty(this, "reasoningEffort", "");
         this.stream = new SimpleBooleanProperty(this, "stream", LlmConfig.DEFAULT_STREAM);
-        this.titleNamingEnabled = new SimpleBooleanProperty(this, "titleNamingEnabled", DEFAULT_TITLE_NAMING_ENABLED);
-        this.titleNamingModelId = new SimpleStringProperty(this, "titleNamingModelId", "");
         this.autoLogAnalysisEnabled = new SimpleBooleanProperty(this, "autoLogAnalysisEnabled", DEFAULT_AUTO_LOG_ANALYSIS_ENABLED);
         this.autoCrashAnalysisEnabled = new SimpleBooleanProperty(this, "autoCrashAnalysisEnabled", DEFAULT_AUTO_CRASH_ANALYSIS_ENABLED);
         this.toolCallDisplayEnabled = new SimpleBooleanProperty(this, "toolCallDisplayEnabled", DEFAULT_TOOL_CALL_DISPLAY_ENABLED);
@@ -529,16 +523,6 @@ public final class AiSettings {
     /// Returns the stream flag property.
     public BooleanProperty streamProperty() {
         return stream;
-    }
-
-    /// Returns the title-naming enabled flag property.
-    public BooleanProperty titleNamingEnabledProperty() {
-        return titleNamingEnabled;
-    }
-
-    /// Returns the title-naming model id property (nullable string).
-    public StringProperty titleNamingModelIdProperty() {
-        return titleNamingModelId;
     }
 
     /// Returns the auto log-analysis enabled flag property.
@@ -753,16 +737,6 @@ public final class AiSettings {
         return stream.get();
     }
 
-    /// Returns whether AI-powered title naming is enabled.
-    public boolean isTitleNamingEnabled() {
-        return titleNamingEnabled.get();
-    }
-
-    /// Returns the optional title-naming model id, or empty string if not set.
-    public String getTitleNamingModelId() {
-        return titleNamingModelId.get();
-    }
-
     /// Returns whether automatic log analysis is enabled.
     public boolean isAutoLogAnalysisEnabled() {
         return autoLogAnalysisEnabled.get();
@@ -783,16 +757,17 @@ public final class AiSettings {
         return approvalMode.get();
     }
 
-    /// Returns the *effective* approval mode as an {@link AiApprovalMode} enum value.
+    /// Returns the approval mode as an {@link AiApprovalMode} enum value (currently always
+    /// {@link AiApprovalMode#AUTO} — see its doc for the SAFE/ASK/YOLO merge this replaced).
     ///
-    /// When the developer-only {@link #isDangerouslySkipPermissions()} bypass is on, this
-    /// reports {@link AiApprovalMode#YOLO} so the execution policy auto-allows every tool
-    /// call. The *stored* approval mode ({@link #getApprovalMode()}) is left untouched — the
-    /// bypass only overrides the derived/effective value consulted by the policy layer.
+    /// Prior to that merge, the developer-only {@link #isDangerouslySkipPermissions()} bypass was
+    /// faked here by reporting the most permissive mode (YOLO) so the execution policy would
+    /// auto-allow every call — because the policy layer's OWN `dangerouslySkipPermissions`
+    /// constructor flag was never actually threaded through from settings. That flag IS now passed
+    /// straight into {@code AiExecutionPolicy}'s real bypass field by {@code ChatAgentFactory.build}
+    /// (see its own comment), which is the correct fix now that there is no more permissive mode
+    /// left to fake it with — so this method no longer needs to special-case it at all.
     public AiApprovalMode getApprovalModeEnum() {
-        if (dangerouslySkipPermissions.get()) {
-            return AiApprovalMode.YOLO;
-        }
         return AiApprovalMode.fromId(approvalMode.get());
     }
 
@@ -875,8 +850,13 @@ public final class AiSettings {
         return nbtToolsEnabled.get();
     }
 
+    /// Global memory (remember/recall) is currently product-disabled — "待开发", not just
+    /// defaulted off. Force {@code false} regardless of the underlying (still fully persisted,
+    /// still user-toggleable in storage) property, so every call site — tool registration, prompt
+    /// injection, settings UI — is disabled from this one place without needing to be individually
+    /// audited. Re-enabling the feature later is a one-line revert here.
     public boolean isMemoryEnabled() {
-        return memoryEnabled.get();
+        return false;
     }
 
     /// Returns whether ALL permission confirmations are bypassed (developer-only).
@@ -894,9 +874,10 @@ public final class AiSettings {
         return responseLanguage.get();
     }
 
-    /// Returns whether auto-recall-memory injection is enabled.
+    /// Returns whether auto-recall-memory injection is enabled. Force-disabled alongside
+    /// {@link #isMemoryEnabled()} — see its javadoc.
     public boolean isAutoRecallMemory() {
-        return autoRecallMemory.get();
+        return false;
     }
 
     /// Returns whether trigger-matched skill playbooks are auto-injected into the prompt.
@@ -1163,8 +1144,6 @@ public final class AiSettings {
         data.reasoningEffort = reasoningEffort.get().isEmpty() ? null : reasoningEffort.get();
         data.stream = stream.get();
         data.stopSequences = stopSequences.isEmpty() ? null : new ArrayList<>(stopSequences);
-        data.titleNamingEnabled = titleNamingEnabled.get();
-        data.titleNamingModelId = titleNamingModelId.get().isEmpty() ? null : titleNamingModelId.get();
         data.autoLogAnalysisEnabled = autoLogAnalysisEnabled.get();
         data.autoCrashAnalysisEnabled = autoCrashAnalysisEnabled.get();
         data.toolCallDisplayEnabled = toolCallDisplayEnabled.get();
@@ -1347,8 +1326,6 @@ public final class AiSettings {
         seed.set(data.seed);
         reasoningEffort.set(data.reasoningEffort != null ? data.reasoningEffort : "");
         stream.set(data.stream);
-        titleNamingEnabled.set(data.titleNamingEnabled);
-        titleNamingModelId.set(data.titleNamingModelId != null ? data.titleNamingModelId : "");
         autoLogAnalysisEnabled.set(data.autoLogAnalysisEnabled);
         autoCrashAnalysisEnabled.set(data.autoCrashAnalysisEnabled);
         toolCallDisplayEnabled.set(data.toolCallDisplayEnabled);

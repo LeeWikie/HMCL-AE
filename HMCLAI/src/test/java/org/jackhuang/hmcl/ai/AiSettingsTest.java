@@ -492,18 +492,16 @@ public final class AiSettingsTest {
     }
 
     /// Verifies that the new global AI behaviour settings round-trip correctly
-    /// through save and load, including approval mode, title naming, and analysis toggles.
+    /// through save and load, including approval mode and analysis toggles.
     @Test
     public void testGlobalBehaviorSettingsRoundTrip() throws IOException {
         Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
         try {
             AiSettings settings = new AiSettings(tempDir);
-            settings.titleNamingEnabledProperty().set(false);
-            settings.titleNamingModelIdProperty().set("gpt-4o-title");
             settings.autoLogAnalysisEnabledProperty().set(false);
             settings.autoCrashAnalysisEnabledProperty().set(false);
             settings.toolCallDisplayEnabledProperty().set(false);
-            settings.approvalModeProperty().set(AiApprovalMode.ASK.getId());
+            settings.approvalModeProperty().set(AiApprovalMode.AUTO.getId());
             settings.dangerousActionConfirmationEnabledProperty().set(false);
 
             settings.save();
@@ -511,20 +509,16 @@ public final class AiSettingsTest {
             AiSettings loaded = new AiSettings(tempDir);
             loaded.load();
 
-            assertFalse(loaded.isTitleNamingEnabled(),
-                    "titleNamingEnabled should round-trip as false");
-            assertEquals("gpt-4o-title", loaded.getTitleNamingModelId(),
-                    "titleNamingModelId should round-trip");
             assertFalse(loaded.isAutoLogAnalysisEnabled(),
                     "autoLogAnalysisEnabled should round-trip as false");
             assertFalse(loaded.isAutoCrashAnalysisEnabled(),
                     "autoCrashAnalysisEnabled should round-trip as false");
             assertFalse(loaded.isToolCallDisplayEnabled(),
                     "toolCallDisplayEnabled should round-trip as false");
-            assertEquals(AiApprovalMode.ASK.getId(), loaded.getApprovalMode(),
-                    "approvalMode should round-trip as 'ask'");
-            assertEquals(AiApprovalMode.ASK, loaded.getApprovalModeEnum(),
-                    "getApprovalModeEnum should return ASK");
+            assertEquals(AiApprovalMode.AUTO.getId(), loaded.getApprovalMode(),
+                    "approvalMode should round-trip as 'auto'");
+            assertEquals(AiApprovalMode.AUTO, loaded.getApprovalModeEnum(),
+                    "getApprovalModeEnum should return AUTO");
             assertFalse(loaded.isDangerousActionConfirmationEnabled(),
                     "dangerousActionConfirmationEnabled should round-trip as false");
         } finally {
@@ -539,43 +533,23 @@ public final class AiSettingsTest {
         }
     }
 
-    /// Verifies that all three AiApprovalMode values serialize and deserialize correctly.
+    /// Verifies that the current ("auto") AND the legacy pre-merge ("safe"/"ask"/"yolo") approval
+    /// mode ids all still deserialize correctly (all resolving to {@link AiApprovalMode#AUTO} — see
+    /// its own doc for the SAFE/ASK/YOLO merge) so existing users' settings files keep loading fine.
     @Test
     public void testApprovalModeSerialization() throws IOException {
         Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
         try {
-            // Safe
-            {
+            for (String id : new String[]{"auto", "safe", "ask", "yolo"}) {
                 AiSettings settings = new AiSettings(tempDir);
-                settings.approvalModeProperty().set(AiApprovalMode.SAFE.getId());
+                settings.approvalModeProperty().set(id);
                 settings.save();
 
                 AiSettings loaded = new AiSettings(tempDir);
                 loaded.load();
-                assertEquals(AiApprovalMode.SAFE.getId(), loaded.getApprovalMode());
-                assertEquals(AiApprovalMode.SAFE, loaded.getApprovalModeEnum());
-            }
-            // Ask
-            {
-                AiSettings settings = new AiSettings(tempDir);
-                settings.approvalModeProperty().set(AiApprovalMode.ASK.getId());
-                settings.save();
-
-                AiSettings loaded = new AiSettings(tempDir);
-                loaded.load();
-                assertEquals(AiApprovalMode.ASK.getId(), loaded.getApprovalMode());
-                assertEquals(AiApprovalMode.ASK, loaded.getApprovalModeEnum());
-            }
-            // YOLO
-            {
-                AiSettings settings = new AiSettings(tempDir);
-                settings.approvalModeProperty().set(AiApprovalMode.YOLO.getId());
-                settings.save();
-
-                AiSettings loaded = new AiSettings(tempDir);
-                loaded.load();
-                assertEquals(AiApprovalMode.YOLO.getId(), loaded.getApprovalMode());
-                assertEquals(AiApprovalMode.YOLO, loaded.getApprovalModeEnum());
+                assertEquals(id, loaded.getApprovalMode(), "the stored id itself is preserved verbatim");
+                assertEquals(AiApprovalMode.AUTO, loaded.getApprovalModeEnum(),
+                        "'" + id + "' must resolve to AUTO");
             }
         } finally {
             try {
@@ -598,20 +572,16 @@ public final class AiSettingsTest {
             AiSettings settings = new AiSettings(tempDir);
             settings.load(); // No file exists
 
-            assertTrue(settings.isTitleNamingEnabled(),
-                    "titleNamingEnabled should default to true");
-            assertEquals("", settings.getTitleNamingModelId(),
-                    "titleNamingModelId should default to empty string");
             assertTrue(settings.isAutoLogAnalysisEnabled(),
                     "autoLogAnalysisEnabled should default to true");
             assertTrue(settings.isAutoCrashAnalysisEnabled(),
                     "autoCrashAnalysisEnabled should default to true");
             assertTrue(settings.isToolCallDisplayEnabled(),
                     "toolCallDisplayEnabled should default to true");
-            assertEquals(AiApprovalMode.SAFE.getId(), settings.getApprovalMode(),
-                    "approvalMode should default to 'safe'");
-            assertEquals(AiApprovalMode.SAFE, settings.getApprovalModeEnum(),
-                    "getApprovalModeEnum should default to SAFE");
+            assertEquals(AiApprovalMode.AUTO.getId(), settings.getApprovalMode(),
+                    "approvalMode should default to 'auto'");
+            assertEquals(AiApprovalMode.AUTO, settings.getApprovalModeEnum(),
+                    "getApprovalModeEnum should default to AUTO");
             assertTrue(settings.isDangerousActionConfirmationEnabled(),
                     "dangerousActionConfirmationEnabled should default to true");
         } finally {

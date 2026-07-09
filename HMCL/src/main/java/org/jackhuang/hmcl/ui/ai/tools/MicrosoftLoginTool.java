@@ -54,7 +54,7 @@ public final class MicrosoftLoginTool implements Tool {
             Platform.runLater(() -> Controllers.dialog(new CreateAccountPane(Accounts.FACTORY_MICROSOFT)));
             return ToolResult.success("Opened the Microsoft login dialog. "
                     + "Ask the user to complete the sign-in there; once done, the new account becomes available "
-                    + "(verify with list_accounts).");
+                    + "(verify with account(action=\"list\")).");
         } catch (Throwable e) {
             return ToolResult.failure("Failed to open the Microsoft login dialog: " + e.getMessage());
         }

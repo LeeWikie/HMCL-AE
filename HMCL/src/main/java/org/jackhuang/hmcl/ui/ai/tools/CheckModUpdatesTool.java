@@ -49,7 +49,7 @@ import java.util.Map;
 /// and the number of mods checked is capped so the tool always returns promptly.
 ///
 /// Permission level: READ_ONLY. It only reports; it never downloads or replaces a
-/// mod. Use `install_mod` (or search_mods) to actually update.
+/// mod. Use `instance(action="mods_update")` (or `search(action="mods")`) to actually update.
 @NotNullByDefault
 public final class CheckModUpdatesTool implements Tool {
 
@@ -161,8 +161,8 @@ public final class CheckModUpdatesTool implements Tool {
             for (String line : updates) {
                 sb.append(line).append('\n');
             }
-            sb.append("\nThis tool only reports. To update a mod, use install_mod with the newer version, "
-                    + "or search_mods to find it.");
+            sb.append("\nThis tool only reports. To update a mod, use instance(action=\"mods_update\") with the "
+                    + "newer version, or search(action=\"mods\") to find it.");
         }
         if (failed > 0) {
             sb.append("\n(Note: ").append(failed).append(" remote lookup(s) failed or timed out and were skipped.)");

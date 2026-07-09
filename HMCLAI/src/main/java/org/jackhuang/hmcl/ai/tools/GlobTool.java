@@ -109,6 +109,13 @@ public final class GlobTool implements ToolSpec {
         if (!Files.isDirectory(base)) {
             return ToolResult.failure("Not a directory: " + base);
         }
+        // Real-path containment: `base` passed the lexical/normalized check above, but it (or an
+        // allowed root itself) could still be a symlink pointing outside every allowed root.
+        List<Path> realRoots = realRootsOf(roots);
+        Path realBase = realOrSelf(base);
+        if (realRoots.stream().noneMatch(realBase::startsWith)) {
+            return ToolResult.failure("Path is outside the allowed roots: " + realBase);
+        }
 
         java.nio.file.PathMatcher matcher;
         try {
@@ -122,6 +129,15 @@ public final class GlobTool implements ToolSpec {
             var it = walk.filter(Files::isRegularFile).iterator();
             while (it.hasNext() && results.size() < MAX_RESULTS) {
                 Path file = it.next();
+                // Files::isRegularFile follows symlinks, so a symlink planted under an allowed root
+                // but pointing OUTSIDE it would otherwise be reported as a matching path (a read-
+                // exfiltration primitive when chained with the `read` tool on the returned relative
+                // path, which resolves back through the same symlink). Re-verify each candidate's
+                // REAL path stays within an allowed root before including it.
+                Path realFile = realOrSelf(file);
+                if (realRoots.stream().noneMatch(realFile::startsWith)) {
+                    continue;
+                }
                 Path rel = base.relativize(file);
                 if (matcher.matches(rel)) {
                     results.add(rel.toString());
@@ -135,5 +151,25 @@ public final class GlobTool implements ToolSpec {
             return ToolResult.success("(no files matched)");
         }
         return ToolResult.success(String.join("\n", results));
+    }
+
+    private static List<Path> realRootsOf(List<Path> roots) {
+        List<Path> real = new ArrayList<>(roots.size());
+        for (Path r : roots) {
+            real.add(realOrSelf(r));
+        }
+        return real;
+    }
+
+    /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself (already
+    /// absolute/normalized by the caller) when that fails — e.g. a broken symlink, or a race where
+    /// the file vanished between being listed and checked. The fallback keeps behavior unchanged
+    /// for anything that isn't a live symlink escape.
+    private static Path realOrSelf(Path p) {
+        try {
+            return p.toRealPath();
+        } catch (IOException e) {
+            return p;
+        }
     }
 }

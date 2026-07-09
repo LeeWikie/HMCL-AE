@@ -6,7 +6,9 @@ import com.google.gson.annotations.SerializedName;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /// Persistent descriptor for one configured MCP server.
@@ -25,6 +27,12 @@ public final class AiMcpServerConfig {
     @SerializedName("command")
     @Nullable
     private String command;
+
+    @SerializedName("args")
+    private List<String> args;
+
+    @SerializedName("env")
+    private Map<String, String> env;
 
     @SerializedName("url")
     @Nullable
@@ -51,6 +59,8 @@ public final class AiMcpServerConfig {
         this.displayName = "MCP Server";
         this.transport = "stdio";
         this.command = null;
+        this.args = new ArrayList<>();
+        this.env = new LinkedHashMap<>();
         this.url = null;
         this.enabled = false;
         this.autoConnect = true;
@@ -70,6 +80,22 @@ public final class AiMcpServerConfig {
 
     @Nullable public String getCommand() { return command; }
     public void setCommand(@Nullable String command) { this.command = command; }
+
+    /// Extra argv entries appended after {@link #getCommand()} when launching a stdio server.
+    /// Never null: a config deserialized from JSON that predates this field (or one where a hand
+    /// edit set {@code "args": null}) falls back here to an empty list rather than propagating a
+    /// null Gson leaves in place (Gson populates fields via reflection, bypassing {@link #setArgs}).
+    public List<String> getArgs() { return args != null ? args : Collections.emptyList(); }
+    public void setArgs(List<String> args) {
+        this.args = args == null ? new ArrayList<>() : new ArrayList<>(args);
+    }
+
+    /// Extra environment variables merged into the stdio child process's environment (on top of,
+    /// not replacing, the inherited environment). Never null; see {@link #getArgs()} for why.
+    public Map<String, String> getEnv() { return env != null ? env : Collections.emptyMap(); }
+    public void setEnv(Map<String, String> env) {
+        this.env = env == null ? new LinkedHashMap<>() : new LinkedHashMap<>(env);
+    }
 
     @Nullable public String getUrl() { return url; }
     public void setUrl(@Nullable String url) { this.url = url; }

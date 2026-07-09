@@ -1,0 +1,32 @@
+{
+  "name": "install-and-mod",
+  "description": "How to install a Minecraft version with a mod loader and add mods correctly, respecting version isolation. Use when the user wants to install/create a new version, set up Forge/Fabric/NeoForge/Quilt, or add mods (\"装个版本\",\"装模组\",\"加mod\",\"Fabric\",\"Forge\").",
+  "version": "1.2",
+  "triggers": [
+    "装个版本",
+    "安装版本",
+    "装版本",
+    "新建版本",
+    "装模组",
+    "加模组",
+    "装mod",
+    "加mod",
+    "推荐模组",
+    "模组",
+    "fabric",
+    "forge",
+    "neoforge",
+    "quilt",
+    "optifine",
+    "install mod",
+    "安装游戏",
+    "装个我的世界"
+  ],
+  "requires": [
+    "create-instance",
+    "set-isolation",
+    "mods-install",
+    "resourcepacks-and-shaders"
+  ],
+  "body": "# Install a version + add mods (orchestration)\n\nGoal: take the user from \"I want mods\" to a working, verified instance, end-to-end — never hand\nback manual download/install steps.\n\nFlow:\n1. `instance(action=list)` first — an existing instance may already fit; don't create a duplicate.\n2. Get REAL options before asking anything: `search(action=game_versions)` for live MC versions,\n   `search(action=mods, ...)` for each requested mod's real compatible builds and required loader.\n   Never pick a version or mod build from training memory.\n3. MC version and loader are concrete choices (Fabric for the Sodium/performance-mod family; Forge\n   or NeoForge for big modpacks; Quilt only if the user asks for it) — bundle them into ONE `ask`\n   call, options drawn from step 2. If the user hasn't named which mods they want, that part is\n   open-ended: don't wrap it alone in `ask` — ask for names/keywords directly in your response\n   text (or, if version/loader are ALSO still open, bundle it as a free-text sub-question alongside\n   those single-choice questions in the same `ask` call — bundling 2+ sub-questions together is\n   fine, a lone free-text question is not).\n4. Create the instance — mechanics in `create-instance`.\n5. Before installing anything, check isolation — mechanics in `set-isolation`. If OFF,\n   mods/saves/config are shared across all versions; warn the user before installing\n   version-specific content.\n6. Install the chosen mods/resourcepacks/shaders into the instance just created — mods: mechanics\n   in `mods-install`; resourcepacks/shaders: mechanics in\n   `resourcepacks-and-shaders`. Don't mix loaders (no Fabric mod on a Forge instance or\n   vice versa) and don't skip mod dependencies (e.g. Fabric API). If what the user actually wants\n   is a modpack, that's a different flow — see the `use-modpacks` skill instead: a modpack always\n   installs as its own brand-new instance, never merged into the one created in step 4.\n7. Verify: `glob`/`read` the instance's `mods/` dir to confirm files landed, then tell the user\n   it's ready and offer `game(action=launch)`."
+}

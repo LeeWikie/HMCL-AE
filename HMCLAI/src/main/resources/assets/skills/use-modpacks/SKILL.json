@@ -1,0 +1,20 @@
+{
+  "name": "use-modpacks",
+  "description": "Orchestration index for installing, exporting and updating modpacks. Use when the user mentions modpacks (\"整合包\",\"装整合\",\"modpack\",\"mrpack\").",
+  "version": "1.0",
+  "triggers": [
+    "整合包",
+    "装整合",
+    "玩整合",
+    "modpack",
+    "mrpack",
+    "curseforge包",
+    "整合"
+  ],
+  "requires": [
+    "modpacks-install",
+    "modpacks-export",
+    "worlds-backup"
+  ],
+  "body": "# Modpacks\n\nGoal: a working modpack instance with zero manual steps, and correct handling across\ninstall/export/update.\n\n- **Install** a pack (search, confirm version, create its own instance): see\n  `modpacks-install`.\n- **Export** the user's current setup as a shareable `.mrpack`: see `modpacks-export`.\n- **Update a pack**: a pack updates as a WHOLE. Install the new pack version as a FRESH\n  instance via `modpacks-install` — do not hand-update mods one-by-one inside an\n  existing pack instance, that breaks pack version coherence. Migrate the user's saves\n  (`worlds-backup`) and options into the new instance, keep the old instance until\n  the new one is confirmed working, then offer to delete the old one.\n\nDon't install a pack into an existing instance. Don't guess pack names/versions — search first."
+}

@@ -34,8 +34,9 @@ import java.util.function.IntSupplier;
 /// restore can itself be undone) before being replaced. Backed by
 /// {@link WorldBackupManager}.
 ///
-/// This tool's name is registered in {@code CriticalOperations.CRITICAL_TOOLS},
-/// so executing it raises the red second-tier confirmation.
+/// This operation is registered in {@code CriticalOperations.CRITICAL_ACTIONS} (keyed on the
+/// merged `instance` tool's `worlds_backup_restore` action), so executing it raises the red
+/// second-tier confirmation.
 @NotNullByDefault
 public final class RestoreWorldBackupTool implements Tool {
 
@@ -58,9 +59,10 @@ public final class RestoreWorldBackupTool implements Tool {
                 + "current saves/<world>. Before overwriting, the CURRENT world is automatically backed up first "
                 + "(so a wrong restore can be undone). "
                 + "Parameters: world (required, the save folder name), backupId (required, the snapshot timestamp id "
-                + "from list_world_backups, e.g. 20260629-153000), instance (optional, defaults to the selected instance). "
-                + "Always run list_world_backups first to pick the correct backupId, and only restore when the user "
-                + "clearly asked to roll this world back.";
+                + "from instance(action=\"worlds_backup_list\"), e.g. 20260629-153000), instance (optional, defaults "
+                + "to the selected instance). "
+                + "Always run instance(action=\"worlds_backup_list\") first to pick the correct backupId, and only "
+                + "restore when the user clearly asked to roll this world back.";
     }
 
     @Override
@@ -73,7 +75,8 @@ public final class RestoreWorldBackupTool implements Tool {
 
         Object backupObj = parameters.get("backupId");
         if (!(backupObj instanceof String) || ((String) backupObj).trim().isEmpty()) {
-            return ToolResult.failure("Parameter 'backupId' (a snapshot timestamp from list_world_backups) is required.");
+            return ToolResult.failure("Parameter 'backupId' (a snapshot timestamp from "
+                    + "instance(action=\"worlds_backup_list\")) is required.");
         }
         String backupId = ((String) backupObj).trim();
 

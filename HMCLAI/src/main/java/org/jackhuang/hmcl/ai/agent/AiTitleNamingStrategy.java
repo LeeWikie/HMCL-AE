@@ -24,28 +24,26 @@ import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
-/// Lightweight strategy for generating and updating AI session titles.
+/// Lightweight strategy for producing a fallback session title by truncating the first user
+/// message.
 ///
-/// ## Title generation tiers
+/// ## Note: this is NOT the real "auto-name sessions" feature
 ///
-/// 1. **AI-powered naming** (future): when {@link AiSettings#isTitleNamingEnabled()}
-///    is `true` and a suitable title-naming model is available, the first user
-///    message is sent through the LLM to produce a descriptive title.
-/// 2. **First-message fallback**: the first user message is truncated to
-///    {@value #MAX_TITLE_LENGTH} characters and used as the title directly.
+/// The actually-wired auto-title feature is {@code AiSettings#isAutoTitleEnabled()} /
+/// {@code AIMainPage#maybeAutoTitle}, which asks the model itself (via
+/// {@code ChatAgent#suggestTitle}) for a concise title after the first exchange. This class'
+/// {@link #maybeAutoTitle} is a separate, simpler, first-message-truncation-only helper that is
+/// not currently invoked from anywhere in the app; a previous "AI-powered naming" tier planned for
+/// it (driven by now-removed `AiSettings` title-naming settings) was never implemented beyond a
+/// scaffolding placeholder and has been deleted rather than wired up, since {@code suggestTitle}
+/// already delivers the real thing.
 ///
 /// ## Usage
 ///
 /// Call {@link #maybeAutoTitle(AiSession, String, AiSettings, AiChatClient)}
-/// after adding the first user message to the session. The method applies the
-/// appropriate tier based on the current settings and writes the title to
-/// the session via {@link AiSession#setTitle(String)}.
-///
-/// ## Implementation note
-///
-/// The AI-powered tier is currently a scaffolding placeholder. When
-/// implemented, it will use the configured title-naming model id (if any)
-/// with a dedicated short prompt to generate a concise title.
+/// after adding the first user message to the session. The method truncates it to
+/// {@value #MAX_TITLE_LENGTH} characters and writes the title to the session via
+/// {@link AiSession#setTitle(String)}.
 @NotNullByDefault
 public final class AiTitleNamingStrategy {
 
@@ -53,11 +51,8 @@ public final class AiTitleNamingStrategy {
     static final int MAX_TITLE_LENGTH = 50;
 
     /// Examines the session and, if the first user message has just been added,
-    /// generates an appropriate title.
-    ///
-    /// The fallback behaviour (truncating the first user message) always works
-    /// regardless of {@link AiSettings#isTitleNamingEnabled()}.
-    /// AI-powered naming is a planned future enhancement.
+    /// generates an appropriate title by truncating it (see the class doc — there is no
+    /// AI-powered tier here).
     ///
     /// @param session      the session to title; must not be `null`
     /// @param userMessage  the user's message text; must not be `null`

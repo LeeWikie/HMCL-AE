@@ -118,6 +118,8 @@ public final class JavaDownloadDialog extends StackPane {
 
             VBox vbox = new VBox(16);
             Label prompt = new Label(i18n("java.download.prompt"));
+            prompt.setWrapText(true);
+            FXUtils.setLimitWidth(prompt, 400);
             vbox.getChildren().add(prompt);
 
             setValid(false);

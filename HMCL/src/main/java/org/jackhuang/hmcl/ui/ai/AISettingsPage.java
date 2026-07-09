@@ -88,6 +88,7 @@ import org.jackhuang.hmcl.ui.construct.ComponentSublist;
 import org.jackhuang.hmcl.ui.construct.LineButton;
 import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.jackhuang.hmcl.ui.construct.LineToggleButton;
+import org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane;
 import org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType;
 import org.jackhuang.hmcl.ui.construct.PageAware;
 import org.jackhuang.hmcl.ui.construct.PromptDialogPane;
@@ -107,12 +108,23 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 
 @NotNullByDefault
 public final class AISettingsPage extends DecoratorAnimatedPage implements DecoratorPage, PageAware {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+
+    /// Bounded pool for the batch model-connection-test dialog: selecting many models across
+    /// providers used to spawn one unbounded, un-pooled raw Thread per row with no throttling —
+    /// a small fixed pool of daemon threads caps concurrency regardless of selection size.
+    private static final ExecutorService BATCH_TEST_POOL = Executors.newFixedThreadPool(6, r -> {
+        Thread t = new Thread(r, "ai-test-conn");
+        t.setDaemon(true);
+        return t;
+    });
     private static final Path MCP_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
     private static final Path SEARCH_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
     private static final Path OCR_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
@@ -137,10 +149,17 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private final TabHeader.Tab<Node> mcpTab = new TabHeader.Tab<>("aiMcpTab");
     private final TabHeader.Tab<Node> skillsTab = new TabHeader.Tab<>("aiSkillsTab");
     private final TabHeader.Tab<Node> searchTab = new TabHeader.Tab<>("aiSearchTab");
+    /// Kept registered (so any code that still selects it directly does not crash) but no longer
+    /// reachable from the left nav — see the sidebar construction below.
     private final TabHeader.Tab<Node> ocrTab = new TabHeader.Tab<>("aiOcrTab");
     private final TabHeader.Tab<Node> generalTab = new TabHeader.Tab<>("aiGeneralTab");
+    /// Same as {@link #ocrTab}: still registered, no longer reachable from the left nav.
     private final TabHeader.Tab<Node> memoryTab = new TabHeader.Tab<>("aiMemoryTab");
     private final TabHeader.Tab<Node> dataTab = new TabHeader.Tab<>("aiDataTab");
+    /// Advanced/developer settings: execution limits, the Auto approval-mode explainer, and the
+    /// dangerous developer-only toggles. Content moved here from {@code buildGeneralTab}'s old
+    /// "高级与开发者" card as part of the settings-page IA cleanup.
+    private final TabHeader.Tab<Node> advancedTab = new TabHeader.Tab<>("aiAdvancedTab");
     private final TabHeader.Tab<Node> helpTab = new TabHeader.Tab<>("aiHelpTab");
     private final TabHeader.Tab<Node> aboutTab = new TabHeader.Tab<>("aiAboutTab");
     private final TabHeader tab;
@@ -176,24 +195,30 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         generalTab.setNodeSupplier(this::buildGeneralTab);
         memoryTab.setNodeSupplier(this::buildMemoryTab);
         dataTab.setNodeSupplier(this::buildDataTab);
+        advancedTab.setNodeSupplier(this::buildAdvancedTab);
         helpTab.setNodeSupplier(this::buildHelpTab);
         aboutTab.setNodeSupplier(this::buildAboutTab);
 
-        tab = new TabHeader(transitionPane, providerTab, mcpTab, skillsTab, searchTab, ocrTab, generalTab, memoryTab, dataTab, helpTab, aboutTab);
+        tab = new TabHeader(transitionPane, providerTab, mcpTab, skillsTab, searchTab, ocrTab, generalTab, memoryTab, dataTab, advancedTab, helpTab, aboutTab);
         tab.select(providerTab, false);
 
+        // NOTE: "图片 OCR" (ocrTab) and "全局记忆" (memoryTab) are deliberately NOT given a
+        // navigation entry below anymore — removed from the left nav per the settings-page IA
+        // cleanup. Their tabs/content-builders are left in place (unreachable rather than deleted)
+        // since the underlying features are still otherwise functional; only navigation to them
+        // from here was in scope for this change.
         AdvancedListBox sideBar = new AdvancedListBox()
                 .startCategory("通用")
                 .addNavigationDrawerTab(tab, generalTab, "全局设置", SVG.TUNE)
                 .addNavigationDrawerTab(tab, providerTab, "模型服务", SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
                 .startCategory("服务")
-                .addNavigationDrawerTab(tab, skillsTab, "技能与工具", SVG.SCRIPT)
+                .addNavigationDrawerTab(tab, skillsTab, "技能", SVG.SCRIPT)
                 .addNavigationDrawerTab(tab, mcpTab, "MCP服务器", SVG.SCHEMA, SVG.SCHEMA_FILL)
                 .addNavigationDrawerTab(tab, searchTab, "网络搜索", SVG.SEARCH)
-                .addNavigationDrawerTab(tab, ocrTab, "图片 OCR", SVG.LANDSCAPE)
                 .startCategory("数据")
                 .addNavigationDrawerTab(tab, dataTab, "数据设置", SVG.FOLDER_OPEN)
-                .addNavigationDrawerTab(tab, memoryTab, "全局记忆", SVG.PACKAGE)
+                .startCategory("高级")
+                .addNavigationDrawerTab(tab, advancedTab, "高级设置", SVG.SETTINGS, SVG.SETTINGS_FILL)
                 .startCategory(i18n("help").toUpperCase(java.util.Locale.ROOT))
                 .addNavigationDrawerTab(tab, helpTab, "帮助", SVG.FEEDBACK, SVG.FEEDBACK_FILL)
                 .addNavigationDrawerTab(tab, aboutTab, "关于 HMCL-AE", SVG.INFO, SVG.INFO_FILL);
@@ -927,7 +952,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 r.result.setText("测试中...");
                 AiProviderProfile p = r.profile;
                 String model = r.modelId;
-                Thread worker = new Thread(() -> {
+                BATCH_TEST_POOL.submit(() -> {
                     try {
                         long startNanos = System.nanoTime();
                         org.jackhuang.hmcl.ai.agent.ChatAgentFactory.testConnectionSync(
@@ -937,9 +962,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     } catch (Exception ex) {
                         Platform.runLater(() -> r.result.setText("✗ " + ex.getMessage()));
                     }
-                }, "ai-test-conn");
-                worker.setDaemon(true);
-                worker.start();
+                });
             }
         });
         JFXButton close = new JFXButton("关闭");
@@ -1078,39 +1101,60 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         editMcpServer(new AiMcpServerConfig());
     }
 
+    /// Edits {@code server}'s full config as free-form JSON (see {@link McpServerJsonCodec}), the
+    /// dialog only closing once the text round-trips through {@link McpServerJsonCodec#validate}
+    /// clean — replacing the old fixed 5-question {@link PromptDialogPane} form (which had no way
+    /// to edit {@code args}/{@code env}, or in fact {@code autoConnect}/{@code allowedTools}/
+    /// {@code exposeResourcesAsTools} either, since that form never asked about them at all).
     private void editMcpServer(AiMcpServerConfig server) {
-        PromptDialogPane.Builder builder = new PromptDialogPane.Builder("编辑 MCP 服务器", (questions, handler) -> {
-            if (!mcpServers.contains(server)) {
-                mcpServers.add(server); // a newly created server joins the list only on confirm
-            }
-            server.setDisplayName((String) questions.get(0).getValue());
-            Integer transportIdx = (Integer) questions.get(1).getValue();
-            server.setTransport(transportIdx != null && transportIdx == 1 ? "http" : "stdio");
-            server.setCommand((String) questions.get(2).getValue());
-            server.setUrl((String) questions.get(3).getValue());
-            server.setEnabled((Boolean) questions.get(4).getValue());
-            saveMcpServers();
-            handler.resolve();
-        });
-        builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("名称", server.getDisplayName()));
-        builder.addQuestion(new PromptDialogPane.Builder.CandidatesQuestion("传输", "stdio", "http"));
-        builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("命令（stdio）", server.getCommand() == null ? "" : server.getCommand()));
-        builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("URL（http）", server.getUrl() == null ? "" : server.getUrl()));
-        builder.addQuestion(new PromptDialogPane.Builder.BooleanQuestion("启用", server.isEnabled()));
-        Controllers.prompt(builder);
+        String initialJson = McpServerJsonCodec.toJson(server);
+        String hint = "编辑该 MCP 服务器的完整配置（JSON）。字段：displayName（名称）、"
+                + "transport（\"stdio\" 或 \"http\"）、command（stdio 可执行文件）、"
+                + "args（命令行参数，字符串数组）、env（环境变量，字符串到字符串）、url（http 端点）、"
+                + "enabled（是否启用）、autoConnect（是否自动连接）、allowedTools（工具白名单，留空数组表示不限制）、"
+                + "exposeResourcesAsTools（是否把资源也暴露为工具）。";
+        JsonEditorDialogPane pane = new JsonEditorDialogPane("编辑 MCP 服务器", initialJson, hint,
+                McpServerJsonCodec::validate,
+                (text, handler) -> {
+                    // Re-check here rather than trusting the accept button's enabled state alone:
+                    // JsonEditorDialogPane debounces its live validation, so a click landing inside
+                    // that window could in principle race a just-typed change.
+                    String error = McpServerJsonCodec.validate(text);
+                    if (error != null) {
+                        handler.reject(error);
+                        return;
+                    }
+                    McpServerJsonCodec.apply(server, text);
+                    if (!mcpServers.contains(server)) {
+                        mcpServers.add(server); // a newly created server joins the list only on confirm
+                    }
+                    saveMcpServers();
+                    handler.resolve();
+                });
+        Controllers.dialog(pane);
     }
 
     private Node buildSkillsTab() {
         VBox root = createSettingsRoot();
 
-        // ① 工具权限（最常配置，置顶）
+        // ① 工具权限（最常配置，置顶）。全局审批模式选择器已随 SAFE/ASK/YOLO 合并为 Auto 移至
+        // "高级设置" tab（见 buildAdvancedTab/buildAutoModeInfoRow）——这里只留下仍然有意义、
+        // 逐工具可覆盖的"危险操作二次确认"开关。
         ComponentList permissionCore = new ComponentList();
-        permissionCore.getContent().add(buildGlobalApprovalModeRow());
         permissionCore.getContent().add(buildDangerousConfirmationRow());
 
-        // ② 技能
+        // ② AI 能力与行为：原 buildGeneralTab() 的同名卡片搬到这里，重新定位为这些能力的权限/
+        // 开关控制入口——和上面的工具权限、下面的逐工具覆盖表放在同一个 tab 里，而不是散在
+        // "全局设置"里。
+        ComponentList abilityCard = new ComponentList();
+        abilityCard.getContent().add(buildAbilitySublist());
+
+        // ③ 技能。内置技能（isBuiltin()）在这里要完全不可见——不是折叠，是从列表里彻底消失：它们现在
+        // 直接从程序内置的 JSON 资源加载到内存，从未落地到 SKILLS_DIR，本来就没有对应的文件夹可给用户
+        // 手改/查看；用户自建的技能（仍是 SKILL.md）才在这个列表里可见、可逐条启停。
+        List<SkillManifest> userSkills = skillRegistry.list().stream().filter(s -> !s.isBuiltin()).toList();
         ComponentList skillList = new ComponentList();
-        for (SkillManifest skill : skillRegistry.list()) {
+        for (SkillManifest skill : userSkills) {
             LineButton row = new LineButton();
             row.setTitle(skill.getName() != null ? skill.getName() : "(invalid skill)");
             row.setSubtitle(skill.getDescription() != null ? skill.getDescription() : String.join("; ", skill.getErrors()));
@@ -1123,8 +1167,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             });
             skillList.getContent().add(row);
         }
-        if (skillRegistry.list().isEmpty()) {
-            Label empty = new Label("技能目录为空。请在 .hmcl/ai-skills/<skill>/SKILL.md 下放置技能。");
+        if (userSkills.isEmpty()) {
+            Label empty = new Label("这里只列出自建技能，目前还没有。请在 .hmcl/ai-skills/<skill>/SKILL.md 下放置技能"
+                    + "（内置技能已随程序打包，不在这个目录里，也不会显示在此列表中）。");
             empty.setWrapText(true);
             empty.getStyleClass().add("subtitle-label");
             skillList.getContent().add(empty);
@@ -1143,11 +1188,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle("工具权限"),
                 permissionCore,
+                ComponentList.createComponentListTitle("AI 能力与行为"),
+                abilityCard,
                 ComponentList.createComponentListTitle("技能"),
                 skillList
         );
 
-        // ③ 工具权限。内置工具(本地/文件系统/搜索)默认折叠收起(高级、罕用);
+        // ④ 逐工具权限覆盖。内置工具(本地/文件系统/搜索)默认折叠收起(高级、罕用);
         //    技能 / MCP 工具来自用户配置,保持可见。
         List<AiToolCatalog.Descriptor> descriptors = buildToolDescriptors();
 
@@ -1160,6 +1207,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             ToolSource s = descriptor.source();
             if (s == ToolSource.LOCAL || s == ToolSource.FILESYSTEM || s == ToolSource.SEARCH) {
                 builtinSublist.getContent().add(buildToolPermissionRow(descriptor));
+                if (PATH_TAKING_TOOLS.contains(descriptor.name())) {
+                    builtinSublist.getContent().addAll(buildPathOverrideRows(descriptor.name()));
+                }
                 anyBuiltin = true;
             }
         }
@@ -1187,25 +1237,46 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return wrapScroll(root);
     }
 
-    private LineSelectButton<AiApprovalMode> buildGlobalApprovalModeRow() {
-        LineSelectButton<AiApprovalMode> approvalMode = new LineSelectButton<>();
-        approvalMode.setTitle(i18n("ai.settings.approval_mode"));
-        approvalMode.setSubtitle("作为所有工具的默认权限；单个工具可覆盖为 safe / ask / yolo");
-        approvalMode.setItems(List.of(AiApprovalMode.SAFE, AiApprovalMode.ASK, AiApprovalMode.YOLO));
-        approvalMode.setNullSafeConverter(mode -> switch (mode) {
-            case SAFE -> i18n("ai.settings.approval_mode_safe");
-            case ASK -> i18n("ai.settings.approval_mode_ask");
-            case YOLO -> i18n("ai.settings.approval_mode_yolo");
-        });
-        approvalMode.setValue(aiSettings.getApprovalModeEnum());
-        approvalMode.valueProperty().addListener((obs, old, mode) -> {
-            if (mode != null) {
-                aiSettings.approvalModeProperty().set(mode.getId());
-                saveAiSettings();
-                tab.select(skillsTab, false);
-            }
-        });
-        return approvalMode;
+    /// Builds the "AI 能力与行为" card — moved here (from the old buildGeneralTab()) as part of the
+    /// settings-page IA cleanup, repositioned as the permission/capability control entry point for
+    /// the 技能 tab: whether the AI can reach the network, recall memory, auto-match skills, analyze
+    /// crashes on its own, and any standing custom instructions it must follow.
+    private ComponentSublist buildAbilitySublist() {
+        LineButton customInstructions = new LineButton();
+        customInstructions.setTitle("自定义指令");
+        customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
+                ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+        customInstructions.setTrailingIcon(SVG.EDIT);
+        customInstructions.setOnAction(e -> Controllers.prompt("自定义指令（会追加到系统提示，AI 务必遵守）", (result, handler) -> {
+            aiSettings.customInstructionsProperty().set(result.trim());
+            saveAiSettings();
+            customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
+                    ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+            handler.resolve();
+        }, aiSettings.getCustomInstructions()));
+
+        LineToggleButton crashAnalysis = new LineToggleButton();
+        crashAnalysis.setTitle(i18n("ai.settings.auto_crash_analysis"));
+        crashAnalysis.setSubtitle(i18n("ai.settings.auto_crash_analysis.desc"));
+        crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
+        // bindBidirectional only updates the in-memory property — without this listener the
+        // toggle silently reverted on restart (nothing ever called save()).
+        crashAnalysis.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
+
+        ComponentSublist abilitySub = new ComponentSublist();
+        abilitySub.setTitle("AI 能力与行为");
+        abilitySub.setHasSubtitle(true);
+        abilitySub.setDescription("让 AI 能联网、记忆、运行命令，以及主动帮你做的事");
+        abilitySub.getContent().setAll(
+                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
+                        aiSettings.webAccessEnabledProperty()),
+                disabledToggleRow("启用全局记忆（开发中）", "让 AI 记住/调取跨会话事实 —— 该功能暂未开放，敬请期待"),
+                disabledToggleRow("自动调用记忆（开发中）", "每次对话开始时把记忆注入系统提示 —— 依赖上一项，同样暂未开放"),
+                toggleRow("技能自动匹配", "你的消息命中技能触发词时，自动把该技能手册喂给 AI 照着做（对能力较弱的模型帮助最大）",
+                        aiSettings.autoSkillInjectionProperty()),
+                crashAnalysis,
+                customInstructions);
+        return abilitySub;
     }
 
     private LineToggleButton buildDangerousConfirmationRow() {
@@ -1224,15 +1295,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 + " · " + capabilityStatusDisplayName(descriptor.status()));
         row.setItems(List.of(
                 AiToolPermissionStore.OverrideMode.FOLLOW_GLOBAL,
-                AiToolPermissionStore.OverrideMode.SAFE,
-                AiToolPermissionStore.OverrideMode.ASK,
-                AiToolPermissionStore.OverrideMode.YOLO
+                AiToolPermissionStore.OverrideMode.ALWAYS_ASK,
+                AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW
         ));
         row.setNullSafeConverter(mode -> switch (mode) {
             case FOLLOW_GLOBAL -> "跟随全局（" + aiSettings.getApprovalModeEnum().getDisplayName() + "）";
-            case SAFE -> "Safe";
-            case ASK -> "Ask";
-            case YOLO -> "YOLO";
+            case ALWAYS_ASK -> "总是询问";
+            case ALWAYS_ALLOW -> "总是允许（跳过询问）";
         });
         row.setValue(toolPermissionStore.getOverride(descriptor.name()));
         row.valueProperty().addListener((obs, old, mode) -> {
@@ -1242,6 +1311,69 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             }
         });
         return row;
+    }
+
+    /// Tools whose calls take a file-path-like `path` parameter — the ONLY ones a path-glob
+    /// override (see {@link AiToolPermissionStore#getOverride(String, String, String)}, Part D)
+    /// can ever apply to, since the lookup only consults the rule when the call actually supplies
+    /// such a parameter.
+    private static final List<String> PATH_TAKING_TOOLS = List.of("read", "write", "edit", "grep", "glob");
+
+    /// Minimal, no-frills editor for one path-taking tool's path-glob override rules (Part D): one
+    /// row per existing rule (with a delete action) plus a trailing "add a rule" row that prompts
+    /// for a glob pattern and a mode. A path rule is tried FIRST, before the tool-wide override
+    /// above, whenever the call's `path` parameter matches — see
+    /// {@link AiToolPermissionStore#getOverride(String, String, String)}.
+    private List<Node> buildPathOverrideRows(String toolName) {
+        List<Node> nodes = new ArrayList<>();
+        for (AiToolPermissionStore.PathOverride rule : toolPermissionStore.getPathOverrides(toolName)) {
+            LineButton row = new LineButton();
+            row.setTitle("路径规则：" + rule.glob());
+            row.setSubtitle("匹配路径时按 " + pathOverrideModeDisplayName(rule.mode()) + " 处理（优先于上方整体设置）");
+            row.setTrailingIcon(SVG.DELETE);
+            row.setOnAction(e -> {
+                toolPermissionStore.removePathOverride(toolName, rule.glob());
+                saveToolPermissions();
+                tab.select(skillsTab, false);
+            });
+            nodes.add(row);
+        }
+        LineButton addRule = new LineButton();
+        addRule.setTitle("+ 添加路径规则");
+        addRule.setSubtitle("按路径通配符（如 mods/**，gitignore 风格）为 " + toolName + " 单独覆盖权限");
+        addRule.setLeading(SVG.ADD, 20);
+        addRule.setOnAction(e -> {
+            PromptDialogPane.Builder builder = new PromptDialogPane.Builder("添加路径规则 · " + toolName, (questions, handler) -> {
+                String glob = ((String) questions.get(0).getValue()).trim();
+                if (glob.isEmpty()) {
+                    handler.reject("路径通配符不能为空");
+                    return;
+                }
+                Integer modeIdx = (Integer) questions.get(1).getValue();
+                AiToolPermissionStore.OverrideMode mode = switch (modeIdx == null ? 0 : modeIdx) {
+                    case 1 -> AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW;
+                    default -> AiToolPermissionStore.OverrideMode.ALWAYS_ASK;
+                };
+                toolPermissionStore.setPathOverride(toolName, glob, mode);
+                saveToolPermissions();
+                handler.resolve();
+                tab.select(skillsTab, false);
+            });
+            builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("路径通配符（如 mods/**）", ""));
+            builder.addQuestion(new PromptDialogPane.Builder.CandidatesQuestion("匹配时的处理方式",
+                    "总是询问", "总是允许（跳过询问，含危险操作）"));
+            Controllers.prompt(builder);
+        });
+        nodes.add(addRule);
+        return nodes;
+    }
+
+    private static String pathOverrideModeDisplayName(AiToolPermissionStore.OverrideMode mode) {
+        return switch (mode) {
+            case FOLLOW_GLOBAL -> "跟随全局";
+            case ALWAYS_ASK -> "总是询问";
+            case ALWAYS_ALLOW -> "总是允许";
+        };
     }
 
     private Node buildSearchTab() {
@@ -1281,12 +1413,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }, searchConfig.getApiKey()));
         core.getContent().add(apiKey);
 
-        // 切换服务商时在内部同步默认 endpoint（端点不再作为独立设置项暴露）
+        // 切换服务商时在内部同步默认 endpoint（端点不再作为独立设置项暴露）；API Key 现在按服务商分开存储
+        // （见 AiSearchConfig），所以这里还要刷新 apiKey 行的副标题，否则会显示上一个服务商的 key 状态。
         provider.valueProperty().addListener((obs, old, val) -> {
             if (val != null) {
                 searchConfig.setProvider(val.name().toLowerCase());
                 if (!val.getDefaultEndpoint().isEmpty()) searchConfig.setEndpoint(val.getDefaultEndpoint());
                 saveSearchConfig();
+                apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? "未设置（多数服务商必填）" : "已设置");
             }
         });
 
@@ -1537,25 +1671,50 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             String json = Files.readString(OCR_CONFIG_FILE, StandardCharsets.UTF_8);
             AiOcrConfig loaded = GSON.fromJson(json, AiOcrConfig.class);
             if (loaded != null) ocrConfig = loaded;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            // A corrupt config file silently reset OCR settings to defaults with no way to
+            // diagnose it — at least log it.
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load OCR config", e);
         }
     }
 
     private void saveOcrConfig() {
         try {
             Files.writeString(OCR_CONFIG_FILE, GSON.toJson(ocrConfig), StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save OCR config", e);
         }
     }
 
     private Node buildDataTab() {
         VBox root = createSettingsRoot();
         root.getChildren().addAll(
+                ComponentList.createComponentListTitle("我的数据与安全"), buildDataSecurityList(),
                 ComponentList.createComponentListTitle("数据备份与恢复"), buildBackupSettingsList(),
                 ComponentList.createComponentListTitle("数据目录"), buildDataSettingsList(),
                 ComponentList.createComponentListTitle("清理"), buildCleanupSettingsList()
         );
         return wrapScroll(root);
+    }
+
+    /// "我的数据与安全" — moved here (from the old buildGeneralTab()) as part of the settings-page
+    /// IA cleanup: protecting the user's saves/files belongs with the rest of the data-related
+    /// settings, not in a miscellaneous "全局设置" catch-all.
+    private ComponentList buildDataSecurityList() {
+        ComponentList list = new ComponentList();
+        list.getContent().addAll(
+                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
+                        aiSettings.fileWriteConfirmEnabledProperty()),
+                toggleRow("删除到系统回收站", "AI 删除世界等内容时移入系统回收站（可还原）而非永久删除；关闭则直接永久删除",
+                        aiSettings.deleteToRecycleBinProperty()),
+                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
+                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
+                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
+                        aiSettings.autoBackupBeforeNbtEditProperty()),
+                buildTraceEnabledRow(),
+                buildUploadDiagnosticRow(),
+                buildPrivacyNoticeRow());
+        return list;
     }
 
     private Node buildBackupSettingsList() {
@@ -1721,7 +1880,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         LineButton skillsDir = new LineButton();
         skillsDir.setTitle("技能目录");
-        skillsDir.setSubtitle(SKILLS_DIR.toString());
+        skillsDir.setSubtitle(SKILLS_DIR + "（仅存放自建技能；内置技能已随程序打包为只读资源，不在此目录中，也不会被本目录的操作影响）");
         skillsDir.setTrailingIcon(SVG.FOLDER_OPEN);
         skillsDir.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
         list.getContent().add(skillsDir);
@@ -1835,23 +1994,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private Node buildGeneralTab() {
         VBox root = createSettingsRoot();
 
-        // ============ 1) 对话与模型 — everyday, always visible ============
+        // ============ 对话与模型 ============
+        // "回复语言" and "AI 标题命名"/"标题命名模型" used to live here — deleted outright (the
+        // latter two were dead settings: AiTitleNamingStrategy's AI-powered tier was never more
+        // than a scaffolding placeholder, and maybeAutoTitle() never checked the toggle at all; the
+        // real feature is "自动命名会话" below, wired to agent.suggestTitle(...)). The "AI 能力与
+        // 行为"/"我的数据与安全"/"高级与开发者" cards that used to pile up below this list have
+        // moved to the 技能 / 数据设置 / 高级设置 tabs respectively — see buildAbilitySublist(),
+        // buildDataSecurityList(), and buildAdvancedTab().
         ComponentList chatList = new ComponentList();
-
-        // 回复语言
-        LineSelectButton<String> replyLang = new LineSelectButton<>();
-        replyLang.setTitle("回复语言");
-        replyLang.setSubtitle("auto=跟随用户语言；也可强制中文/英文");
-        replyLang.setItems(List.of("auto", "zh", "en"));
-        replyLang.setNullSafeConverter(AISettingsPage::responseLanguageDisplay);
-        replyLang.setValue(normalizeLang(aiSettings.getResponseLanguage()));
-        replyLang.valueProperty().addListener((obs, old, val) -> {
-            if (val != null) {
-                aiSettings.responseLanguageProperty().set(val);
-                saveAiSettings();
-            }
-        });
-        chatList.getContent().add(replyLang);
 
         // 默认推理强度
         LineSelectButton<String> reasoning = new LineSelectButton<>();
@@ -1869,108 +2020,33 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         });
         chatList.getContent().add(reasoning);
 
-        // AI 标题命名
-        LineToggleButton titleNaming = new LineToggleButton();
-        titleNaming.setTitle(i18n("ai.settings.title_naming"));
-        titleNaming.setSubtitle(i18n("ai.settings.title_naming.desc"));
-        titleNaming.selectedProperty().bindBidirectional(aiSettings.titleNamingEnabledProperty());
-        // bindBidirectional only updates the in-memory property — without this listener the
-        // toggle silently reverted on restart (nothing ever called save()).
-        titleNaming.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
-        chatList.getContent().add(titleNaming);
-
-        // 标题命名模型
-        LineSelectButton<String> titleNamingModel = new LineSelectButton<>();
-        titleNamingModel.setTitle(i18n("ai.settings.title_naming_model"));
-        titleNamingModel.setSubtitle("为空时使用当前默认模型");
-        List<String> modelChoices = buildModelChoices(true);
-        titleNamingModel.setItems(modelChoices);
-        titleNamingModel.setNullSafeConverter(value -> value.isEmpty() ? "Auto" : value);
-        titleNamingModel.setValue(aiSettings.getTitleNamingModelId().isEmpty() ? "" : aiSettings.getTitleNamingModelId());
-        titleNamingModel.valueProperty().addListener((obs, old, value) -> {
-            if (value != null) {
-                aiSettings.titleNamingModelIdProperty().set(value);
-                saveAiSettings();
-            }
-        });
-        chatList.getContent().add(titleNamingModel);
-
         // 自动命名会话
         chatList.getContent().add(toggleRow("自动命名会话",
                 "首轮对话后让模型生成简短标题（替代截取首句）", aiSettings.autoTitleEnabledProperty()));
         // 流式输出 / 自动滚动 / 回车发送 等聊天行为已移至「聊天设置」抽屉的「交互」区，不在全局重复。
 
-        // ============ 2) AI 能力与行为 ============
-        // 自定义指令 (built first so it can be placed in the group)
-        LineButton customInstructions = new LineButton();
-        customInstructions.setTitle("自定义指令");
-        customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
-                ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
-        customInstructions.setTrailingIcon(SVG.EDIT);
-        customInstructions.setOnAction(e -> Controllers.prompt("自定义指令（会追加到系统提示，AI 务必遵守）", (result, handler) -> {
-            aiSettings.customInstructionsProperty().set(result.trim());
-            saveAiSettings();
-            customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
-                    ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
-            handler.resolve();
-        }, aiSettings.getCustomInstructions()));
+        root.getChildren().addAll(
+                ComponentList.createComponentListTitle("对话与模型"), chatList);
+        return wrapScroll(root);
+    }
 
-        // 自动崩溃分析
-        LineToggleButton crashAnalysis = new LineToggleButton();
-        crashAnalysis.setTitle(i18n("ai.settings.auto_crash_analysis"));
-        crashAnalysis.setSubtitle(i18n("ai.settings.auto_crash_analysis.desc"));
-        crashAnalysis.selectedProperty().bindBidirectional(aiSettings.autoCrashAnalysisEnabledProperty());
-        // Same as titleNaming above: persist on toggle, or the change is lost on restart.
-        crashAnalysis.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
+    /// Advanced/developer settings tab: execution limits, dangerous developer-only toggles, and the
+    /// Auto approval-mode explainer (see buildAutoModeInfoRow()) — moved here (from the old
+    /// buildGeneralTab()'s "高级与开发者" card) as part of the settings-page IA cleanup. This is
+    /// also the ONE place the (now-unified) approval mode is surfaced — the duplicate copy that
+    /// used to live in the 技能与工具 tab's "工具权限" card has been removed (see buildSkillsTab()).
+    private Node buildAdvancedTab() {
+        VBox root = createSettingsRoot();
 
-        ComponentSublist abilitySub = new ComponentSublist();
-        abilitySub.setTitle("AI 能力与行为");
-        abilitySub.setHasSubtitle(true);
-        abilitySub.setDescription("让 AI 能联网、记忆、运行命令，以及主动帮你做的事");
-        abilitySub.getContent().setAll(
-                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
-                        aiSettings.webAccessEnabledProperty()),
-                toggleRow("启用全局记忆", "让 AI 记住/调取跨会话事实（remember/recall 工具，重启后生效）",
-                        aiSettings.memoryEnabledProperty()),
-                toggleRow("自动调用记忆", "每次对话开始时，把全局记忆里的条目注入系统提示（限 1.5KB）",
-                        aiSettings.autoRecallMemoryProperty()),
-                toggleRow("技能自动匹配", "你的消息命中技能触发词时，自动把该技能手册喂给 AI 照着做（对能力较弱的模型帮助最大）",
-                        aiSettings.autoSkillInjectionProperty()),
-                crashAnalysis,
-                customInstructions,
-                toggleRow("启用 Shell 工具", "关闭后 AI 无法执行系统命令（更安全，重启后生效）",
-                        aiSettings.shellToolEnabledProperty()));
-        ComponentList abilityCard = new ComponentList();
-        abilityCard.getContent().add(abilitySub);
-
-        // ============ 3) 我的数据与安全 ============
-        ComponentSublist dataSub = new ComponentSublist();
-        dataSub.setTitle("我的数据与安全");
-        dataSub.setHasSubtitle(true);
-        dataSub.setDescription("保护你的存档与文件");
-        dataSub.getContent().setAll(
-                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
-                        aiSettings.fileWriteConfirmEnabledProperty()),
-                toggleRow("删除到系统回收站", "AI 删除世界等内容时移入系统回收站（可还原）而非永久删除；关闭则直接永久删除",
-                        aiSettings.deleteToRecycleBinProperty()),
-                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
-                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
-                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
-                        aiSettings.autoBackupBeforeNbtEditProperty()),
-                buildPrivacyNoticeRow());
-        ComponentList dataCard = new ComponentList();
-        dataCard.getContent().add(dataSub);
-
-        // ============ 4) 高级与开发者（折叠，默认收起）：进阶执行参数 + 危险开关 ============
-        ComponentSublist advancedSub = new ComponentSublist();
-        advancedSub.setTitle("高级与开发者");
-        advancedSub.setHasSubtitle(true);
-        advancedSub.setDescription("⚠ 进阶/高风险：审批模式、执行参数与危险开关。不清楚作用请勿改动");
-        advancedSub.getContent().setAll(
-                buildApprovalModeRow(),
+        ComponentList list = new ComponentList();
+        list.getContent().addAll(
+                buildAutoModeInfoRow(),
+                // "危险操作二次确认" itself (the orange, non-critical toggle) lives in the 技能 tab's
+                // "工具权限" card (see buildSkillsTab/buildDangerousConfirmationRow) — it's a single
+                // copy, not a duplicate, so it stays where it already was rather than moving here too.
                 toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
                         aiSettings.criticalConfirmEnabledProperty()),
-                toggleRow("启用存档 NBT 编辑工具", "高危：让 AI 直接读写存档/玩家 NBT 数据（read_nbt/set_nbt/copy_player_data 等）。谨慎用户可整组关闭，重启后生效",
+                toggleRow("启用存档 NBT 编辑工具", "默认关闭：高危，让 AI 直接读写存档/玩家 NBT 数据（nbt 工具域）。仅在需要精细改存档时手动开启，重启后生效",
                         aiSettings.nbtToolsEnabledProperty()),
                 toggleRow("上下文接近上限自动压缩", "对话接近模型上下文窗口 90% 时自动压缩历史，防止溢出报错",
                         aiSettings.autoCompactEnabledProperty()),
@@ -1983,53 +2059,66 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
                         aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"),
                 buildSpendLimitRow(),
+                buildShellToolRow(),
                 buildDangerouslySkipRow(),
                 toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
                         aiSettings.toolCallLoggingEnabledProperty()));
-        ComponentList advancedCard = new ComponentList();
-        advancedCard.getContent().add(advancedSub);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("对话与模型"), chatList,
-                ComponentList.createComponentListTitle("AI 能力与行为"), abilityCard,
-                ComponentList.createComponentListTitle("我的数据与安全"), dataCard,
-                ComponentList.createComponentListTitle("高级与开发者"), advancedCard);
+                ComponentList.createComponentListTitle("高级与开发者"), list);
         return wrapScroll(root);
     }
 
-    /// Builds the 审批模式 selector (SAFE / ASK / YOLO) for the 高级选项 card, bound to the
-    /// stored {@code approvalMode} string. Selecting YOLO pops a warning; cancelling reverts.
-    private LineSelectButton<AiApprovalMode> buildApprovalModeRow() {
-        LineSelectButton<AiApprovalMode> approval = new LineSelectButton<>();
-        approval.setTitle("审批模式");
-        approval.setSubtitle("工具调用放行策略：安全=仅放行只读/安全操作，询问=写操作需确认，放行=全部自动放行");
-        approval.setItems(List.of(AiApprovalMode.SAFE, AiApprovalMode.ASK, AiApprovalMode.YOLO));
-        approval.setNullSafeConverter(mode -> switch (mode) {
-            case SAFE -> "安全 (SAFE)";
-            case ASK -> "询问 (ASK)";
-            case YOLO -> "放行 (YOLO)";
-        });
-        // Show the STORED mode (not the effective getApprovalModeEnum, which the developer
-        // bypass forces to YOLO), so this selector reflects the user's actual choice.
-        approval.setValue(AiApprovalMode.fromId(aiSettings.getApprovalMode()));
-        approval.valueProperty().addListener((obs, old, mode) -> {
-            if (mode == null) return;
-            if (mode == AiApprovalMode.YOLO) {
+    /// Replaces the old 3-way 审批模式 selector (SAFE / ASK / YOLO — see {@link AiApprovalMode}'s
+    /// own doc for that merge) with a purely informational row: there is nothing left to CHOOSE
+    /// (only {@link AiApprovalMode#AUTO} exists), so this just explains what Auto actually does,
+    /// tapping through to a longer explanation dialog. The two duplicate approval-mode entries that
+    /// used to live in this tab AND in the 技能与工具 tab's "工具权限" card are now this single row.
+    private LineButton buildAutoModeInfoRow() {
+        LineButton row = new LineButton();
+        row.setTitle("审批模式：Auto");
+        row.setSubtitle("只读/联网/常规写入自动放行；危险操作视情况询问确认，若当前任务可能无人值守则直接拦下，不会静默放行");
+        row.setTrailingIcon(SVG.INFO);
+        row.setOnAction(e -> Controllers.dialog(
+                "只读、联网、常规写入类操作会自动放行，无需确认。\n\n"
+                        + "危险操作（如破坏性 shell 命令、删除实例等）在你实际值守时会弹窗询问"
+                        + "（可通过“技能”tab 里的“危险操作二次确认”关闭，关闭后这类操作也会自动放行）。\n\n"
+                        + "但如果当前任务可能处于无人值守状态（例如：后台任务完成后 AI 自动续接对话），"
+                        + "危险操作会被直接拦下、绝不静默执行——这一条不受上面开关影响，也没有办法通过"
+                        + "切换到某个“更宽松”的模式绕开，因为现在只有 Auto 这一种模式了。\n\n"
+                        + "极危操作（删存档/改 NBT/删备份等）另有独立的红色二次确认，同样遵循以上规则。",
+                "审批模式说明", MessageType.INFO));
+        return row;
+    }
+
+    /// Builds the "启用 Shell 工具" toggle. Off by default — see
+    /// {@link AiSettings#DEFAULT_SHELL_TOOL_ENABLED}. Turning it ON pops a heads-up confirmation
+    /// (not a full red warning like {@link #buildDangerouslySkipRow()} — shell itself isn't
+    /// catastrophic, it's just redundant with safer dedicated tools for almost everything);
+    /// cancelling reverts the toggle to off.
+    private LineToggleButton buildShellToolRow() {
+        LineToggleButton t = new LineToggleButton();
+        t.setTitle("启用 Shell 工具");
+        t.setSubtitle("默认关闭：常规操作均有专属工具覆盖，仅边缘场景建议手动开启（重启后生效）");
+        t.setSelected(aiSettings.isShellToolEnabled());
+        t.selectedProperty().addListener((obs, oldV, newV) -> {
+            if (newV) {
                 Controllers.confirm(
-                        "YOLO 会自动放行危险操作。当前为测试阶段,请自负风险。",
-                        "启用 YOLO 模式",
+                        "Shell 工具能执行任意系统命令。装Mod/改内存/管理存档/切换Java等常规操作都已有专属工具更安全地完成，"
+                                + "只建议在这些工具覆盖不到的边缘场景手动开启。确定开启?",
+                        "启用 Shell 工具",
                         MessageType.WARNING,
                         () -> {
-                            aiSettings.approvalModeProperty().set(mode.getId());
+                            aiSettings.shellToolEnabledProperty().set(true);
                             saveAiSettings();
                         },
-                        () -> approval.setValue(old)); // cancel → revert the selection
-                return;
+                        () -> t.setSelected(false)); // cancel → revert to off
+            } else {
+                aiSettings.shellToolEnabledProperty().set(false);
+                saveAiSettings();
             }
-            aiSettings.approvalModeProperty().set(mode.getId());
-            saveAiSettings();
         });
-        return approval;
+        return t;
     }
 
     /// Builds the 开发者选项 "skip all permission confirmations" toggle. Turning it ON pops a
@@ -2058,18 +2147,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return t;
     }
 
-    private static String responseLanguageDisplay(String mode) {
-        return switch (mode) {
-            case "zh" -> "简体中文";
-            case "en" -> "English";
-            default -> "自动 (auto)";
-        };
-    }
-
-    private static String normalizeLang(String mode) {
-        return ("zh".equals(mode) || "en".equals(mode)) ? mode : "auto";
-    }
-
     // ---- Reusable setting-row helpers (toggle / integer slider) --------------------
 
     /// Builds a native toggle row bound to a boolean setting; persists on change.
@@ -2079,6 +2156,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         t.setSubtitle(subtitle);
         t.selectedProperty().bindBidirectional(prop);
         t.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
+        return t;
+    }
+
+    /// Builds a permanently-off, non-interactive toggle row for a feature that's product-disabled
+    /// rather than merely defaulted off (currently: global memory) — kept in place, greyed out, so
+    /// the setting's existence/intent is still visible instead of silently vanishing.
+    private LineToggleButton disabledToggleRow(String title, String subtitle) {
+        LineToggleButton t = new LineToggleButton();
+        t.setTitle(title);
+        t.setSubtitle(subtitle);
+        t.setSelected(false);
+        t.setDisable(true);
         return t;
     }
 
@@ -2093,6 +2182,34 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         row.setTitle("隐私与数据说明");
         row.setSubtitle("查看使用 AI 时会向服务提供商发送哪些数据");
         row.setOnAction(e -> AIMainPage.showPrivacyNotice());
+        return row;
+    }
+
+    /// Toggles whether every turn's full conversation / tool-call trace is written to
+    /// `.hmcl/logs/ai-trace/<session>.jsonl`. Flips {@link org.jackhuang.hmcl.ai.trace.TraceRecorder}
+    /// live (no restart needed) in addition to persisting the setting.
+    private LineToggleButton buildTraceEnabledRow() {
+        LineToggleButton t = new LineToggleButton();
+        t.setTitle("记录诊断 Trace");
+        t.setSubtitle("完整记录对话与工具调用轨迹（已自动脱敏 API Key），用于问题排查；出问题时可在下方一键上传给开发者");
+        t.selectedProperty().bindBidirectional(aiSettings.traceEnabledProperty());
+        t.selectedProperty().addListener((o, ov, nv) -> {
+            org.jackhuang.hmcl.ai.trace.TraceRecorder.setEnabled(nv);
+            saveAiSettings();
+        });
+        return t;
+    }
+
+    /// One-tap diagnostic upload: packages the current session's trace (already redacted at
+    /// write time) and POSTs it to the feedback endpoint, returning a short reference id.
+    /// The actual flow lives in {@link DiagnosticUploadFlow} so the main page's pinned "反馈"
+    /// sidebar entry can trigger the identical path without navigating into this page first.
+    private LineButton buildUploadDiagnosticRow() {
+        LineButton row = new LineButton();
+        row.setTitle("上传诊断信息");
+        row.setSubtitle("把当前会话的完整 Trace（已自动脱敏）发给开发者排查问题");
+        row.setTrailingIcon(SVG.FEEDBACK);
+        row.setOnAction(e -> DiagnosticUploadFlow.trigger(aiSettings));
         return row;
     }
 
@@ -2324,23 +2441,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         providerFeedback.getStyleClass().add(success ? "ai-feedback-success" : "ai-feedback-error");
     }
 
-    private List<String> buildModelChoices(boolean includeAuto) {
-        List<String> choices = new ArrayList<>();
-        if (includeAuto) choices.add("");
-        for (AiProviderProfile profile : aiSettings.getProfiles()) {
-            if (!profile.isEnabled()) continue;
-            String defaultModel = profile.getDefaultModelId();
-            if (defaultModel != null && !defaultModel.isBlank()) {
-                choices.add(profile.getDisplayName() + " / " + defaultModel);
-            }
-            for (String model : profile.getCachedModels()) {
-                String display = profile.getDisplayName() + " / " + profile.getModelAliasOrId(model);
-                if (!choices.contains(display)) choices.add(display);
-            }
-        }
-        return choices;
-    }
-
     private void loadMcpServers() {
         mcpServers.clear();
         try {
@@ -2348,14 +2448,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             String json = Files.readString(MCP_CONFIG_FILE, StandardCharsets.UTF_8);
             List<AiMcpServerConfig> loaded = GSON.fromJson(json, new TypeToken<List<AiMcpServerConfig>>(){}.getType());
             if (loaded != null) mcpServers.addAll(loaded);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load MCP server config", e);
         }
     }
 
     private void saveMcpServers() {
         try {
             Files.writeString(MCP_CONFIG_FILE, GSON.toJson(mcpServers), StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save MCP server config", e);
         }
     }
 
@@ -2365,28 +2467,32 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             String json = Files.readString(SEARCH_CONFIG_FILE, StandardCharsets.UTF_8);
             AiSearchConfig loaded = GSON.fromJson(json, AiSearchConfig.class);
             if (loaded != null) searchConfig = loaded;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load search config", e);
         }
     }
 
     private void saveSearchConfig() {
         try {
             Files.writeString(SEARCH_CONFIG_FILE, GSON.toJson(searchConfig), StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save search config", e);
         }
     }
 
     private void loadToolPermissions() {
         try {
             toolPermissionStore.load();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load tool permissions", e);
         }
     }
 
     private void saveToolPermissions() {
         try {
             toolPermissionStore.save();
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save tool permissions", e);
         }
     }
 

@@ -1,0 +1,23 @@
+{
+  "name": "manage-worlds-and-backups",
+  "description": "How to manage singleplayer worlds — back up, restore, import maps, and recover from mistakes. Use when the user mentions saves, backups, restoring, or importing a downloaded map (\"存档\",\"备份\",\"恢复\",\"回档\",\"导入地图\").",
+  "version": "1.0",
+  "triggers": [
+    "存档",
+    "备份",
+    "回档",
+    "恢复存档",
+    "导入地图",
+    "导入存档",
+    "导出存档",
+    "地图没了",
+    "存档丢",
+    "world backup",
+    "restore world"
+  ],
+  "requires": [
+    "worlds-backup",
+    "worlds-import"
+  ],
+  "body": "# Worlds & backups\n\nGoal: keep the user's worlds safe — back up before anything risky, restore cleanly, and\nnever let a mistake become permanent. Mechanics live in the required skills; this is the\nrouting map plus the judgment calls specific to this scenario.\n\n## Common jobs\n- **备份 (\"帮我备份存档\")** — confirm which world(s), then use `worlds-backup`\n  (create). Report where snapshots live and the retention count.\n- **恢复/回档** — use `worlds-backup` (list, then restore). NEVER restore while\n  the game is running that world — ask the user to quit it first.\n- **导入下载的地图 (\"导入地图\")** — use `worlds-import`.\n- **存档不见了/坏了** — no dedicated tool; diagnose instead: check `instance(action=worlds_list)`\n  for the EXPECTED instance (version isolation means each instance has its own saves dir —\n  looking in the wrong instance is the most common cause, not real data loss), then check\n  `instance(action=worlds_backup_list)` before concluding the world is actually lost.\n\n## Rule\nBefore any restore/delete/NBT edit on a world: back it up first via `worlds-backup`, always."
+}

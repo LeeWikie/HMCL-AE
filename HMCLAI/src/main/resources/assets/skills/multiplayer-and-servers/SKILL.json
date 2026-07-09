@@ -1,0 +1,30 @@
+{
+  "name": "multiplayer-and-servers",
+  "description": "How to help the user play with friends — join a server, reason about why a server seems unreachable, set up LAN play, and match version/mods with the server. Use when the user mentions multiplayer, joining a server, LAN, or playing with friends (\"联机\",\"进服\",\"服务器\",\"局域网\",\"一起玩\").",
+  "version": "1.0",
+  "triggers": [
+    "联机",
+    "服务器",
+    "进服",
+    "加服",
+    "开服",
+    "局域网",
+    "直连",
+    "一起玩",
+    "和朋友玩",
+    "进不去服",
+    "白名单",
+    "whitelist",
+    "multiplayer",
+    "server",
+    "join server",
+    "lan"
+  ],
+  "requires": [
+    "login-and-switch",
+    "create-instance",
+    "mods-install",
+    "modpacks-install"
+  ],
+  "body": "# Multiplayer & servers\n\nConnect the user; no ping tool — reason from what they report, never claim to test it.\n\n## Reachability\nSaved servers = `servers.dat` (NBT) in the run dir; ask for the address if unavailable. Ask\nwhat they see (timeout/refused/version mismatch/kick reason) and reason from it.\n\n## Matching the client\n- Version mismatch = #1 cause → new instance via `create-instance`, don't edit in place.\n- Modded server → get its mod/modpack list, install via `mods-install`/`modpacks-install`.\n- Online-mode (\"正版验证\") needs a Microsoft account → `account(action=microsoft_login)` if\n  only offline accounts exist.\n- Whitelist (\"白名单\") is a SEPARATE server-owner-only list, unrelated to online-mode; ask the\n  owner to add the exact username.\n\n## LAN play\nHost: singleplayer → Esc → \"对局域网开放\". Guest: auto-detected or `<host-ip>:<port>`\n(`list_local_ip` for the IP). Offline accounts need different usernames; cross-network needs\na real server or VPN tool (Hamachi/ZeroTier)."
+}

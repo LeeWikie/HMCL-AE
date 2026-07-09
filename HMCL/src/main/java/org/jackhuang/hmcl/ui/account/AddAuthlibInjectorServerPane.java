@@ -118,6 +118,7 @@ public final class AddAuthlibInjectorServerPane extends TransitionPane implement
 
                 lblServerWarning = new Label(i18n("account.injector.http"));
                 lblServerWarning.setStyle("-fx-text-fill: -monet-error;");
+                lblServerWarning.setWrapText(true);
                 GridPane.setColumnIndex(lblServerWarning, 0);
                 GridPane.setRowIndex(lblServerWarning, 2);
                 lblServerWarning.managedProperty().bind(lblServerWarning.visibleProperty());

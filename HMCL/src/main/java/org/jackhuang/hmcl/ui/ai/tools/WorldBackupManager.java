@@ -61,6 +61,11 @@ public final class WorldBackupManager {
     /// The per-instance directory under which all AI world backups live.
     public static final String BACKUP_DIR_NAME = "ai-world-backups";
 
+    /// Directory (under {@link #BACKUP_DIR_NAME}) that stores pending first-launch
+    /// safety-backup markers for freshly-imported worlds — see
+    /// {@link #markPendingFirstLaunchBackup} / {@link #consumePendingFirstLaunchBackups}.
+    private static final String PENDING_FIRST_LAUNCH_DIR_NAME = "pending-first-launch";
+
     /// Timestamp folder format: `yyyyMMdd-HHmmss`.
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
@@ -83,6 +88,15 @@ public final class WorldBackupManager {
     /// *current* world right before it was overwritten (or {@code null} if the
     /// world did not exist yet, so there was nothing to protect).
     public record RestoreResult(Path restoredWorldPath, @Nullable String safetyBackupId, int fileCount) {
+    }
+
+    /// Outcome of {@link #consumePendingFirstLaunchBackups}: which pending worlds were
+    /// successfully snapshotted, and which still have a marker because their backup failed
+    /// (and will be retried on the next launch attempt).
+    public record PendingBackupResult(List<String> backedUpWorlds, List<String> failedWorlds) {
+        public boolean isEmpty() {
+            return backedUpWorlds.isEmpty() && failedWorlds.isEmpty();
+        }
     }
 
     // ---- Instance / path resolution (path-confined) --------------------------------
@@ -150,6 +164,20 @@ public final class WorldBackupManager {
         return worldBackupRoot;
     }
 
+    /// Resolves the directory that stores pending first-launch markers.
+    private static Path pendingMarkerDir(Path runDir) {
+        return runDir.resolve(BACKUP_DIR_NAME).resolve(PENDING_FIRST_LAUNCH_DIR_NAME).toAbsolutePath().normalize();
+    }
+
+    /// Resolves one world's pending-marker file, confined to the marker directory.
+    private static Path resolvePendingMarker(Path markerDir, String world) throws IOException {
+        Path marker = markerDir.resolve(world).toAbsolutePath().normalize();
+        if (!marker.startsWith(markerDir) || marker.equals(markerDir)) {
+            throw new IOException("Illegal world name '" + world + "' (path escapes the marker directory).");
+        }
+        return marker;
+    }
+
     // ---- Public engine API ---------------------------------------------------------
 
     /// Creates a full-copy, timestamped snapshot of `saves/<world>` and prunes
@@ -172,7 +200,22 @@ public final class WorldBackupManager {
         String id = uniqueSnapshotId(backupRoot);
         Path target = backupRoot.resolve(id);
 
-        long[] counters = copyTree(worldDir, target); // [0] files, [1] bytes
+        long[] counters; // [0] files, [1] bytes
+        try {
+            counters = copyTree(worldDir, target);
+        } catch (IOException e) {
+            // A failed/partial copy (e.g. disk full) must not leave a truncated snapshot folder
+            // behind — listBackups()/prune() would otherwise treat it as a complete, restorable
+            // backup. Best-effort cleanup; if even that fails, surface both.
+            try {
+                if (Files.exists(target)) {
+                    deleteTree(target);
+                }
+            } catch (IOException cleanupFailed) {
+                e.addSuppressed(cleanupFailed);
+            }
+            throw e;
+        }
 
         int pruned = prune(backupRoot, retentionCount);
         return new BackupResult(target, id, (int) counters[0], counters[1], pruned);
@@ -199,7 +242,7 @@ public final class WorldBackupManager {
                 result.add(new BackupInfo(id, (int) stats[0], stats[1]));
             }
         }
-        result.sort(Comparator.comparing(BackupInfo::id).reversed());
+        result.sort(Comparator.comparing(BackupInfo::id, WorldBackupManager::compareSnapshotIds).reversed());
         return result;
     }
 
@@ -282,16 +325,142 @@ public final class WorldBackupManager {
             throw swapFailed;
         }
 
-        // 4) The staged copy is fully in place — only now drop the set-aside original, and apply
-        //    retention only AFTER the restore has fully succeeded.
+        // 4) The staged copy is fully in place — the restore itself has ALREADY fully succeeded at
+        //    this point (saves/<world> now IS the snapshot). Dropping the set-aside original and
+        //    pruning old snapshots are both best-effort cleanup from here on: e.g. if the game
+        //    process still holds an open handle into `replaced`, deleteTree() can throw even
+        //    though the restore worked — that must not turn an already-completed restore into a
+        //    reported failure (with the trailing prune() silently skipped as a side effect of the
+        //    exception propagating out early).
         if (replaced != null && Files.exists(replaced)) {
-            deleteTree(replaced);
+            try {
+                deleteTree(replaced);
+            } catch (IOException cleanupFailed) {
+                // best-effort: leave the stale copy at `replaced` rather than failing a completed restore
+            }
         }
-        prune(backupRoot, retentionCount);
+        try {
+            prune(backupRoot, retentionCount);
+        } catch (IOException pruneFailed) {
+            // best-effort: a pruning failure must not mask an already-successful restore
+        }
         return new RestoreResult(worldDir, safetyId, (int) counters[0]);
     }
 
+    /// Marks {@code world} as needing an automatic safety backup before its NEXT launch.
+    ///
+    /// Called by `import_world` right after a fresh save is successfully extracted: an
+    /// old/incompatible world can be silently truncated or corrupted the very first time
+    /// Minecraft opens it, and until now there was no backup to fall back to in that case.
+    /// The marker is a plain empty file under `<runDir>/ai-world-backups/pending-first-launch/`
+    /// so it survives an app restart between the import and the eventual launch.
+    ///
+    /// @see #consumePendingFirstLaunchBackups(String, int)
+    public static void markPendingFirstLaunchBackup(@Nullable String instance, String world) throws IOException {
+        Path runDir = resolveRunDirectory(instance);
+        Path markerDir = pendingMarkerDir(runDir);
+        Files.createDirectories(markerDir);
+        Path marker = resolvePendingMarker(markerDir, world);
+        Files.writeString(marker, "");
+    }
+
+    /// Consumes (backs up and clears) every pending first-launch marker for {@code instance},
+    /// taking a normal versioned snapshot of each still-existing world via {@link #createBackup}.
+    ///
+    /// Called by `launch_instance` right before the actual game launch is dispatched — this is
+    /// what turns {@link #markPendingFirstLaunchBackup} into an actual safety net.
+    ///
+    /// Best-effort per world: a world whose backup fails KEEPS its marker (so it is retried on
+    /// the next launch attempt) and is reported in {@link PendingBackupResult#failedWorlds()}
+    /// rather than throwing — a failed safety net must never block the user from playing.
+    /// A world that no longer exists under `saves/` (deleted/renamed since import) has nothing
+    /// left to protect, so its marker is silently dropped.
+    ///
+    /// Never throws: any failure resolving the instance itself (no profile/instance selected,
+    /// etc.) yields an empty result rather than propagating, since the caller has already
+    /// validated the instance before launching.
+    public static PendingBackupResult consumePendingFirstLaunchBackups(@Nullable String instance, int retentionCount) {
+        List<String> backedUp = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        try {
+            Path runDir = resolveRunDirectory(instance);
+            Path markerDir = pendingMarkerDir(runDir);
+            if (!Files.isDirectory(markerDir)) {
+                return new PendingBackupResult(backedUp, failed);
+            }
+
+            List<String> worlds = new ArrayList<>();
+            try (Stream<Path> children = Files.list(markerDir)) {
+                for (Path marker : (Iterable<Path>) children::iterator) {
+                    if (Files.isRegularFile(marker)) {
+                        worlds.add(marker.getFileName().toString());
+                    }
+                }
+            }
+
+            for (String world : worlds) {
+                Path marker;
+                Path worldDir;
+                try {
+                    marker = resolvePendingMarker(markerDir, world);
+                    worldDir = resolveWorldDir(runDir, world);
+                } catch (IOException illegalName) {
+                    failed.add(world);
+                    continue;
+                }
+                if (!Files.isDirectory(worldDir)) {
+                    // The world was deleted/renamed since import: nothing left to protect.
+                    try {
+                        Files.deleteIfExists(marker);
+                    } catch (IOException ignored) {
+                        // best-effort cleanup of a now-meaningless marker
+                    }
+                    continue;
+                }
+                try {
+                    createBackup(instance, world, retentionCount);
+                    Files.deleteIfExists(marker);
+                    backedUp.add(world);
+                } catch (IOException backupFailed) {
+                    failed.add(world);
+                }
+            }
+        } catch (IOException resolveFailed) {
+            // No profile/instance available for the given id — nothing to protect.
+        }
+        return new PendingBackupResult(backedUp, failed);
+    }
+
     // ---- Internals -----------------------------------------------------------------
+
+    /// Compares two snapshot ids chronologically. The fixed-width `yyyyMMdd-HHmmss` prefix (15
+    /// chars) sorts correctly as a plain string (same width, lexicographic order == chronological
+    /// order), but a same-second collision's `-N` uniqueness suffix does NOT — plain string
+    /// comparison puts `"...-10"` before `"...-2"`. Parses that numeric suffix (0 when absent) and
+    /// compares it as an integer instead, so ordering stays correct once 10+ snapshots land within
+    /// the same second.
+    private static int compareSnapshotIds(String a, String b) {
+        String prefixA = a.length() >= 15 ? a.substring(0, 15) : a;
+        String prefixB = b.length() >= 15 ? b.substring(0, 15) : b;
+        int cmp = prefixA.compareTo(prefixB);
+        if (cmp != 0) {
+            return cmp;
+        }
+        return Integer.compare(snapshotSuffix(a), snapshotSuffix(b));
+    }
+
+    /// The numeric `-N` uniqueness suffix of a snapshot id (0 when absent or unparseable).
+    private static int snapshotSuffix(String id) {
+        int dash = id.indexOf('-', 15);
+        if (dash < 0) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(id.substring(dash + 1));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
 
     /// Produces a snapshot id for the current instant, appending `-N` if a folder
     /// with that timestamp already exists (two backups within the same second).
@@ -379,7 +548,8 @@ public final class WorldBackupManager {
             return 0;
         }
         // Newest first; delete everything past the retention window.
-        snapshots.sort(Comparator.comparing((Path p) -> p.getFileName().toString()).reversed());
+        snapshots.sort(Comparator.comparing((Path p) -> p.getFileName().toString(),
+                WorldBackupManager::compareSnapshotIds).reversed());
         int pruned = 0;
         for (int i = retentionCount; i < snapshots.size(); i++) {
             deleteTree(snapshots.get(i));

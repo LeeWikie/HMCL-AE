@@ -97,6 +97,49 @@ public final class RememberStoreTest {
         }
     }
 
+    /// remember() must cap an unbounded content string rather than writing it verbatim — a huge
+    /// memory would otherwise rely entirely on the generic, tool-agnostic tool-result truncation
+    /// as its only size backstop.
+    @Test
+    public void testRememberCapsOversizedContent() throws IOException {
+        Path dir = Files.createTempDirectory("hmcl-mem-cap-");
+        try {
+            RememberStore store = new RememberStore(dir);
+            store.init();
+            String huge = "x".repeat(50_000);
+            RememberStore.Entry e = store.remember("huge", List.of(), huge);
+            assertTrue(e.getContent().length() < huge.length(), "content must be capped, not stored verbatim");
+            assertTrue(e.getContent().contains("truncated"), "truncation must be visible, not silent");
+        } finally {
+            deleteDir(dir);
+        }
+    }
+
+    /// recall()'s documented "newest first" order must follow the parsed `created` timestamp, not
+    /// filename/Path order — title-based filenames (the normal case) don't correlate with creation
+    /// order at all, so sorting by Path silently broke this contract before.
+    @Test
+    public void testRecallOrdersByCreatedTimestampNotFilename() throws IOException, InterruptedException {
+        Path dir = Files.createTempDirectory("hmcl-mem-order-");
+        try {
+            RememberStore store = new RememberStore(dir);
+            store.init();
+            // Filename-alphabetical order is the OPPOSITE of creation order here ("aaa-first"
+            // written first but named to sort last if recall() only looked at Path).
+            store.remember("zzz-first-created", List.of(), "created first, unique-marker-A");
+            Thread.sleep(5);
+            store.remember("aaa-second-created", List.of(), "created second, unique-marker-B");
+
+            List<RememberStore.Entry> all = store.listAll();
+            assertEquals(2, all.size());
+            assertTrue(all.get(0).getContent().contains("unique-marker-B"),
+                    "the LATER-created entry must come first: " + all.get(0).getContent());
+            assertTrue(all.get(1).getContent().contains("unique-marker-A"));
+        } finally {
+            deleteDir(dir);
+        }
+    }
+
     private static void deleteDir(Path dir) throws IOException {
         if (!Files.exists(dir)) {
             return;

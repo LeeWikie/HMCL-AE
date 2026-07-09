@@ -146,8 +146,8 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 /// ## Global AI settings
 ///
 /// A dedicated section below the provider-profile form exposes global AI behaviour
-/// flags backed by {@link AiSettings}: title naming, auto log/crash analysis,
-/// tool-call display, and approval mode (Safe / Ask / YOLO). The approval mode is
+/// flags backed by {@link AiSettings}: auto session naming, auto log/crash analysis,
+/// tool-call display, and the (single, Auto) approval mode. The approval mode is
 /// also reflected as a badge in the chat header subtitle row.
 ///
 /// ## Model discovery
@@ -172,6 +172,12 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 @NotNullByDefault
 public final class AIMainPage extends DecoratorAnimatedPage implements DecoratorPage {
 
+    /// Max width of a chat bubble / card (user message, AI message, tool card, reasoning card,
+    /// todo card, …). Messages render one per row (never side-by-side), so this doesn't need to
+    /// reserve mirrored empty space the way a two-column layout would — raised from the original
+    /// 480px, which read as a narrow column with a large empty gutter on wide windows.
+    static final double AI_BUBBLE_MAX_WIDTH = 720;
+
     // ---- State ----
 
     private final ReadOnlyObjectWrapper<State> state = new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("ai.title")));
@@ -181,6 +187,23 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private final Map<String, ChatAgent> agentCache = new HashMap<>();
     private final ToolRegistry toolRegistry = new ToolRegistry();
+
+    /// Evicts and shuts down a single cached agent (its dedicated single-thread executor never
+    /// times out on its own, so a discarded-but-not-shutdown agent leaks a blocked worker thread).
+    private void evictAgent(String sessionId) {
+        ChatAgent agent = agentCache.remove(sessionId);
+        if (agent != null) {
+            agent.shutdown();
+        }
+    }
+
+    /// Shuts down every cached agent, then clears the cache — same rationale as {@link #evictAgent}.
+    private void clearAgentCache() {
+        for (ChatAgent agent : agentCache.values()) {
+            agent.shutdown();
+        }
+        agentCache.clear();
+    }
 
     /// The live registry of all registered agent tools — the single source of truth the settings
     /// page reads to show the real tool/permission list (instead of a stale hard-coded catalog).
@@ -199,6 +222,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private EditTool editTool;
     private GrepTool grepTool;
     private GlobTool globTool;
+    /// Domain tool merging local instance/mod/world/content-management actions; needs
+    /// `refreshRunDir()` on every instance switch (see {@link #refreshGameContext()}).
+    private org.jackhuang.hmcl.ui.ai.tools.InstanceTool instanceTool;
 
     // ---- Sidebar elements ----
 
@@ -237,6 +263,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final VBox todoCardContainer = new VBox();
     /// The single reusable TODO card; (re)built on each todo_write call.
     @Nullable private VBox todoCard;
+    /// Whether the todo item rows are shown (vs. just the "任务清单 (n/m)" header). Defaults to
+    /// expanded — unlike the jobs pane, the checklist is usually short and worth seeing at a
+    /// glance — but the header is clickable to collapse it (previously there was no way to at all).
+    private boolean todoExpanded = true;
 
     // ---- Toolbar ----
 
@@ -269,9 +299,43 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Panel shown above the input field when the agent calls the `ask` tool: renders the
     /// structured questions and a confirm button. Hidden/unmanaged when no question is pending.
     private final VBox askPanel = new VBox(8);
-    /// The in-flight `ask` future (completed on confirm, cancelled on stop/session switch).
+    /// The in-flight `ask` future (completed on confirm; cancelled on stop/session switch, or by
+    /// {@link org.jackhuang.hmcl.ui.ai.tools.AskTool} itself if its wait times out unanswered).
     @Nullable
     private volatile java.util.concurrent.CompletableFuture<java.util.List<String>> activeAsk;
+
+    /// Bookkeeping for the currently-displayed dangerous/critical confirm dialog (see
+    /// {@link #showConfirmDialog}), mirroring {@link #activeAsk} for the exact same reason: the
+    /// tool layer's {@code confirm()} call blocks the streaming client's OWN callback thread — NOT
+    /// the executor thread wrapped by {@link #currentResponse} — so cancelling
+    /// {@code currentResponse} alone never unblocks it. Without tracking this, the dialog (and its
+    /// blocked agent thread) would keep running for up to the full 120s/180s timeout after the user
+    /// pressed Stop, and — because {@link #exitStreamingState()} frees the app to start a brand-new
+    /// turn immediately — a fresh dialog could stack on top of it, letting the stale one resurface
+    /// and be answered completely out of context once the new one is dismissed.
+    private static final class PendingConfirm {
+        final java.util.concurrent.CompletableFuture<Boolean> future;
+        final java.util.concurrent.atomic.AtomicReference<javafx.scene.layout.Region> paneRef;
+        /// {@link #responseGeneration} at the moment this dialog was raised — lets a confirm
+        /// belonging to an already-abandoned turn be told apart from one still legitimately
+        /// pending for the CURRENT turn.
+        final int generation;
+
+        PendingConfirm(java.util.concurrent.CompletableFuture<Boolean> future,
+                       java.util.concurrent.atomic.AtomicReference<javafx.scene.layout.Region> paneRef,
+                       int generation) {
+            this.future = future;
+            this.paneRef = paneRef;
+            this.generation = generation;
+        }
+    }
+
+    /// The dangerous/critical confirm dialog currently awaiting the user's answer, or
+    /// {@code null} when none is pending. Set just before showing the dialog and cleared once it's
+    /// answered/cancelled/timed out — see {@link #showConfirmDialog} and
+    /// {@link #cancelActiveConfirm()}.
+    @Nullable
+    private volatile PendingConfirm activeConfirm;
 
     // ---- Typing indicator ----
 
@@ -308,19 +372,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         ReasoningCard(String initial, boolean expanded) {
             getStyleClass().add("ai-reasoning-card");
             setSpacing(4);
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
             content.setWrapText(true);
+            content.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
             content.getStyleClass().add("ai-reasoning-content");
             if (initial != null) {
                 text.append(initial);
                 content.setText(initial);
             }
+            // Same style class as the title so they share a font-size/baseline — previously the
+            // chevron had none and fell back to the platform default label size, which made the
+            // two glyphs look uncentered/skewed relative to each other ("歪扭字体对齐").
+            chevron.getStyleClass().add("ai-reasoning-title");
             Label title = new Label("思考过程");
             title.getStyleClass().add("ai-reasoning-title");
             HBox headerBox = new HBox(6, chevron, title);
             headerBox.setAlignment(Pos.CENTER_LEFT);
             JFXButton header = new JFXButton();
             header.setGraphic(headerBox);
-            header.setMaxWidth(Double.MAX_VALUE);
+            // NOT Double.MAX_VALUE: that stretched the button to the VBox's full assigned width
+            // (which can be much wider than "▾ 思考过程" itself, especially after the bubble-width
+            // increase above), so JFXButton's ripple — which clips to the button's own bounds, not
+            // its visible graphic — bloomed across a large empty area to the right of the text
+            // ("涟漪范围歪扭"). USE_PREF_SIZE keeps the button hugging headerBox's real content.
+            header.setMaxWidth(Region.USE_PREF_SIZE);
             header.setAlignment(Pos.CENTER_LEFT);
             header.getStyleClass().add("ai-reasoning-header");
             header.setOnAction(e -> setExpanded(!content.isVisible()));
@@ -351,6 +426,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     @Nullable
     private ToolCard activeToolCard;
 
+    /// The group card currently absorbing an uninterrupted run of tool calls (3rd+ consecutive
+    /// call onward), or {@code null} when the current run hasn't been promoted to a group yet
+    /// (0 or 1 calls so far). See {@link #appendToolCard} / {@link #endToolCallRun}.
+    @Nullable
+    private ToolCallGroupCard activeToolGroup;
+    /// The single standalone tool card added so far in the current run, before a 2nd call arrives
+    /// to justify grouping — and the wrapper HBox it was placed in, so it can be pulled back out
+    /// of {@link #messageList} and re-parented into a new group. Both null once a run reaches 0,
+    /// 2+ (grouped), or ends.
+    @Nullable
+    private ToolCard lastSoloToolCard;
+    @Nullable
+    private HBox lastSoloToolCardWrapper;
+
     /// Whether the message view should auto-scroll to the bottom on new content. Set false when
     /// the user scrolls up to read history; restored when they scroll back to the bottom.
     private boolean stickToBottom = true;
@@ -359,7 +448,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// used to ignore callbacks from a response the user has stopped.
     @Nullable
     private java.util.concurrent.CompletableFuture<Void> currentResponse;
-    private int responseGeneration = 0;
+    // volatile: onError()/the .exceptionally() handler read this on a background (langchain4j
+    // callback) thread before re-checking it a second time inside showAiError()'s Platform.runLater
+    // block — without volatile there is no cross-thread visibility guarantee that either read
+    // observes a concurrent update from the FX thread (e.g. stopResponse()'s responseGeneration++).
+    private volatile int responseGeneration = 0;
     /// Cancellation flag for the in-flight turn; set true by stopResponse() so the agent drops the
     /// streamed reply instead of persisting it after the user pressed Stop.
     @Nullable
@@ -372,6 +465,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// The currently-open thinking-level popup, tracked to prevent stacking duplicates.
     @Nullable
     private JFXPopup thinkingPopup;
+
+    /// Per-tool/per-action confirm-dialog overrides written by the "remember this choice" checkbox
+    /// on the non-critical confirm dialog — see {@link #showConfirmDialog}. Points at the SAME file
+    /// the AI settings page's own per-tool permission list reads/writes
+    /// ({@code ai-tool-permissions.json}), so a choice remembered here shows up there too, and vice
+    /// versa. Re-{@code load()}ed immediately before every write so a concurrent edit made through
+    /// that page's own (separate in-memory) instance isn't silently clobbered.
+    private final org.jackhuang.hmcl.ai.tools.AiToolPermissionStore toolPermissionStore =
+            new org.jackhuang.hmcl.ai.tools.AiToolPermissionStore(
+                    SettingsManager.localConfigDirectory().resolve("ai-tool-permissions.json"));
 
 
     // ---- Chat settings ----
@@ -438,6 +541,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Background jobs whose completion arrived while a turn was streaming; drained one-at-a-time by
     /// exitStreamingState() so a mid-turn completion still auto-continues instead of being dropped.
     private final java.util.ArrayDeque<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> pendingCompletions = new java.util.ArrayDeque<>();
+    /// Whether the turn currently being sent/streamed is a synthetic event turn (see
+    /// {@link #isPossiblyUnattended}) rather than a direct, just-now user message. Set at the start
+    /// of {@link #sendText} for every turn; read from the agent's background thread via
+    /// {@link #isPossiblyUnattended}, so this must stay {@code volatile}.
+    private volatile boolean currentTurnUnattended = false;
 
     // ---- Autocomplete ----
 
@@ -463,6 +571,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         this.aiSettings = new AiSettings(SettingsManager.localConfigDirectory());
         try {
             aiSettings.load();
+        } catch (Exception ignored) {
+        }
+        // Picks up any per-tool/action/path overrides already persisted (e.g. via the AI settings
+        // page's own separate in-memory instance of this same file) so the very first agent built
+        // this run resolves them from the start, not only after this page's own "remember this
+        // choice" checkbox happens to reload+save the file (see rememberConfirmDecision).
+        try {
+            toolPermissionStore.load();
         } catch (Exception ignored) {
         }
 
@@ -510,10 +626,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         if (sessionStore.getCurrentSession() == null) {
             sessionStore.createSession();
-            try {
-                sessionStore.save();
-            } catch (Exception ignored) {
-            }
+            persistStore();
         }
 
         typingTimeline.setCycleCount(Timeline.INDEFINITE);
@@ -554,7 +667,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             "使用 AI 助手时，你的对话内容会通过网络发送给你所配置的 AI 服务提供商，用于生成回复。\n\n"
             + "根据你启用的功能，发送的内容可能包含：你输入的问题；所选实例 / 模组 / 世界等游戏信息；"
             + "你主动让 AI 读取的文件或日志；剪贴板文本；以及截图（仅当你使用相关功能时）。\n\n"
-            + "这些数据由第三方 AI 提供商按其各自的隐私政策处理；HMCL-AE 本身不额外收集或上传这些内容。\n\n"
+            + "这些数据由第三方 AI 提供商按其各自的隐私政策处理。此外，HMCL-AE 本身默认会在本机记录一份完整的"
+            + "对话与工具调用记录（trace，用于故障排查，可在 AI 设置里关闭），只保存在本地；"
+            + "你也可以在需要反馈问题时手动一键将其发送给开发者用于诊断，这是唯一的额外上传途径，不会自动上传。\n\n"
             + "点击「确定」表示你已阅读并同意上述数据处理方式；若不同意，请勿使用 AI 助手。";
 
     private static java.nio.file.Path privacyConsentFile() {
@@ -570,6 +685,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (hasPrivacyConsent()) {
             return;
         }
+        requestPrivacyConsent(() -> {
+        });
+    }
+
+    /// Shows the privacy dialog and, if the user acknowledges it, writes the consent marker and
+    /// runs {@code onAccepted}. Unlike {@link #maybeShowPrivacyConsent}, this is NOT gated on
+    /// {@link #hasPrivacyConsent()} — it's the re-prompt path a caller blocked on that check (e.g.
+    /// the diagnostic-upload trigger in {@code AISettingsPage}) uses to let the user grant consent
+    /// on the spot and immediately retry, instead of the marker being a dead end once it's missing.
+    static void requestPrivacyConsent(Runnable onAccepted) {
         Controllers.dialog(PRIVACY_TEXT, "AI 隐私与数据说明",
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO, () -> {
                     try {
@@ -578,6 +703,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                                 java.nio.charset.StandardCharsets.UTF_8);
                     } catch (Exception ignored) {
                     }
+                    onAccepted.run();
                 });
     }
 
@@ -619,35 +745,25 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
         }
         toolRegistry.register(gameContextTool);
-        // HMCL-operation tools (let the agent actually install/launch), reusing HMCL APIs.
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListInstancesTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListGameVersionsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.LaunchInstanceTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallLoaderTool());
+        // Local instance/mod/world/content-management domain (merged facade — see InstanceTool).
+        instanceTool = new org.jackhuang.hmcl.ui.ai.tools.InstanceTool(
+                aiSettings::isDeleteToRecycleBin, aiSettings::getWorldBackupRetention, aiSettings::isNbtToolsEnabled);
+        toolRegistry.register(instanceTool);
+        // Runtime instance state: list (+ running flag) / launch / stop.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GameTool(aiSettings::getWorldBackupRetention));
+        // External content search (Modrinth/CurseForge/version manifest) — install/list-local
+        // live on InstanceTool.
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchTool());
+        // Accounts (reuse HMCL's account system — never shell out / hand-edit for login).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AccountTool());
+        // Background jobs: query/cancel long-running tasks started with background=true (AiJobManager).
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.JobTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AskTool(this::showAskPanel));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool(this::updateTodoCard));
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.KnownErrorMatcherTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListLocalIpTool());
         toolRegistry.register(new org.jackhuang.hmcl.ai.tools.SleepTool());
-        // Content management (reuse HMCL remote repos + download/install pipeline).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchResourcePacksTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallResourcePackTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchShadersTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallShaderTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchModpacksTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallModpackTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchWorldsTool());
-        // Instance lifecycle (rename/duplicate are reversible; delete is confirm-gated).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.EditInstanceTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteInstanceTool(aiSettings::isDeleteToRecycleBin));
-        // Accounts (reuse HMCL's account system — never shell out / hand-edit for login).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListAccountsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.AddOfflineAccountTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SelectAccountTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.MicrosoftLoginTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetSkinTool());
-        // Java runtimes (reuse HMCL JavaManager — don't probe `java -version` via shell).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJavaTool());
+        toolRegistry.register(new org.jackhuang.hmcl.ai.tools.LoadSkillTool(skillRegistry));
         // Global memory (file-based store; remember/recall across conversations).
         rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
@@ -655,22 +771,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
             toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
         }
-        // Mod management (reuse repository mods dir; toggle by renaming, not shell).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListModsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ToggleModTool());
-        // World/options/folder utilities (reuse repository run dir + native FXUtils.openFolder).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.BackupWorldTool());
-        // Versioned world-backup engine (timestamped full-copy snapshots + retention N).
-        // Honest: full-copy, not incremental/git — see WorldBackupManager. restore is red-critical.
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CreateWorldBackupTool(aiSettings::getWorldBackupRetention));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListWorldBackupsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RestoreWorldBackupTool(aiSettings::getWorldBackupRetention));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadGameOptionsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetGameOptionTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OpenGameFolderTool());
-        // Diagnostics (reuse HMCL SystemInfo hardware detection; screenshots listing).
+        // Diagnostics (reuse HMCL SystemInfo hardware detection).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
         // OCR a screenshot/image into text (crash/error shots) — backend chosen in AI 设置 > OCR.
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
         // Convenience (clipboard for pasted crash logs / errors, conversation export, prompt presets).
@@ -678,41 +780,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PromptLibraryTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportConversationTool(sessionStore));
-        // Local content visibility (read-only snapshots of what the user already has).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListWorldsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListServersTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListResourcePacksTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstanceDetailsTool());
-        // World / datapack management (reuse repository run dir; delete is confirm-gated).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListDatapacksTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallDatapackTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteWorldTool(aiSettings::isDeleteToRecycleBin));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ImportWorldTool());
-        // Mod info / updates / modpack export (reuse ModManager / RemoteAddonRepository / export task).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetModInfoTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckModUpdatesTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DeleteModTool(aiSettings::isDeleteToRecycleBin));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.UpdateModTool(aiSettings::isDeleteToRecycleBin));
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportModpackTool());
-        // Server / Java / instance runtime (SLP ping, JavaManager download, GameSettings memory, log cleanup).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.PingServerTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.DownloadJavaTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetInstanceMemoryTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CleanLogsTool());
-        // Background jobs: query/cancel long-running tasks started with background=true (AiJobManager).
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListJobsTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CheckJobTool());
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CancelJobTool());
         // Save NBT editing (read/write save & player NBT data; writes are backup-gated +
         // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
+        // Hidden by default like global memory; see AiSettings#isNbtToolsEnabled().
         if (aiSettings.isNbtToolsEnabled()) {
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadNbtTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GetNbtTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SetNbtTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ComputeOfflineUuidTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyPlayerDataTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.TransferInventoryTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadWorldInfoTool());
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.NbtTool());
+            // worlds_info lives on InstanceTool (its execute() re-checks isNbtToolsEnabled()
+            // itself since that one action, unlike the rest of the domain, reads NBT).
         }
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
@@ -740,8 +814,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             editTool.addRoot(runDir);
             grepTool.addRoot(runDir);
             globTool.addRoot(runDir);
-            // install_mod needs the current instance's run dir; re-register on refresh.
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.InstallModTool(runDir));
+            // mods_install needs the current instance's run dir; re-target on every switch.
+            instanceTool.refreshRunDir(runDir);
         }
     }
 
@@ -831,6 +905,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // "New Chat" (top) and "AI settings" (bottom) rows.
         sidebarScrollPane.setMinHeight(0);
 
+        AdvancedListItem feedbackItem = new AdvancedListItem();
+        feedbackItem.getStyleClass().add("navigation-drawer-item");
+        feedbackItem.setTitle(i18n("ai.feedback"));
+        feedbackItem.setLeftIcon(SVG.FEEDBACK);
+        // Direct-invoke the exact same upload flow AISettingsPage's "上传诊断信息" row uses —
+        // no navigation into AISettingsPage first. See DiagnosticUploadFlow for why this is a
+        // shared helper rather than being re-implemented here.
+        feedbackItem.setOnAction(e -> DiagnosticUploadFlow.trigger(aiSettings));
+
         AdvancedListItem settingsItem = new AdvancedListItem();
         settingsItem.getStyleClass().add("navigation-drawer-item");
         settingsItem.setTitle(i18n("ai.settings"));
@@ -839,7 +922,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 aiSettings,
                 discoveryService,
                 () -> {
-                    agentCache.clear();
+                    clearAgentCache();
                     refreshModelSelector();
                     AiSession current = sessionStore.getCurrentSession();
                     if (current != null) {
@@ -848,11 +931,24 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
         )));
 
-        // Pin "AI settings" as a fixed-height row at the very bottom: it never grows or
-        // shrinks, so however long the session list gets, the scroll area above absorbs the
-        // change and this entry always keeps its own dedicated, full-size space.
-        AdvancedListBox bottomBox = new AdvancedListBox();
-        bottomBox.add(settingsItem);
+        // Pin "反馈" and "AI settings" as fixed-height rows at the very bottom: they never grow
+        // or shrink, so however long the session list gets, the scroll area above absorbs the
+        // change and these entries always keep their own dedicated, full-size space.
+        //
+        // Deliberately a plain VBox — NOT an AdvancedListBox (which wraps a ScrollPane) — even
+        // though this container only ever holds a couple of fixed rows. AdvancedListBox's own
+        // ScrollPane toggles its vertical scrollbar to AS_NEEDED whenever
+        // `container.getHeight() > getHeight()` on mouse-enter (see AdvancedListBox's
+        // MOUSE_ENTERED filter); with -fx-snap-to-pixel disabled on .scroll-pane (root.css) that
+        // comparison is one stray sub-pixel away from spuriously tripping for a fixed set of
+        // rows that were never meant to scroll in the first place — the reported "翻页"/unwanted
+        // side scrollbar. A bare VBox has no scrollbar machinery at all, so this class of bug is
+        // structurally impossible here, and it still gets the identical 12px top inset by reusing
+        // the same "advanced-list-box-content" style class AdvancedListBox applies to its inner
+        // content VBox.
+        VBox bottomBox = new VBox();
+        bottomBox.getStyleClass().add("advanced-list-box-content");
+        bottomBox.getChildren().addAll(feedbackItem, settingsItem);
         VBox.setVgrow(bottomBox, Priority.NEVER);
         bottomBox.setMinHeight(Region.USE_PREF_SIZE);
         bottomBox.setMaxHeight(Region.USE_PREF_SIZE);
@@ -919,10 +1015,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // sidebar — rebuilding destroyed the clicked item mid-ripple, cutting the
             // ripple animation to a few frames.
             updateSessionHighlight(id);
-            try {
-                sessionStore.save();
-            } catch (Exception ignored) {
-            }
+            persistStore();
         });
 
         return item;
@@ -999,10 +1092,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void deleteSession(String sessionId) {
         String currentId = sessionStore.getCurrentSessionId();
         sessionStore.deleteSession(sessionId);
-        agentCache.remove(sessionId);
+        evictAgent(sessionId);
 
         if (sessionId.equals(currentId)) {
             messageList.getChildren().clear();
+            hideTodoCard();
+            toolActivityBox.getChildren().clear();
+            streamingBubble = null;
+            reasoningLiveCard = null;
+            pendingToolCards.clear();
+            activeToolCard = null;
+            endToolCallRun(); // discard any grouping state left over from the deleted session
             AiSession newCurrent = sessionStore.getCurrentSession();
             if (newCurrent != null) {
                 loadSessionMessages(newCurrent);
@@ -1015,10 +1115,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         refreshSessionList();
-        try {
-            sessionStore.save();
-        } catch (Exception ignored) {
-        }
+        persistStore();
     }
 
     // ---- View switching ----
@@ -1163,6 +1260,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         VBox suggestionsBox = new VBox(4, suggestionsLabel, chips);
         suggestionsBox.setAlignment(Pos.CENTER);
+        suggestionsBox.getStyleClass().add("ai-suggestions");
 
         emptyState.getChildren().setAll(aiIcon, emptyText, suggestionsBox);
         emptyState.setAlignment(Pos.CENTER);
@@ -1184,7 +1282,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         approvalBadge.getStyleClass().add("ai-approval-badge");
         approvalBadge.setVisible(false);
         approvalBadge.setManaged(false);
-        planBadge.getStyleClass().addAll("ai-approval-badge", "ai-approval-badge-ask");
+        planBadge.getStyleClass().addAll("ai-approval-badge", "ai-plan-mode-badge");
         planBadge.setVisible(false);
         planBadge.setManaged(false);
 
@@ -1268,8 +1366,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     if (p.getModelAliasOrId(m).equals(parts[1]) || m.equals(parts[1])) {
                         aiSettings.setSelectedProfileId(p.getId());
                         p.setDefaultModelId(m);
-                        agentCache.clear();
-                        try { aiSettings.save(); } catch (Exception ignored) {}
+                        clearAgentCache();
+                        persistAiSettings();
                         // After deleting the last session there is no current session — the
                         // model switch above still applies; just skip the header refresh (an
                         // unguarded call NPE'd on the FX thread here).
@@ -1331,25 +1429,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         updateApprovalBadge();
     }
 
-    /// Refreshes the approval badge based on the current approval mode setting.
+    /// Refreshes the approval badge. There is only one approval mode now ({@link AiApprovalMode#AUTO}
+    /// — see its own doc for the SAFE/ASK/YOLO merge this replaced), so this no longer varies by
+    /// mode; it just shows the fixed "Auto" label.
     private void updateApprovalBadge() {
-        AiApprovalMode mode = aiSettings.getApprovalModeEnum();
-        approvalBadge.getStyleClass().removeAll(
-                "ai-approval-badge-safe", "ai-approval-badge-ask", "ai-approval-badge-yolo");
-        switch (mode) {
-            case SAFE -> {
-                approvalBadge.setText(i18n("ai.settings.approval_badge_safe"));
-                approvalBadge.getStyleClass().add("ai-approval-badge-safe");
-            }
-            case ASK -> {
-                approvalBadge.setText(i18n("ai.settings.approval_badge_ask"));
-                approvalBadge.getStyleClass().add("ai-approval-badge-ask");
-            }
-            case YOLO -> {
-                approvalBadge.setText(i18n("ai.settings.approval_badge_yolo"));
-                approvalBadge.getStyleClass().add("ai-approval-badge-yolo");
-            }
-        }
+        approvalBadge.setText(i18n("ai.settings.approval_badge_auto"));
         approvalBadge.setVisible(true);
         approvalBadge.setManaged(true);
     }
@@ -1366,12 +1450,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         sessionStore.createSession();
-        try {
-            sessionStore.save();
-        } catch (Exception ignored) {
-        }
+        persistStore();
         hideTodoCard();
         messageList.getChildren().clear();
+        toolActivityBox.getChildren().clear();
+        streamingBubble = null;
+        reasoningLiveCard = null;
+        pendingToolCards.clear();
+        activeToolCard = null;
+        endToolCallRun(); // discard any grouping state left over from the previous session
         updateEmptyState();
         refreshSessionList();
         showChatView();
@@ -1388,10 +1475,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         AiSession current = sessionStore.getCurrentSession();
         if (current == null) return;
         current.clear();
-        agentCache.remove(current.getId());
+        evictAgent(current.getId());
         hideTodoCard();
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
+        streamingBubble = null;
+        reasoningLiveCard = null;
+        pendingToolCards.clear();
+        activeToolCard = null;
+        endToolCallRun(); // discard any grouping state left over from the cleared conversation
         updateToolActivityVisibility();
         updateEmptyState();
         persistStore();
@@ -1407,15 +1499,35 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         planBadge.setManaged(planMode);
     }
 
-    /// Before a plan-mode response, disables every write-capable tool (CONTROLLED_WRITE /
-    /// DANGEROUS_WRITE) except `ask`, so the agent can only investigate and propose. The
+    /// Merged domain facades whose actions span MULTIPLE permission levels (e.g. `instance`'s
+    /// `action=list` is READ_ONLY but `action=delete` is DANGEROUS_WRITE) — deliberately EXCLUDED
+    /// from {@link #applyPlanGating}'s whole-tool disable below. {@link ToolRegistry#getPermission}
+    /// (the no-arg resolution used by that loop) only ever reports these tools' WORST-CASE
+    /// permission ({@code ToolSpec#getMaxPermission()}), since none of them override the no-arg
+    /// {@code ToolSpec#getPermission()} the loop actually consults. Disabling them wholesale would
+    /// therefore also take out every one of their READ_ONLY actions (`instance(list)`,
+    /// `search(mods)`, `nbt(read)`, `job(list)`, `account(list)`, `game(list)`, ...) — defeating
+    /// Plan Mode's own "stay read-only, keep investigating" purpose. Instead, the real per-action
+    /// permission is enforced at the actual call site: {@code AiExecutionPolicy.check}'s
+    /// {@code planMode} parameter (threaded through by {@code ChatAgentFactory.build} /
+    /// {@code LangChain4jToolAdapter.execute}, which already resolves permission per-action via
+    /// {@code ToolSpec#getPermission(Map)}) BLOCKs any CONTROLLED_WRITE/DANGEROUS_WRITE call from
+    /// these tools while Plan Mode is active and lets READ_ONLY actions straight through.
+    private static final java.util.Set<String> PLAN_GATING_PER_ACTION_TOOLS = java.util.Set.of(
+            "instance", "game", "search", "account", "nbt", "job");
+
+    /// Before a plan-mode response, disables every SINGLE-PERMISSION write-capable tool
+    /// (CONTROLLED_WRITE / DANGEROUS_WRITE, e.g. `write`/`edit`/`shell`) except `ask`, so the agent
+    /// can only investigate and propose. The merged domain facades in
+    /// {@link #PLAN_GATING_PER_ACTION_TOOLS} are deliberately left enabled — see that field's doc —
+    /// their write actions are instead blocked per-call by {@code AiExecutionPolicy.check}. The
     /// disabled names are remembered and restored by {@link #restorePlanGating()}.
     private void applyPlanGating() {
         planDisabledTools.clear();
         if (!planMode) return;
         for (org.jackhuang.hmcl.ai.tools.Tool t : toolRegistry.listAll()) {
             String name = t.getName();
-            if ("ask".equals(name)) continue;
+            if ("ask".equals(name) || PLAN_GATING_PER_ACTION_TOOLS.contains(name)) continue;
             org.jackhuang.hmcl.ai.tools.ToolPermission p = toolRegistry.getPermission(name);
             if ((p == org.jackhuang.hmcl.ai.tools.ToolPermission.CONTROLLED_WRITE
                     || p == org.jackhuang.hmcl.ai.tools.ToolPermission.DANGEROUS_WRITE)
@@ -1462,7 +1574,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 return;
             }
             // The agent has already cleared the session and stored the summary message.
-            agentCache.remove(target.getId());
+            evictAgent(target.getId());
             if (sessionStore.getCurrentSession() == target) {
                 loadSessionMessages(target);
             }
@@ -1490,13 +1602,31 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         HBox.setHgrow(inputField, Priority.ALWAYS);
         inputField.setWrapText(true);
         // Auto-grow between 1 line (34px) and ~8 lines (180px); beyond that it scrolls inside.
+        // Height is derived from an offscreen Text node mirroring the TextArea's wrapping width —
+        // the previous approach counted only literal '\n' characters, so a single long paragraph
+        // with no manual newline stayed pinned at 1 line height and could only be read by
+        // scrolling INSIDE the box ("一行文字只靠滚轮会丢失阅读的连续性"); WRAPPED lines never
+        // grew the box. A Text node's layout bounds reflect real wrapping without needing to be
+        // attached to the scene graph. Since this Text node is never added to the scene graph,
+        // CSS (including inline setStyle) never applies to it — so its font is read directly off
+        // inputField (which IS in the live scene and has real, CSS-resolved font info) each time
+        // the height is recomputed, instead of guessing a literal font-size that could drift from
+        // .ai-input-field's actual CSS (notably for a CJK-capable custom font-family).
         inputField.setMinHeight(34);
         inputField.setPrefHeight(34);
         inputField.setMaxHeight(180);
-        inputField.textProperty().addListener((o, ov, nv) -> {
-            int lines = nv == null || nv.isEmpty() ? 1 : (int) nv.chars().filter(c -> c == '\n').count() + 1;
-            inputField.setPrefHeight(Math.min(180, Math.max(34, 14 + lines * 20)));
-        });
+        javafx.scene.text.Text inputHeightMeasurer = new javafx.scene.text.Text();
+        inputHeightMeasurer.wrappingWidthProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
+                () -> Math.max(50, inputField.getWidth() - 24), inputField.widthProperty()));
+        Runnable recomputeInputHeight = () -> {
+            inputHeightMeasurer.setFont(inputField.getFont()); // real, CSS-resolved font — not a guess
+            String t = inputField.getText();
+            inputHeightMeasurer.setText(t == null || t.isEmpty() ? " " : t);
+            double measured = inputHeightMeasurer.getLayoutBounds().getHeight() + 16;
+            inputField.setPrefHeight(Math.min(180, Math.max(34, measured)));
+        };
+        inputField.textProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
+        inputField.widthProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
         // Track IME composition so the Enter that commits pinyin never sends a half-typed message.
         inputField.addEventFilter(javafx.scene.input.InputMethodEvent.INPUT_METHOD_TEXT_CHANGED,
                 e -> imeComposing = e.getComposed() != null && !e.getComposed().isEmpty());
@@ -1548,7 +1678,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         jobsListContainer = new VBox(2);
         jobsListContainer.getStyleClass().add("ai-jobs-list");
         FXUtils.setOverflowHidden(jobsListContainer);
-        FXUtils.setLimitHeight(jobsListContainer, 0);
+        setJobsListHeightLimit(0);
         jobsListContainer.setManaged(false);
         jobsListContainer.setVisible(false);
 
@@ -1922,10 +2052,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
             }
         });
-        try {
-            sessionStore.save();
-        } catch (Exception ignored) {
-        }
+        persistStore();
     }
 
     /// Recursively checks whether the given node tree contains the search text.
@@ -2342,63 +2469,258 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                             skillRegistry,
                             searchConfig, this::isPlanMode, rememberStore);
                     // 开发者选项 · --dangerously-skip: when on, pass NO confirm handlers (neither the
-                    // dangerous nor the red critical gate) so nothing ever prompts. The effective
-                    // approval mode is also forced to YOLO via AiSettings.getApprovalModeEnum(), so the
-                    // policy auto-allows every tool call (otherwise a null handler on an ASK decision
-                    // would BLOCK instead of skip).
+                    // dangerous nor the red critical gate) so nothing ever prompts. The real flag is
+                    // now also threaded straight into AiExecutionPolicy's own bypass field by
+                    // ChatAgentFactory.build (see its own comment) so a null handler here can never
+                    // be reached on an ASK/BLOCK decision in the first place.
                     boolean skipAll = aiSettings.isDangerouslySkipPermissions();
+                    // Part A: thread the per-tool/action(/path) override store into the real
+                    // per-call decision (see LangChain4jToolAdapter#execute), instead of only ever
+                    // consulting the fixed global AiSettings fields. Part E: also thread isPlanMode
+                    // so a CONTROLLED_WRITE/DANGEROUS_WRITE call is BLOCKed while Plan Mode is
+                    // active, evaluated per actual call rather than by wholesale-disabling whole
+                    // tools up front (see applyPlanGating()). Auto-mode merge: also thread
+                    // isPossiblyUnattended so a DANGEROUS_WRITE/CRITICAL call is hard-BLOCKed —
+                    // never merely asked — while the CURRENT turn may be running with nobody
+                    // watching (see AiExecutionPolicy's class doc).
                     return ChatAgentFactory.build(aiSettings, session, toolRegistry, pb,
                             skipAll ? null : this::confirmDangerousOperation,
-                            (skipAll || !aiSettings.isCriticalConfirmEnabled()) ? null : this::confirmCriticalOperation);
+                            (skipAll || !aiSettings.isCriticalConfirmEnabled()) ? null : this::confirmCriticalOperation,
+                            toolPermissionStore, this::isPlanMode, this::isPossiblyUnattended);
                 });
     }
 
-    /// Blocking confirmation used by the tool layer before a dangerous operation runs.
-    /// Invoked on the agent's background thread: shows a dialog on the FX thread and waits
-    /// for the user's answer (denying on timeout/error so the agent can never hang).
+    /// Whether the CURRENT turn may be running unattended — i.e. it was not triggered by a direct,
+    /// just-now user message, but by a synthetic event turn (a background-job auto-continuation, or
+    /// an external prompt fed in by another part of the launcher, e.g. the crash window — see
+    /// {@link #submitExternalPrompt}). Reflects {@link #currentTurnUnattended}, set in
+    /// {@link #sendText} for every turn as it starts.
+    ///
+    /// ## Why treat EVERY synthetic turn as possibly unattended
+    ///
+    /// The one case we can be certain a human is at the keyboard RIGHT NOW is the composer's own
+    /// Send button being pressed. Every other path that can start a turn — most importantly the
+    /// auto-continuation fired automatically once a background job finishes (see
+    /// {@link #onBackgroundJobComplete}) — can just as easily fire while the user has stepped away;
+    /// that is in fact the whole point of background jobs (“the chat stays usable” while the user
+    /// does something else). Treating a genuinely-attended external prompt (e.g. the crash window,
+    /// where the user is looking right at a dialog) as "possibly unattended" too is a conservative
+    /// false positive: at worst it turns a dangerous operation from "ask" into "blocked, try again
+    /// once you send a real message" — never a silent auto-allow. That asymmetry (over-blocking is
+    /// recoverable, silently running a destructive command unattended is not) is why this signal is
+    /// deliberately coarse rather than trying to thread a precise "is a human looking at the screen"
+    /// signal through every external caller.
+    private boolean isPossiblyUnattended() {
+        return currentTurnUnattended;
+    }
+
+    /// Blocking confirmation used by the tool layer before a dangerous (non-critical) operation
+    /// runs. Invoked on the agent's background thread: shows a dialog on the FX thread and waits
+    /// for the user's answer (denying on timeout/error so the agent can never hang). Offers the
+    /// "remember this choice" checkbox — see {@link #showConfirmDialog}.
     private boolean confirmDangerousOperation(String toolName, String summary) {
-        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
-        Platform.runLater(() -> {
-            try {
-                Controllers.confirm(
-                        i18n("ai.confirm.dangerous.text", summary),
-                        i18n("ai.confirm.dangerous.title"),
-                        () -> future.complete(true),
-                        () -> future.complete(false));
-            } catch (Throwable t) {
-                future.complete(false);
-            }
-        });
-        try {
-            return future.get(120, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (Throwable t) {
-            return false;
-        }
+        return showConfirmDialog(toolName, extractActionForRemember(summary),
+                i18n("ai.confirm.dangerous.title"), i18n("ai.confirm.dangerous.text", summary),
+                120, true);
     }
 
     /// Second-tier CRITICAL confirmation (red) for catastrophic operations — deleting a
     /// world/instance, editing save/NBT data, deleting backups, or removing files under
-    /// saves/playerdata/.minecraft. Shown IN ADDITION to (and after) the normal confirm,
-    /// right before execution, even in YOLO mode. Denies on timeout/error so nothing hangs.
+    /// saves/playerdata/.minecraft. Shown IN ADDITION to (and after) the normal confirm, right
+    /// before execution. This handler is never even called while the turn may be unattended — the
+    /// tool layer refuses the operation outright before reaching it in that case, see
+    /// {@code AiExecutionPolicy}'s class doc. Denies on timeout/error so nothing hangs.
+    /// NEVER offers the "remember this choice" checkbox — this tier is deliberately never
+    /// skippable via a remembered preference, see {@link #showConfirmDialog}.
     private boolean confirmCriticalOperation(String toolName, String summary) {
+        return showConfirmDialog(toolName, null, "⛔ 高危操作 · 二次确认",
+                "⛔ 高危操作，可能不可恢复！请仔细确认：\n\n" + summary
+                        + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
+                180, false);
+    }
+
+    /// Shared plumbing for {@link #confirmDangerousOperation} and {@link #confirmCriticalOperation}:
+    /// shows a Yes/No dialog on the FX thread and blocks the calling (agent tool) thread until it
+    /// is answered, declined on timeout, or auto-declined because the turn that raised it was
+    /// already abandoned.
+    ///
+    /// Registers itself as {@link #activeConfirm} so {@link #stopResponse()} and a session switch
+    /// ({@link #loadSessionMessages}) can decline it and dismiss the dialog immediately — instead
+    /// of leaving this thread blocked here for up to the full timeout after the user has moved on,
+    /// during which a stale dialog could stack under a brand-new one and resurface answerable out
+    /// of context. See the {@link #activeConfirm} field doc for the full story.
+    ///
+    /// `myGeneration` is captured on the CALLING thread — i.e. as of the instant the tool actually
+    /// asked to confirm — BEFORE anything is scheduled on the FX thread. Comparing it against the
+    /// live {@link #responseGeneration} once the FX thread actually gets to build the dialog closes
+    /// a TOCTOU race: if the user hit Stop in the gap between the tool call starting and the dialog
+    /// being built, the turn is already abandoned and the dialog is skipped entirely instead of
+    /// flashing up a prompt nobody is expecting any more.
+    ///
+    /// If the dialog's turn belongs to a DIFFERENT, still-legitimately-streaming (merely
+    /// backgrounded) session than the one on screen, the dialog is prefixed with that session's
+    /// name so it can't be mistaken for something concerning whatever the user is currently looking
+    /// at — it stays fully answerable (declining a real pending operation just because the user
+    /// glanced at another session would be a regression of its own).
+    ///
+    /// @param action        best-effort tool action for the "remember" override's scoping (see
+    ///                      {@link #extractActionForRemember}), or {@code null} to scope tool-wide.
+    ///                      Unused when {@code allowRemember} is false.
+    /// @param allowRemember whether to offer the "remember this choice" checkbox — MUST be
+    ///                      {@code false} for the critical/red tier, which is never skippable.
+    private boolean showConfirmDialog(String toolName, @Nullable String action, String dialogTitle,
+                                       String dialogText, long timeoutSeconds, boolean allowRemember) {
+        final int myGeneration = responseGeneration;
         java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicReference<javafx.scene.layout.Region> paneRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
         Platform.runLater(() -> {
             try {
-                Controllers.confirm(
-                        "⛔ 高危操作，可能不可恢复！请仔细确认：\n\n" + summary
-                                + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
-                        "⛔ 高危操作 · 二次确认",
-                        () -> future.complete(true),
-                        () -> future.complete(false));
+                if (myGeneration != responseGeneration) {
+                    // The turn that wanted this confirmation was already stopped/superseded before
+                    // we even got to build the dialog — auto-decline silently, no dialog shown.
+                    future.complete(false);
+                    return;
+                }
+                cancelActiveConfirm(); // at most one confirm dialog should ever be live at once
+
+                String title = dialogTitle;
+                String text = dialogText;
+                AiSession displayed = sessionStore.getCurrentSession();
+                if (streamSessionId != null && (displayed == null || !streamSessionId.equals(displayed.getId()))) {
+                    // This turn belongs to a session other than the one on screen. A stopped turn
+                    // was already filtered out above, so this one is still legitimately running in
+                    // the background — tag it rather than auto-declining it.
+                    AiSession origin = sessionStore.getSession(streamSessionId);
+                    String label = (origin != null && origin.getTitle() != null && !origin.getTitle().isBlank())
+                            ? origin.getTitle() : streamSessionId;
+                    title = i18n("ai.confirm.other_session.title", title);
+                    text = i18n("ai.confirm.other_session.text", label, text);
+                }
+
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.Builder builder =
+                        new org.jackhuang.hmcl.ui.construct.MessageDialogPane.Builder(
+                                text, title, org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.QUESTION);
+                CheckBox rememberBox = null;
+                if (allowRemember) {
+                    rememberBox = new CheckBox(i18n("ai.confirm.remember"));
+                    builder.extraContent(rememberBox);
+                }
+                final CheckBox remember = rememberBox;
+
+                java.util.concurrent.atomic.AtomicReference<PendingConfirm> pendingRef = new java.util.concurrent.atomic.AtomicReference<>();
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane pane = builder
+                        .yesOrNo(
+                                () -> {
+                                    if (remember != null && remember.isSelected()) {
+                                        rememberConfirmDecision(toolName, action, true);
+                                    }
+                                    if (activeConfirm == pendingRef.get()) activeConfirm = null;
+                                    future.complete(true);
+                                },
+                                () -> {
+                                    if (remember != null && remember.isSelected()) {
+                                        rememberConfirmDecision(toolName, action, false);
+                                    }
+                                    if (activeConfirm == pendingRef.get()) activeConfirm = null;
+                                    future.complete(false);
+                                })
+                        .build();
+                paneRef.set(pane);
+                PendingConfirm pending = new PendingConfirm(future, paneRef, myGeneration);
+                pendingRef.set(pending);
+                activeConfirm = pending;
+                Controllers.dialog(pane);
             } catch (Throwable t) {
                 future.complete(false);
             }
         });
         try {
-            return future.get(180, java.util.concurrent.TimeUnit.SECONDS);
+            return future.get(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Throwable t) {
+            closeStaleConfirmDialog(paneRef);
             return false;
         }
+    }
+
+    /// Best-effort extraction of a merged domain tool's `action` parameter from the free-text
+    /// `summary` the tool layer hands to {@link #confirmDangerousOperation} — used ONLY to scope
+    /// the "remember this choice" override more tightly than tool-wide.
+    /// {@link org.jackhuang.hmcl.ai.tools.ToolConfirmHandler}'s signature is fixed at
+    /// {@code (toolName, summary)} with no structured action field, so this parses the same
+    /// `Map.toString()` shape `summarizeForConfirm` falls back to when the call has no
+    /// `command`/`query` parameter (`{action=delete, id=...}`). Returns {@code null} — falling back
+    /// to a tool-wide override — whenever the pattern isn't found (e.g. shell-style tools that show
+    /// the raw command instead), rather than guessing.
+    @Nullable
+    private static String extractActionForRemember(@Nullable String summary) {
+        if (summary == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("[{,]\\s*action=([^,}]+)").matcher(summary);
+        if (!m.find()) return null;
+        String action = m.group(1).trim();
+        return action.isEmpty() ? null : action;
+    }
+
+    /// Persists the "remember this choice" checkbox's answer into {@link #toolPermissionStore} so a
+    /// future call to the exact same tool (and, when known, action) can be resolved without asking
+    /// again — consulted by {@code LangChain4jToolAdapter#execute} on every call via the
+    /// {@code AiToolPermissionStore} passed into {@link ChatAgentFactory#build}. Reloads the store
+    /// immediately before writing so a concurrent edit made through the AI settings page's own
+    /// (separate in-memory) instance of this same file isn't clobbered.
+    ///
+    /// There is no dedicated "always deny" override value (see
+    /// {@link org.jackhuang.hmcl.ai.tools.AiToolPermissionStore.OverrideMode}) — an approval records
+    /// {@code ALWAYS_ALLOW}; a decline is recorded as {@code ALWAYS_ASK}, the most conservative
+    /// available override (and one that a possibly-unattended BLOCK can still never be relaxed by
+    /// regardless — see {@code AiToolPermissionStore.OverrideMode#apply}).
+    private void rememberConfirmDecision(String toolName, @Nullable String action, boolean approved) {
+        try {
+            toolPermissionStore.load();
+            org.jackhuang.hmcl.ai.tools.AiToolPermissionStore.OverrideMode mode = approved
+                    ? org.jackhuang.hmcl.ai.tools.AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW
+                    : org.jackhuang.hmcl.ai.tools.AiToolPermissionStore.OverrideMode.ALWAYS_ASK;
+            if (action != null) {
+                toolPermissionStore.setOverride(toolName, action, mode);
+            } else {
+                toolPermissionStore.setOverride(toolName, mode);
+            }
+            toolPermissionStore.save();
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning(
+                    "[AI] failed to persist remembered tool confirm choice for " + toolName, e);
+        }
+    }
+
+    /// Cancels any pending dangerous/critical confirm dialog (so the tool-execution thread blocked
+    /// in {@link #showConfirmDialog} unblocks immediately as a decline) and dismisses its dialog.
+    /// Called on stop and on session switch — mirrors {@link #cancelActiveAsk()} exactly, and for
+    /// the same reason: see the {@link #activeConfirm} field doc.
+    private void cancelActiveConfirm() {
+        PendingConfirm pending = activeConfirm;
+        activeConfirm = null;
+        if (pending != null && !pending.future.isDone()) {
+            pending.future.complete(false);
+            closeStaleConfirmDialog(pending.paneRef);
+        }
+    }
+
+    /// Dismisses a confirm dialog on the FX thread after its future is no longer being awaited
+    /// (timed out, or explicitly cancelled by {@link #cancelActiveConfirm()}) — the dialog would
+    /// otherwise remain visible and clickable forever, a dead relic indistinguishable from a
+    /// still-pending prompt. Best-effort: `paneRef` may still be unset if runLater above hasn't
+    /// executed yet or failed before building the pane.
+    private static void closeStaleConfirmDialog(java.util.concurrent.atomic.AtomicReference<javafx.scene.layout.Region> paneRef) {
+        Platform.runLater(() -> {
+            javafx.scene.layout.Region pane = paneRef.get();
+            if (pane != null) {
+                try {
+                    org.jackhuang.hmcl.ui.DialogUtils.close(pane);
+                } catch (Throwable ignored) {
+                    // best-effort: the dialog may already be closed (e.g. the user clicked it in
+                    // the same instant the timeout/cancellation fired) — nothing more to do either way.
+                }
+            }
+        });
     }
 
     /// Guards rapid session switching so the UI stays responsive: quick successive clicks are
@@ -2459,6 +2781,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         reasoningLiveCard = null;
         pendingToolCards.clear();
         activeToolCard = null;
+        endToolCallRun(); // discard any grouping state left over from a previous session's reload
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
         int index = 0;
         for (LlmMessage msg : session.getMessages()) {
@@ -2466,6 +2789,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             if (msg.isToolRecord()) {
                 // Persisted record of one tool invocation — rebuild the completed tool card so
                 // history shows what the AI actually did (cards used to vanish on reload).
+                // NOT followed by endToolCallRun(): consecutive tool records must keep extending
+                // the same run/group, exactly like the live path.
                 if (aiSettings.isToolCallDisplayEnabled()) {
                     addPersistedToolCard(msg.getToolPayload());
                 }
@@ -2473,9 +2798,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // Synthetic turn (background-job auto-continue / crash injection): a neutral
                 // event pill, NOT a user bubble, and no copy/edit/resend action bar.
                 addEventPill(msg.getContent());
+                endToolCallRun();
             } else if ("user".equals(role)) {
                 addUserBubble(msg.getContent(), true);
                 attachMessageActions(msg.getContent(), role, index);
+                endToolCallRun();
             } else if ("assistant".equals(role)) {
                 // Reasoning/"思考过程" that came with this answer: a collapsed card above the bubble.
                 String reasoningText = msg.getReasoning();
@@ -2484,12 +2811,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
                 createAiBubble(msg.getContent(), msg.getUsage());
                 attachMessageActions(msg.getContent(), role, index);
+                endToolCallRun();
             } else if (isToolMessage(msg.getContent())) {
                 if (aiSettings.isToolCallDisplayEnabled()) {
                     addToolMessage(msg.getContent());
                 }
+                endToolCallRun();
             } else {
                 addSystemMessage(msg.getContent());
+                endToolCallRun();
             }
             index++;
         }
@@ -2670,7 +3000,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         editor.setWrapText(true);
         int lines = content == null ? 1 : content.split("\n", -1).length;
         editor.setPrefRowCount(Math.min(10, Math.max(2, lines)));
-        editor.setMaxWidth(480);
+        editor.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         editor.getStyleClass().add("ai-inline-edit");
 
         JFXButton cancel = new JFXButton("取消");
@@ -2681,7 +3011,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         btnRow.setAlignment(Pos.CENTER_RIGHT);
 
         VBox editBox = new VBox(6, editor, btnRow);
-        editBox.setMaxWidth(480);
+        editBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         editBox.getStyleClass().add("ai-inline-edit-box");
         HBox wrapper = new HBox(editBox);
         wrapper.setAlignment(Pos.CENTER_RIGHT);
@@ -2755,12 +3085,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private void sendMessage() {
         if (isStreaming()) {
-            // A response is in flight. For THIS session the button already acts as Stop, so Enter
-            // just does nothing; for ANOTHER session, don't silently swallow the message — say why
-            // (we don't run two streams at once yet).
-            if (!isStreamingCurrentSession()) {
-                Controllers.showToast("另一个会话正在生成回复，切回那个会话可以停止它，或稍候再发");
-            }
+            // A response is in flight. For ANOTHER session, don't silently swallow the message —
+            // say why (we don't run two streams at once yet). For THIS session the button already
+            // acts as Stop, so the message can't be sent either — but staying completely silent
+            // here reads as "the app is frozen" to a user who reflexively types a follow-up/change
+            // of mind (e.g. while an `ask` panel is waiting for them) instead of clicking Stop;
+            // say so and leave their typed text in the box so nothing is lost.
+            Controllers.showToast(isStreamingCurrentSession()
+                    ? "AI 正在处理上一条消息，暂时无法发送 — 如果上面有问题在等你回答，请先在那里作答；要打断的话点一下发送按钮（此时是“停止”）"
+                    : "另一个会话正在生成回复，切回那个会话可以停止它，或稍候再发");
             return;
         }
         String text = inputField.getText().trim();
@@ -2849,12 +3182,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (text == null || text.isBlank()) return;
         text = text.trim();
 
+        // The composer's own sendMessage() already checks this before clearing the input field (so
+        // a declined send doesn't lose the user's draft) — but resendUserMessage/regenerateFrom/the
+        // inline-edit-confirm path/submitExternalPrompt (background-job auto-continue) all call
+        // straight into this method and had NO daily-spend-cap check of their own. Re-checking here
+        // makes every path that can start a new turn subject to the same cap; the auto-continue
+        // loop is naturally bounded too since AUTO_CONTINUE_LIMIT still trips once enough
+        // no-op attempts accumulate.
+        if (spendTracker().isOverLimit()) {
+            Controllers.showToast("已达今日 AI 花费上限（约 $"
+                    + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
+                    + "）。可在 AI 设置里调高上限，或明天再用。");
+            return;
+        }
+
         boolean event = LlmMessage.KIND_EVENT.equals(kind);
         // A real user message resets the auto-continue depth guard; synthetic event turns
         // (background-job auto-continue) deliberately do NOT, so a runaway loop can't be masked.
         if (!event) {
             autoContinueDepth = 0;
         }
+        // See #isPossiblyUnattended's own doc: a synthetic event turn is flagged as possibly
+        // unattended for the whole turn (read on the agent's background thread while tools run),
+        // a direct user-composer send is not.
+        currentTurnUnattended = event;
 
         AiSession session = sessionStore.getCurrentSession();
         if (session == null) return;
@@ -2930,6 +3281,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         }
                         streamingBubble = createAiBubble("");
                         segment.setLength(0);
+                        endToolCallRun();
                     }
                     segment.append(token);
                     streamingBubble.setText(segment.toString());
@@ -2973,7 +3325,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     if (!aiSettings.isToolCallDisplayEnabled()) return;
                     ToolCard card = new ToolCard(toolName);
-                    messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
+                    appendToolCard(card);
                     pendingToolCards.computeIfAbsent(toolName, k -> new java.util.ArrayDeque<>()).addLast(card);
                     // Route live download / install progress to this card until it finishes.
                     activeToolCard = card;
@@ -3040,7 +3392,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 if (generation != responseGeneration) return;
                 // Pass the CURRENT segment, not the whole turn text: writing the full text into
                 // the last segment bubble duplicated the already-finalized earlier segments.
-                showAiError(streamingBubble, segment, error, streamSession);
+                showAiError(streamingBubble, segment, error, streamSession, generation);
             }
         }, cancelled::get).exceptionally(ex -> {
             if (generation != responseGeneration) return null; // stopped; ignore
@@ -3052,7 +3404,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             LlmException error = cause instanceof LlmException
                     ? (LlmException) cause
                     : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
-            showAiError(streamingBubble, segment, error, streamSession);
+            showAiError(streamingBubble, segment, error, streamSession, generation);
             return null;
         });
 
@@ -3222,7 +3574,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             name.getStyleClass().add("ai-job-cat");
             name.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(name, Priority.ALWAYS);
-            Label count = new Label(run + "/" + total);
+            // Append a suffix so "2/10" reads as "2 of 10 running", not a countdown — mirrors
+            // JobProgressBadge's "done/total 已完成" pattern for the same run/total ambiguity.
+            Label count = new Label(run + "/" + total + " 运行中");
             count.getStyleClass().add("ai-job-count");
             JFXButton cancelBtn = new JFXButton("取消");
             cancelBtn.getStyleClass().add("ai-job-cancel-btn");
@@ -3242,17 +3596,31 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // Nothing running → collapse and reset so the next busy spell starts compact.
             jobsExpanded = false;
             if (jobsAnimation != null) jobsAnimation.stop();
-            FXUtils.setLimitHeight(jobsListContainer, 0);
+            setJobsListHeightLimit(0);
             jobsListContainer.setManaged(false);
             jobsListContainer.setVisible(false);
             jobsToggleIcon.setRotate(0);
         } else if (jobsExpanded && jobsListContainer.isManaged()) {
-            // Keep the unfurled height in sync as jobs come and go.
+            // Keep the unfurled height in sync as jobs come and go. prefHeightProperty is NEVER
+            // pinned (see setJobsListHeightLimit), so prefHeight(w) always reflects the container's
+            // TRUE current content height here, not a stale value from an earlier animation/limit.
             Platform.runLater(() -> {
                 double w = jobsListContainer.getWidth() > 0 ? jobsListContainer.getWidth() : jobsPane.getWidth();
-                FXUtils.setLimitHeight(jobsListContainer, jobsListContainer.prefHeight(w));
+                setJobsListHeightLimit(jobsListContainer.prefHeight(w));
             });
         }
+    }
+
+    /// Sets ONLY min/max height on the jobs list container — deliberately NOT
+    /// {@link FXUtils#setLimitHeight}, which also pins prefHeight to the same literal. Pinning
+    /// prefHeight here was the root cause of the "面板打开后看不见内容" bug: once pinned, later
+    /// {@code prefHeight(width)} queries return that STALE literal instead of recomputing from the
+    /// container's actual children, so a reopen after content changed could animate to a stale
+    /// (often zero) height. Leaving prefHeight at {@code Region.USE_COMPUTED_SIZE} keeps it always
+    /// truthful.
+    private void setJobsListHeightLimit(double height) {
+        jobsListContainer.setMinHeight(height);
+        jobsListContainer.setMaxHeight(height);
     }
 
     /// Toggles the background-tasks pull-up open/closed with a height + chevron animation.
@@ -3275,10 +3643,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void animateJobsList(double targetHeight, double iconRotate) {
+        // Deliberately tweens ONLY min/maxHeight — never prefHeightProperty (see
+        // setJobsListHeightLimit's javadoc for why pinning it caused the container to go blank).
         javafx.animation.Interpolator ease = javafx.animation.Interpolator.EASE_BOTH;
         jobsAnimation = new Timeline(new KeyFrame(javafx.util.Duration.millis(180),
                 new javafx.animation.KeyValue(jobsListContainer.minHeightProperty(), targetHeight, ease),
-                new javafx.animation.KeyValue(jobsListContainer.prefHeightProperty(), targetHeight, ease),
                 new javafx.animation.KeyValue(jobsListContainer.maxHeightProperty(), targetHeight, ease),
                 new javafx.animation.KeyValue(jobsToggleIcon.rotateProperty(), iconRotate, ease)));
         jobsAnimation.setOnFinished(e -> {
@@ -3321,10 +3690,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.WARNING,
                 () -> {
                     aiSettings.setAiRiskNoticeAccepted(true);
-                    try {
-                        aiSettings.save();
-                    } catch (Exception ignored) {
-                    }
+                    persistAiSettings();
                 },
                 null);
     }
@@ -3377,12 +3743,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// request, finalizes whatever was streamed so far, and resets the button.
     /// {@link org.jackhuang.hmcl.ui.ai.tools.AskTool.AskUiHandler} implementation: called on the
     /// agent's background thread, it renders the question panel on the FX thread and returns a
-    /// future the background thread blocks on. Completed when the user confirms; cancelled by
-    /// {@link #cancelActiveAsk()} on stop / session switch.
+    /// future the background thread blocks on (bounded by {@link org.jackhuang.hmcl.ui.ai.tools.AskTool}'s
+    /// own timeout). Completed when the user confirms; cancelled by {@link #cancelActiveAsk()} on
+    /// stop / session switch, OR by {@code AskTool} itself if the wait times out with nobody
+    /// answering.
     private java.util.concurrent.CompletableFuture<java.util.List<String>> showAskPanel(
             java.util.List<org.jackhuang.hmcl.ui.ai.tools.AskTool.Question> questions) {
         java.util.concurrent.CompletableFuture<java.util.List<String>> future =
                 new java.util.concurrent.CompletableFuture<>();
+        // The confirm button and cancelActiveAsk() both dismiss the panel themselves before
+        // completing the future — but AskTool can ALSO complete (cancel) this future entirely on
+        // its own, from the agent's background thread, when its wait times out with nobody
+        // answering. That path has no other way to reach the panel, so watch the future here and
+        // dismiss it ourselves whenever it finishes and this is still the active ask; the
+        // `activeAsk == future` guard makes this a no-op for the two paths that already dismissed
+        // it themselves (they null out activeAsk first).
+        future.whenComplete((answers, ex) -> Platform.runLater(() -> {
+            if (activeAsk == future) {
+                activeAsk = null;
+                hideAskPanel();
+            }
+        }));
         Platform.runLater(() -> {
             cancelActiveAsk();
             activeAsk = future;
@@ -3558,6 +3939,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             currentStreamAgent = null;
         }
         cancelActiveAsk();
+        // Mirrors cancelActiveAsk() above for the exact same reason: a pending dangerous/critical
+        // confirm dialog blocks the STREAMING CLIENT'S OWN callback thread, not the executor thread
+        // wrapped by currentResponse, so future.cancel(true) below never unblocks it on its own —
+        // without this call the dialog (and its blocked agent thread) would keep running for up to
+        // the full 120s/180s timeout after the user pressed Stop, and could still be answered once
+        // the button frees up and the user starts a brand-new turn. See the activeConfirm field doc.
+        cancelActiveConfirm();
         java.util.concurrent.CompletableFuture<Void> future = currentResponse;
         if (future != null) {
             future.cancel(true);
@@ -3580,8 +3968,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,
-                             @Nullable AiSession owner) {
+                             @Nullable AiSession owner, int generation) {
         Platform.runLater(() -> {
+            // Re-check on the FX thread: the caller's own check ran on a background (langchain4j
+            // callback) thread and may be stale by the time this runnable actually executes — the
+            // user could have pressed Stop (or started a NEW turn) in between, bumping
+            // responseGeneration again. Every other terminal callback in this same streaming setup
+            // (onToken/onReasoningToken/onToolActivity/onToolResult/onComplete) already re-checks
+            // its captured `generation` as the first statement inside its own Platform.runLater —
+            // this mirrors that same pattern for the error path.
+            if (generation != responseGeneration) {
+                return;
+            }
             streamingBubble = null;
             exitStreamingState();
             // If the failed stream belongs to a session the user is no longer viewing, release the
@@ -3671,10 +4069,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
     }
 
+    /// Mirrors {@link #persistStore()} for {@code aiSettings}: a silently swallowed save here
+    /// left the user believing a settings/model change had stuck when it only lived in memory.
+    private void persistAiSettings() {
+        try {
+            aiSettings.save();
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save ai settings", e);
+        }
+    }
+
     /// Builds the small role-name label shown above a bubble.
     private static Label bubbleName(String name, boolean alignRight) {
         Label nameLabel = new Label(name);
-        nameLabel.setMaxWidth(480);
+        nameLabel.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         if (alignRight) {
             nameLabel.setAlignment(Pos.CENTER_RIGHT);
         }
@@ -3688,14 +4096,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private static Node bubbleTextNode(String text, String... styleClasses) {
         if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(text)) {
             javafx.scene.text.TextFlow flow = new javafx.scene.text.TextFlow();
-            flow.setMaxWidth(480);
+            flow.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
             flow.getChildren().addAll(EmojiImages.toNodes(text, 14));
             flow.getStyleClass().addAll(styleClasses);
             return flow;
         }
         Label label = new Label(text);
         label.setWrapText(true);
-        label.setMaxWidth(480);
+        label.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         label.getStyleClass().addAll(styleClasses);
         return label;
     }
@@ -3721,7 +4129,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Node content = bubbleTextNode(text, "ai-bubble", "ai-bubble-user");
 
         VBox bubbleBox = new VBox(2, bubbleName(chatSettings.userName, true), content);
-        bubbleBox.setMaxWidth(480);
+        bubbleBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         bubbleBox.setAlignment(Pos.CENTER_RIGHT);
 
         messageList.getChildren().add(wrapBubble(bubbleBox, Pos.CENTER_RIGHT));
@@ -3738,11 +4146,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private Label createAiBubble(String text, @Nullable LlmUsage usage) {
         Label content = new Label(text);
         content.setWrapText(true);
-        content.setMaxWidth(480);
+        content.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         content.getStyleClass().addAll("ai-bubble", "ai-bubble-ai");
 
         VBox bubbleBox = new VBox(2, bubbleName("AI", false), content);
-        bubbleBox.setMaxWidth(480);
+        bubbleBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
 
         // When markdown is available, render it as the bubble and keep the plain
         // Label hidden behind it as the streaming text target.
@@ -3889,7 +4297,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void addSystemMessage(String text) {
         Label label = new Label(text);
         label.setWrapText(true);
-        label.setMaxWidth(480);
+        label.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         label.getStyleClass().addAll("ai-bubble", "ai-bubble-system");
 
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));
@@ -3910,7 +4318,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label pill = new Label(headline);
         pill.getStyleClass().add("ai-event-pill");
         pill.setWrapText(true);
-        pill.setMaxWidth(480);
+        pill.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         if (!full.equals(headline)) {
             javafx.scene.control.Tooltip tip = new javafx.scene.control.Tooltip(
                     full.length() > 1000 ? full.substring(0, 1000) + "…" : full);
@@ -3934,7 +4342,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         ToolCard card = new ToolCard(payload.name);
         card.complete(payload.success, payload.resultText == null ? "" : payload.resultText);
-        messageList.getChildren().add(wrapBubble(card, Pos.CENTER_LEFT));
+        appendToolCard(card);
     }
 
     /// {@link org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoUiHandler}: renders the agent's
@@ -3947,16 +4355,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 hideTodoCard();
                 return;
             }
-            VBox card = new VBox(4);
-            card.getStyleClass().addAll("ai-bubble", "ai-tool-card", "ai-todo-card");
-            card.setPadding(new Insets(10, 12, 10, 12));
-
             long done = todos.stream().filter(t -> "done".equals(t.status())).count();
-            Label title = new Label("任务清单 (" + done + "/" + todos.size() + ")");
-            title.getStyleClass().add("ai-tool-card-header");
-            title.setStyle("-fx-font-weight: bold;");
-            card.getChildren().add(title);
 
+            // Header row (chevron + "任务清单 (n/m)") is always visible and clickable to collapse
+            // the body — previously the whole thing was one plain Label with no toggle at all.
+            Label chevron = new Label(todoExpanded ? "▾" : "▸");
+            chevron.getStyleClass().add("ai-todo-title");
+            Label title = new Label("任务清单 (" + done + "/" + todos.size() + ")");
+            title.getStyleClass().add("ai-todo-title");
+            HBox headerRow = new HBox(6, chevron, title);
+            headerRow.getStyleClass().add("ai-todo-header");
+            headerRow.setAlignment(Pos.CENTER_LEFT);
+
+            VBox body = new VBox(4);
+            body.getStyleClass().add("ai-todo-body");
             for (org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem t : todos) {
                 String status = t.status();
                 String mark = switch (status) {
@@ -3966,14 +4378,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 };
                 Label row = new Label(mark + "  " + t.content());
                 row.setWrapText(true);
-                row.setMaxWidth(440);
+                row.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
                 switch (status) {
                     case "done" -> row.setStyle("-fx-text-fill: #6aa84f;");
                     case "in_progress" -> row.setStyle("-fx-font-weight: bold; -fx-text-fill: #4285f4;");
                     default -> { /* pending: default styling */ }
                 }
-                card.getChildren().add(row);
+                body.getChildren().add(row);
             }
+            body.setVisible(todoExpanded);
+            body.setManaged(todoExpanded);
+            FXUtils.onClicked(headerRow, () -> {
+                todoExpanded = !todoExpanded;
+                chevron.setText(todoExpanded ? "▾" : "▸");
+                body.setVisible(todoExpanded);
+                body.setManaged(todoExpanded);
+            });
+
+            VBox card = new VBox(4, headerRow, body);
+            // Deliberately NOT .ai-tool-card (opaque background + hairline border, meant for a
+            // bubble-like chat card) — this pinned banner sits full-width above the messages like
+            // the jobs pane, so it reuses that translucent/borderless treatment instead, matching
+            // its sibling rather than reading as a disconnected box ("边缘和界面相当割裂").
+            card.getStyleClass().add("ai-todo-card");
+            card.setPadding(new Insets(8, 12, 8, 12));
 
             todoCard = card;
             todoCardContainer.getChildren().add(card);
@@ -4008,22 +4436,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             super(2);
             this.toolName = toolName;
             getStyleClass().addAll("ai-bubble", "ai-bubble-tool", "ai-tool-card");
-            setMaxWidth(480);
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
 
             header.setText(i18n("ai.tool.calling", toolName));
             header.setWrapText(true);
             header.getStyleClass().add("ai-tool-card-header");
 
             result.setWrapText(true);
-            result.setMaxWidth(440);
+            result.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
             result.getStyleClass().add("ai-tool-card-result");
             result.setVisible(false);
             result.setManaged(false);
 
             progressLabel.setWrapText(true);
-            progressLabel.setMaxWidth(440);
+            progressLabel.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
             progressLabel.getStyleClass().add("ai-tool-card-result");
-            progressBar.setPrefWidth(440);
+            progressBar.setPrefWidth(AI_BUBBLE_MAX_WIDTH - 40);
             progressBar.setMaxWidth(Double.MAX_VALUE);
             progressBox.setVisible(false);
             progressBox.setManaged(false);
@@ -4070,6 +4498,86 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
     }
 
+    /// Collapses a RUN of consecutive tool calls (no assistant text between them) into one card
+    /// with a "已调用 N 个工具" summary header, so a turn that calls e.g. `instance` ten times in
+    /// a row shows one collapsible row instead of ten separate cards stacked in the conversation
+    /// ("连续的工具调用需要收纳在一起"). Individual {@link ToolCard}s are unchanged — they just
+    /// live inside this card's body instead of directly in {@link #messageList} once a run reaches
+    /// 2+ calls (see {@link #appendToolCard}, which decides when to promote a solo card into one
+    /// of these).
+    private final class ToolCallGroupCard extends VBox {
+        private final Label chevron = new Label("▸");
+        private final Label summary = new Label();
+        private final VBox body = new VBox(2);
+        private boolean expanded = false;
+        private int count = 0;
+
+        ToolCallGroupCard() {
+            super(2);
+            getStyleClass().addAll("ai-bubble", "ai-tool-card", "ai-tool-group-card");
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
+
+            chevron.getStyleClass().addAll("ai-tool-card-header", "ai-tool-group-header");
+            summary.getStyleClass().addAll("ai-tool-card-header", "ai-tool-group-header");
+            HBox headerBox = new HBox(6, chevron, summary);
+            headerBox.setAlignment(Pos.CENTER_LEFT);
+            FXUtils.onClicked(headerBox, () -> {
+                expanded = !expanded;
+                chevron.setText(expanded ? "▾" : "▸");
+                body.setVisible(expanded);
+                body.setManaged(expanded);
+            });
+            body.setVisible(false);
+            body.setManaged(false);
+            getChildren().addAll(headerBox, body);
+        }
+
+        void add(ToolCard card) {
+            body.getChildren().add(card);
+            count++;
+            summary.setText("已调用 " + count + " 个工具");
+        }
+    }
+
+    /// Places a new tool-call card into the conversation, grouping it with the immediately
+    /// preceding tool call(s) if this is part of the same uninterrupted run — see
+    /// {@link ToolCallGroupCard}. A single isolated call stays a plain standalone card (no group
+    /// wrapper, no visual change from before); a run is only promoted to a group once its 2nd call
+    /// arrives, at which point the first card is pulled out of its own wrapper and re-parented into
+    /// a new group alongside this one. Used by both the live-streaming path (`onToolActivity`) and
+    /// the persisted-session reload path (`addPersistedToolCard`), so a reloaded session's grouping
+    /// always matches what was shown live — call {@link #endToolCallRun()} at the same points in
+    /// both paths (new text segment / non-tool message) to close off a run.
+    private void appendToolCard(ToolCard card) {
+        if (activeToolGroup != null) {
+            activeToolGroup.add(card);
+        } else if (lastSoloToolCard != null) {
+            ToolCallGroupCard group = new ToolCallGroupCard();
+            messageList.getChildren().remove(lastSoloToolCardWrapper);
+            lastSoloToolCardWrapper.getChildren().remove(lastSoloToolCard);
+            group.add(lastSoloToolCard);
+            group.add(card);
+            messageList.getChildren().add(wrapBubble(group, Pos.CENTER_LEFT));
+            activeToolGroup = group;
+            lastSoloToolCard = null;
+            lastSoloToolCardWrapper = null;
+        } else {
+            HBox wrapper = wrapBubble(card, Pos.CENTER_LEFT);
+            messageList.getChildren().add(wrapper);
+            lastSoloToolCard = card;
+            lastSoloToolCardWrapper = wrapper;
+        }
+    }
+
+    /// Ends the current tool-call run (if any), so the next tool card starts a fresh group/solo
+    /// card instead of extending this one. Call whenever a non-tool-call message (assistant text,
+    /// user message, event pill) is about to be shown, in both the live and reload paths.
+    private void endToolCallRun() {
+        activeToolGroup = null;
+        lastSoloToolCard = null;
+        lastSoloToolCardWrapper = null;
+    }
+
     /// Subscribes the chat view to the decoupled {@link org.jackhuang.hmcl.ai.tools.ToolProgress}
     /// bus so long-running download / install tools render a live progress card instead of
     /// appearing frozen. Events may arrive on any thread, so we marshal onto the JavaFX thread
@@ -4096,7 +4604,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void addToolMessage(String text) {
         Label label = new Label(text);
         label.setWrapText(true);
-        label.setMaxWidth(480);
+        label.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         label.getStyleClass().addAll("ai-bubble", "ai-bubble-tool");
 
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));

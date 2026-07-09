@@ -65,6 +65,13 @@ public final class RememberStore {
 
     private static final int MAX_RESULTS = 50;
 
+    /// Hard caps on a single memory entry's size — remember() had no cap at all before this,
+    /// so one call could write an arbitrarily large .md file; the explicit `recall` tool appends
+    /// each matched entry's FULL content, relying entirely on the generic, tool-agnostic
+    /// toolResultMaxChars cut as the only backstop against one huge memory blowing out a turn.
+    private static final int MAX_TITLE_CHARS = 200;
+    private static final int MAX_CONTENT_CHARS = 8000;
+
     private final Path dir;
 
     public RememberStore(Path dir) {
@@ -96,6 +103,13 @@ public final class RememberStore {
         // persisted here. Redacting at the store layer covers every caller.
         title = redactSecrets(title);
         content = redactSecrets(content != null ? content : "");
+        if (title.length() > MAX_TITLE_CHARS) {
+            title = title.substring(0, MAX_TITLE_CHARS);
+        }
+        if (content.length() > MAX_CONTENT_CHARS) {
+            content = content.substring(0, MAX_CONTENT_CHARS)
+                    + "\n…[truncated — memory content capped at " + MAX_CONTENT_CHARS + " chars]";
+        }
 
         // Dedup: if an existing memory already holds the same (normalized) content, return it instead
         // of writing a near-identical duplicate that would clutter recall.
@@ -137,16 +151,20 @@ public final class RememberStore {
     /// @return matching entries, newest first
     /// @throws IOException on I/O error
     public List<Entry> recall(String query, @Nullable String tag, int maxResults) throws IOException {
-        Pattern titlePat = Pattern.compile("title:\\s*\"(.+?)\"");
         Pattern tagsPat = Pattern.compile("tags:\\s*\\[(.*?)\\]");
         Pattern createdPat = Pattern.compile("created:\\s*(.+)");
         String q = query.toLowerCase(Locale.ROOT);
         String t = tag != null ? tag.toLowerCase(Locale.ROOT) : null;
         int limit = Math.min(maxResults > 0 ? maxResults : MAX_RESULTS, MAX_RESULTS);
 
-        List<Entry> results = new ArrayList<>();
+        // Collect every MATCHING entry first (with its parsed `created` timestamp), then sort
+        // newest-first by that timestamp at the end. Sorting by Path/filename (the previous
+        // behavior) does not actually correlate with creation order once entries have
+        // non-timestamped, title-based filenames (the normal case — see remember()'s `safe` slug),
+        // silently breaking the documented "newest first" contract.
+        List<Entry> matches = new ArrayList<>();
         try (Stream<Path> stream = Files.list(dir)) {
-            for (Path file : stream.sorted(Comparator.reverseOrder()).toList()) {
+            for (Path file : stream.toList()) {
                 if (!file.getFileName().toString().endsWith(".md")) continue;
                 String text;
                 try {
@@ -154,10 +172,6 @@ public final class RememberStore {
                 } catch (IOException e) {
                     continue;
                 }
-
-                String title = "";
-                java.util.regex.Matcher tm = titlePat.matcher(text);
-                if (tm.find()) title = tm.group(1);
 
                 List<String> fileTags = new ArrayList<>();
                 java.util.regex.Matcher tgm = tagsPat.matcher(text);
@@ -188,11 +202,23 @@ public final class RememberStore {
                 Entry entry = parseEntry(text, file);
                 entry.setFile(file);
                 entry.setCreated(created.isEmpty() ? null : created);
-                results.add(entry);
-                if (results.size() >= limit) break;
+                matches.add(entry);
             }
         }
-        return results;
+        matches.sort(Comparator.comparing(RememberStore::sortKey).reversed());
+        return matches.size() > limit ? new ArrayList<>(matches.subList(0, limit)) : matches;
+    }
+
+    /// Sort key for recall()'s "newest first" contract: the parsed `created` ISO-instant string
+    /// when present (ISO-8601 instants sort correctly as plain strings), falling back to the
+    /// file's own name so an entry with a missing/corrupt timestamp still sorts deterministically.
+    private static String sortKey(Entry e) {
+        String created = e.getCreated();
+        if (created != null) {
+            return created;
+        }
+        Path f = e.getFile();
+        return f != null ? f.getFileName().toString() : "";
     }
 
     /// Lists all entries, newest first.

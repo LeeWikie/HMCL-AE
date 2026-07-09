@@ -32,16 +32,33 @@ public final class CriticalOperationsTest {
 
     @Test
     void catastrophicToolNamesAreCritical() {
-        assertNotNull(CriticalOperations.criticalReason("delete_world", "{}"));
-        assertNotNull(CriticalOperations.criticalReason("delete_instance", "{}"));
-        assertNotNull(CriticalOperations.criticalReason("set_nbt", "{}"));
-        assertNotNull(CriticalOperations.criticalReason("restore_world_backup", "{}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"worlds_delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"worlds_backup_restore\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"mods_delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"mods_update\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"resourcepacks_delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"shaders_delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"set\"}"));
+        assertNotNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"copy_player_data\"}"));
+        assertNotNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"transfer_inventory\"}"));
+    }
+
+    @Test
+    void actionCasingAndWhitespaceDoNotBypassTheCriticalGate() {
+        // The model may return a differently-cased or whitespace-padded action string; the
+        // critical-op gate must normalize it the same way every domain facade's own dispatch does.
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\"Delete\"}"));
+        assertNotNull(CriticalOperations.criticalReason("instance", "{\"action\":\" delete \"}"));
+        assertNotNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"Set\"}"));
     }
 
     @Test
     void ordinaryToolsAreNotCritical() {
-        assertNull(CriticalOperations.criticalReason("list_instances", "{}"));
-        assertNull(CriticalOperations.criticalReason("read_world_info", "{\"world\":\"x\"}"));
+        assertNull(CriticalOperations.criticalReason("instance", "{\"action\":\"list\"}"));
+        assertNull(CriticalOperations.criticalReason("instance", "{\"action\":\"worlds_info\",\"world\":\"x\"}"));
+        assertNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"read\"}"));
+        assertNull(CriticalOperations.criticalReason("nbt", "{\"action\":\"get\"}"));
         assertNull(CriticalOperations.criticalReason("shell", "{\"command\":\"ls -la\"}"));
     }
 
@@ -60,5 +77,23 @@ public final class CriticalOperationsTest {
                 "Remove-Item C:/Users/me/.minecraft/saves -Recurse -Force".getBytes(StandardCharsets.UTF_16LE));
         String argsJson = "{\"command\":\"powershell -EncodedCommand " + encoded + "\"}";
         assertNotNull(CriticalOperations.criticalReason("shell", argsJson));
+    }
+
+    /// Bypass #1 also breaks the RED gate: the verb is assembled via string concatenation and
+    /// invoked indirectly through `& $v`, so the literal-verb DELETE_VERB regex never matches — but
+    /// the command still deletes the saves directory. Fail-closed: an indirect-invocation construct
+    /// combined with a critical path must raise the red confirmation.
+    @Test
+    void indirectInvocationDeletingSavesIsCritical() {
+        assertNotNull(CriticalOperations.criticalReason(
+                "shell", "{\"command\":\"$v='Remo'+'ve-Item'; & $v -Recurse -Force C:/Users/me/.minecraft/saves\"}"));
+    }
+
+    /// Bypass #2 also breaks the RED gate: cmd.exe `^` splits the delete verb across the escape
+    /// character, so the literal-verb regex never matches even though the target is a critical path.
+    @Test
+    void midWordVerbSplittingDeletingSavesIsCritical() {
+        assertNotNull(CriticalOperations.criticalReason(
+                "shell", "{\"command\":\"r^d /s /q C:\\\\Users\\\\me\\\\.minecraft\\\\saves\"}"));
     }
 }

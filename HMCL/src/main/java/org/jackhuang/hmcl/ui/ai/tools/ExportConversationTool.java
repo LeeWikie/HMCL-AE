@@ -22,6 +22,7 @@ import org.jackhuang.hmcl.ai.AiSessionStore;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.ai.util.Redactor;
 import org.jackhuang.hmcl.setting.SettingsManager;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -121,7 +122,13 @@ public final class ExportConversationTool implements Tool {
                 continue;
             }
             md.append("## ").append(roleHeading(role)).append("\n\n");
-            md.append(content.strip()).append("\n\n");
+            // Redact secrets before they land in a file explicitly meant "for sharing or archival"
+            // — mirrors what TraceRecorder already does for every line of the local diagnostic
+            // trace. A tool-result string can carry a leaked credential fragment (e.g. an
+            // auth-failure error body echoing part of a submitted key) straight into the live
+            // conversation by design (the model needs full fidelity there), but an EXPORTED,
+            // shareable copy has no such requirement and deserves the same scrub the trace gets.
+            md.append(Redactor.redact(content.strip())).append("\n\n");
             exported++;
         }
 
