@@ -928,7 +928,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     if (current != null) {
                         updateHeader(current);
                     }
-                }
+                },
+                // Share THE instances the chat tools hold (WebSearchTool/OcrImageTool), so edits
+                // made in the settings page take effect in chat immediately — the settings page
+                // used to load its own copies and the tools never saw any change.
+                this.searchConfig,
+                this.ocrConfig
         )));
 
         // Pin "反馈" and "AI settings" as fixed-height rows at the very bottom: they never grow

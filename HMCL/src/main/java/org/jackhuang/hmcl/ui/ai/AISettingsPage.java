@@ -125,6 +125,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         t.setDaemon(true);
         return t;
     });
+    /// Uniform fixed width for this page's dialog form bodies (single source; native precedent
+    /// for fixed dialog-form widths: PromptDialogPane 560, InputDialogPane 400 — 480 sits between).
+    private static final double FORM_WIDTH = 480;
     private static final Path MCP_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
     private static final Path SEARCH_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
     private static final Path OCR_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
@@ -141,8 +144,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private final SkillRegistry skillRegistry = new SkillRegistry();
     private final AiToolPermissionStore toolPermissionStore = new AiToolPermissionStore(TOOL_PERMISSION_FILE);
     private final List<AiMcpServerConfig> mcpServers = new ArrayList<>();
-    private AiSearchConfig searchConfig = new AiSearchConfig();
-    private AiOcrConfig ocrConfig = new AiOcrConfig();
+    /// Shared with AIMainPage (constructor-injected): the chat page's WebSearchTool/OcrImageTool
+    /// hold a reference to THE SAME instance, so edits made here are visible to the tools
+    /// immediately. Never reassign these fields — replacing the instance would silently
+    /// disconnect the tools again (the original double-instance bug). Edit via setters only.
+    private final AiSearchConfig searchConfig;
+    private final AiOcrConfig ocrConfig;
 
     private final TransitionPane transitionPane = new TransitionPane();
     private final TabHeader.Tab<Node> providerTab = new TabHeader.Tab<>("aiProviderTab");
@@ -173,15 +180,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private ComponentSublist providerSublist;
     private ComponentSublist modelSublist;
 
-    public AISettingsPage(AiSettings aiSettings, AiModelDiscoveryService discoveryService, Runnable onSettingsChanged) {
+    public AISettingsPage(AiSettings aiSettings, AiModelDiscoveryService discoveryService, Runnable onSettingsChanged,
+                          AiSearchConfig searchConfig, AiOcrConfig ocrConfig) {
         this.aiSettings = aiSettings;
         this.discoveryService = discoveryService;
         this.onSettingsChanged = onSettingsChanged;
+        this.searchConfig = searchConfig;
+        this.ocrConfig = ocrConfig;
 
         skillRegistry.setSkillsDir(SKILLS_DIR);
         loadMcpServers();
-        loadSearchConfig();
-        loadOcrConfig();
         loadToolPermissions();
         refreshSkills();
 
@@ -256,6 +264,17 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     @Override
     public void onPageHidden() {
         tab.onPageHidden();
+    }
+
+    /// 使一个 tab 的内容节点失效并（若正显示）立即用 nodeSupplier 重建——
+    /// TabHeader.Tab 的节点只建一次，tab.select() 本身并不会刷新已建内容
+    /// （TabHeader.select 只在 node == null 时才调 supplier），所以之前那些
+    /// "改完数据再 select 一次" 的调用全是假刷新。
+    private void invalidateTab(TabHeader.Tab<Node> t) {
+        t.setNode(null);
+        if (tab.getSelectionModel().getSelectedItem() == t) {
+            tab.select(t, false);
+        }
     }
 
     @Override
@@ -460,7 +479,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 "协议", protocolBox,
                 "Endpoint", endpointField,
                 "API Key", apiKeyCell), enabledBox);
-        FXUtils.setLimitWidth(body, 480);
+        FXUtils.setLimitWidth(body, FORM_WIDTH);
 
         DialogPane dialog = new DialogPane() {
             @Override
@@ -635,7 +654,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
 
         VBox bodyBox = new VBox(12, formGrid("模型 ID", idField, "显示别名", aliasField), collapsibles);
-        FXUtils.setLimitWidth(bodyBox, 480);
+        FXUtils.setLimitWidth(bodyBox, FORM_WIDTH);
 
         DialogPane dialog = new DialogPane() {
             @Override
@@ -643,6 +662,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 String id = idField.getText().trim();
                 if (id.isEmpty()) {
                     onFailure("模型 ID 不能为空");
+                    return;
+                }
+                // Renaming (or adding) a model to an id that already belongs to ANOTHER model
+                // would make profile.putModel silently produce a duplicate entry — reject and
+                // keep the dialog open, same as the empty-id check above.
+                boolean duplicate = profile.getModels().stream()
+                        .anyMatch(m -> m != entry && id.equals(m.getId()));
+                if (duplicate) {
+                    onFailure("模型 ID 已存在：" + id); // TODO(i18n)
                     return;
                 }
                 entry.setId(id);
@@ -710,8 +738,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// 高级/定价 grids in the model dialog.
     private static VBox captionedField(String caption, javafx.scene.Node field) {
         Label cap = new Label(caption);
-        cap.getStyleClass().add("subtitle-label");
-        cap.setStyle("-fx-font-size: 10px;");
+        // ai-footnote (10px + variant color) replaces the inline 10px setStyle; the CSS rule
+        // lands with the root.css end-state rewrite (B7) — until then the caption renders at
+        // subtitle-label size, which is acceptable per the blueprint.
+        cap.getStyleClass().addAll("subtitle-label", "ai-footnote");
         if (field instanceof javafx.scene.layout.Region region) {
             region.setMaxWidth(Double.MAX_VALUE);
         }
@@ -759,7 +789,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         FXUtils.setLimitHeight(sp, 320);
 
         VBox body = new VBox(10, search, status, sp);
-        FXUtils.setLimitWidth(body, 480);
+        FXUtils.setLimitWidth(body, FORM_WIDTH);
 
         // Fetch only the currently-selected provider's models.
         Thread worker = new Thread(() -> {
@@ -949,7 +979,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         testBtn.setOnAction(e -> {
             for (TestRow r : rows) {
                 if (!r.checkBox.isSelected()) continue;
+                // Reset any previous run's outcome icon/color before re-testing.
                 r.result.setText("测试中...");
+                r.result.setGraphic(null);
+                r.result.getStyleClass().removeAll("ai-feedback-success", "ai-feedback-error");
                 AiProviderProfile p = r.profile;
                 String model = r.modelId;
                 BATCH_TEST_POOL.submit(() -> {
@@ -958,9 +991,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         org.jackhuang.hmcl.ai.agent.ChatAgentFactory.testConnectionSync(
                                 p.getEndpoint(), p.getApiKey(), model, p.getProtocolFamily(), 15);
                         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
-                        Platform.runLater(() -> r.result.setText("✓ " + elapsedMs + " ms"));
+                        Platform.runLater(() -> {
+                            // SVG icon + themed color class instead of the raw ✓ text character.
+                            r.result.setText(elapsedMs + " ms");
+                            r.result.setGraphic(SVG.CHECK.createIcon(14));
+                            r.result.getStyleClass().add("ai-feedback-success");
+                        });
                     } catch (Exception ex) {
-                        Platform.runLater(() -> r.result.setText("✗ " + ex.getMessage()));
+                        Platform.runLater(() -> {
+                            r.result.setText(ex.getMessage());
+                            r.result.setGraphic(SVG.CLOSE.createIcon(14));
+                            r.result.getStyleClass().add("ai-feedback-error");
+                        });
                     }
                 });
             }
@@ -1124,14 +1166,23 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         handler.reject(error);
                         return;
                     }
-                    McpServerJsonCodec.apply(server, text);
-                    if (!mcpServers.contains(server)) {
-                        mcpServers.add(server); // a newly created server joins the list only on confirm
-                    }
-                    saveMcpServers();
+                    applyMcpServerEdit(server, text);
                     handler.resolve();
                 });
         Controllers.dialog(pane);
+    }
+
+    /// Applies a validated MCP-server JSON edit: mutates {@code server}, adds a newly created
+    /// server to the list on first confirm, persists, and rebuilds the MCP tab so the change is
+    /// visible immediately (see {@link #invalidateTab}). Package-private so the FX test can
+    /// exercise the accept path without the full Controllers dialog scaffolding.
+    void applyMcpServerEdit(AiMcpServerConfig server, String text) {
+        McpServerJsonCodec.apply(server, text);
+        if (!mcpServers.contains(server)) {
+            mcpServers.add(server); // a newly created server joins the list only on confirm
+        }
+        saveMcpServers();
+        invalidateTab(mcpTab);
     }
 
     private Node buildSkillsTab() {
@@ -1163,7 +1214,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 if (skill.getName() == null || !skill.isValid()) return;
                 if (skillRegistry.isDisabled(skill.getName())) skillRegistry.enable(skill.getName());
                 else skillRegistry.disable(skill.getName());
-                tab.select(skillsTab, false);
+                invalidateTab(skillsTab);
             });
             skillList.getContent().add(row);
         }
@@ -1181,7 +1232,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         reload.setLeading(SVG.REFRESH, 20);
         reload.setOnAction(e -> {
             refreshSkills();
-            tab.select(skillsTab, false);
+            invalidateTab(skillsTab);
         });
         skillList.getContent().add(reload);
 
@@ -1334,12 +1385,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             row.setOnAction(e -> {
                 toolPermissionStore.removePathOverride(toolName, rule.glob());
                 saveToolPermissions();
-                tab.select(skillsTab, false);
+                invalidateTab(skillsTab);
             });
             nodes.add(row);
         }
         LineButton addRule = new LineButton();
-        addRule.setTitle("+ 添加路径规则");
+        addRule.setTitle("添加路径规则");
         addRule.setSubtitle("按路径通配符（如 mods/**，gitignore 风格）为 " + toolName + " 单独覆盖权限");
         addRule.setLeading(SVG.ADD, 20);
         addRule.setOnAction(e -> {
@@ -1357,7 +1408,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toolPermissionStore.setPathOverride(toolName, glob, mode);
                 saveToolPermissions();
                 handler.resolve();
-                tab.select(skillsTab, false);
+                invalidateTab(skillsTab);
             });
             builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("路径通配符（如 mods/**）", ""));
             builder.addQuestion(new PromptDialogPane.Builder.CandidatesQuestion("匹配时的处理方式",
@@ -1463,7 +1514,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             String testEndpoint = searchConfig.getEndpoint();
             String testApiKey = searchConfig.getApiKey();
             int testMaxResults = searchConfig.getMaxResults();
-            Thread worker = new Thread(() -> {
+            BATCH_TEST_POOL.submit(() -> {
                 try {
                     SearchResponse response = switch (testProvider) {
                         case "searxng" -> new SearxngSearchClient(testEndpoint, testApiKey).search(query, testMaxResults);
@@ -1480,9 +1531,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 } catch (Exception ex) {
                     Platform.runLater(() -> handler.reject("搜索失败：" + ex.getMessage()));
                 }
-            }, "ai-search-test");
-            worker.setDaemon(true);
-            worker.start();
+            });
         }, "Minecraft crash report"));
         options.getContent().add(test);
 
@@ -1551,7 +1600,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 handler.reject("该提供商（" + p.getDisplayName() + "）暂未接入：" + p.getNote());
                 return;
             }
-            Thread worker = new Thread(() -> {
+            BATCH_TEST_POOL.submit(() -> {
                 try {
                     byte[] data = Files.readAllBytes(img);
                     String mime = mimeOf(trimmed);
@@ -1563,9 +1612,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 } catch (Exception ex) {
                     Platform.runLater(() -> handler.reject("OCR 失败：" + ex.getMessage()));
                 }
-            }, "ai-ocr-test");
-            worker.setDaemon(true);
-            worker.start();
+            });
         }, ""));
         options.getContent().add(test);
 
@@ -1665,19 +1712,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return "image/png";
     }
 
-    private void loadOcrConfig() {
-        try {
-            if (!Files.exists(OCR_CONFIG_FILE)) return;
-            String json = Files.readString(OCR_CONFIG_FILE, StandardCharsets.UTF_8);
-            AiOcrConfig loaded = GSON.fromJson(json, AiOcrConfig.class);
-            if (loaded != null) ocrConfig = loaded;
-        } catch (Exception e) {
-            // A corrupt config file silently reset OCR settings to defaults with no way to
-            // diagnose it — at least log it.
-            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load OCR config", e);
-        }
-    }
-
+    // NOTE: OCR config is no longer loaded here — the shared instance is constructor-injected
+    // by AIMainPage (the single startup read point). Only saving stays local.
     private void saveOcrConfig() {
         try {
             Files.writeString(OCR_CONFIG_FILE, GSON.toJson(ocrConfig), StandardCharsets.UTF_8);
@@ -1831,12 +1867,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
         if (chosen == null) return;
         Path target = chosen.toPath();
-        try {
-            int n = AiDataBackup.backup(target, slim);
-            Controllers.showToast("已备份 " + n + " 个文件到 " + target);
-        } catch (IOException ex) {
-            Controllers.showToast("备份失败：" + ex.getMessage());
-        }
+        // Zip the whole data dir OFF the FX thread (a large history froze the UI), and catch
+        // EVERYTHING, not just IOException — same lessons as exportAllSessions above.
+        Thread worker = new Thread(() -> {
+            try {
+                int n = AiDataBackup.backup(target, slim);
+                Platform.runLater(() -> Controllers.showToast("已备份 " + n + " 个文件到 " + target));
+            } catch (Exception ex) {
+                Platform.runLater(() -> Controllers.showToast("备份失败：" + ex.getMessage()));
+            }
+        }, "ai-data-backup");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /// Prompts for a backup zip and restores it after a confirmation (item 2 恢复).
@@ -1851,12 +1893,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 "恢复将覆盖当前的聊天记录、设置、技能与记忆等数据，确定继续？",
                 "恢复数据",
                 () -> {
-                    try {
-                        int n = AiDataBackup.restore(source);
-                        Controllers.showToast("已恢复 " + n + " 个文件，重启 HMCL 后生效");
-                    } catch (IOException ex) {
-                        Controllers.showToast("恢复失败：" + ex.getMessage());
-                    }
+                    // Unzip OFF the FX thread; catch Exception (not just IOException) — a corrupt
+                    // zip throws unchecked exceptions too (same lesson as exportAllSessions).
+                    Thread worker = new Thread(() -> {
+                        try {
+                            int n = AiDataBackup.restore(source);
+                            Platform.runLater(() -> Controllers.showToast("已恢复 " + n + " 个文件，重启 HMCL 后生效"));
+                        } catch (Exception ex) {
+                            Platform.runLater(() -> Controllers.showToast("恢复失败：" + ex.getMessage()));
+                        }
+                    }, "ai-data-restore");
+                    worker.setDaemon(true);
+                    worker.start();
                 },
                 null);
     }
@@ -2132,7 +2180,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             if (newV) {
                 Controllers.confirm(
                         "这将跳过所有确认,包括删存档/删实例等灾难操作的红色确认。仅供开发者测试。确定开启?",
-                        "⛔ 危险：跳过所有权限确认",
+                        "危险：跳过所有权限确认",
                         MessageType.ERROR,
                         () -> {
                             aiSettings.dangerouslySkipPermissionsProperty().set(true);
@@ -2282,7 +2330,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         reload.setTitle("刷新");
         reload.setSubtitle("重新扫描记忆目录");
         reload.setLeading(SVG.REFRESH, 20);
-        reload.setOnAction(e -> tab.select(memoryTab, false));
+        reload.setOnAction(e -> invalidateTab(memoryTab));
         actions.getContent().add(reload);
 
         ComponentList listCard = new ComponentList();
@@ -2316,9 +2364,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 }
                 if (file != null) {
                     final Path entryFile = file;
-                    com.jfoenix.controls.JFXButton deleteBtn = new com.jfoenix.controls.JFXButton();
-                    deleteBtn.setGraphic(SVG.DELETE.createIcon(20));
-                    deleteBtn.getStyleClass().add("ai-memory-delete-btn");
+                    // Native icon-button idiom (toggle-icon4) instead of the ghost class
+                    // "ai-memory-delete-btn" that never had a CSS rule.
+                    com.jfoenix.controls.JFXButton deleteBtn = FXUtils.newToggleButton4(SVG.DELETE);
                     FXUtils.installFastTooltip(deleteBtn, "删除这条记忆");
                     deleteBtn.setOnAction(e -> Controllers.confirm(
                             "确定删除这条记忆？此操作不可撤销。", "删除记忆", () -> {
@@ -2328,7 +2376,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                                 } catch (Exception ex) {
                                     Controllers.showToast("删除失败：" + ex.getMessage());
                                 }
-                                tab.select(memoryTab, false);
+                                invalidateTab(memoryTab);
                             }, () -> {
                             }));
                     row.setTrailingIcon(deleteBtn);
@@ -2461,17 +2509,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
     }
 
-    private void loadSearchConfig() {
-        try {
-            if (!Files.exists(SEARCH_CONFIG_FILE)) return;
-            String json = Files.readString(SEARCH_CONFIG_FILE, StandardCharsets.UTF_8);
-            AiSearchConfig loaded = GSON.fromJson(json, AiSearchConfig.class);
-            if (loaded != null) searchConfig = loaded;
-        } catch (Exception e) {
-            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to load search config", e);
-        }
-    }
-
+    // NOTE: search config is no longer loaded here — the shared instance is constructor-injected
+    // by AIMainPage (the single startup read point). Only saving stays local.
     private void saveSearchConfig() {
         try {
             Files.writeString(SEARCH_CONFIG_FILE, GSON.toJson(searchConfig), StandardCharsets.UTF_8);

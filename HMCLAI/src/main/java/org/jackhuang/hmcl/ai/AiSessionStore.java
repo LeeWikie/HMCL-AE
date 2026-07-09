@@ -85,6 +85,19 @@ public final class AiSessionStore {
 
     private static final Type STORE_TYPE = new TypeToken<StoreData>() {}.getType();
 
+    /// Single-threaded daemon executor that runs all async saves in FIFO order.
+    /// Shared across store instances (in practice there is one store per app).
+    private static final java.util.concurrent.ExecutorService SAVE_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ai-session-save");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /// Merge flag for {@link #saveAsync()}: `true` while one queued save has not started yet.
+    private final java.util.concurrent.atomic.AtomicBoolean savePending =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     private final Path filePath;
 
     /// The in-memory session map keyed by session id. Preserves insertion order.
@@ -210,6 +223,38 @@ public final class AiSessionStore {
         } catch (java.nio.file.AtomicMoveNotSupportedException e) {
             Files.move(tmp, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    /// 异步保存:提交到单线程队列并合并(已有一次待执行的保存时不再排队——
+    /// save() 在执行时才做快照,后到的改动自然被同一次保存捕获或由下一次捕获)。
+    ///
+    /// 与流式并发的顺序性论证:
+    /// - 所有会话数据修改要么在 FX 线程要么在 agent 线程;`save()` 的快照在
+    ///   本 store 的 `synchronized` + `copyForStore()`(session 自身监视器)下完成,
+    ///   不会乱序、不会撕裂(Gson 只遍历脱离的副本,永不触碰活列表)。
+    /// - 单线程执行器保证保存彼此串行(FIFO),后一次保存的快照一定不早于前一次。
+    /// - 合并标志只可能"少保存"不可能"存旧盖新":每次执行都取当下快照;
+    ///   CAS 失败(合并)意味着队列里已有一个尚未开始的保存任务,该任务开跑时
+    ///   先清标志再快照,因此合并前发生的改动必然被它(或其后重新排队的一次)捕获。
+    /// - 崩溃瞬间可能丢最后一次保存(同步写时代也可能丢在更早的点);
+    ///   正常退出由 UI 侧的 shutdown hook 调 `save()` 兜底(save() synchronized,
+    ///   与在途异步保存互斥,最后落盘的一定是最终快照)。
+    public void saveAsync() {
+        if (!savePending.compareAndSet(false, true)) return;
+        SAVE_EXECUTOR.submit(() -> {
+            savePending.set(false); // 先清标志:提交点之后的新改动会重新排队
+            try {
+                save();
+            } catch (Exception e) {
+                org.jackhuang.hmcl.ai.util.AiLog.warn("[AI] async session save failed: " + e);
+            }
+        });
+    }
+
+    /// 测试钩子:向保存队列提交一个哨兵任务并阻塞等待其完成。单线程 FIFO 保证
+    /// 在此之前排队的所有异步保存任务都已执行完毕。
+    static void awaitSaveQueue() throws InterruptedException, java.util.concurrent.ExecutionException {
+        SAVE_EXECUTOR.submit(() -> { }).get();
     }
 
     /// Creates a new session, adds it to the store, sets it as current, and

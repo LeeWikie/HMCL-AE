@@ -19,11 +19,13 @@ package org.jackhuang.hmcl.ui.construct;
 
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
+import org.jackhuang.hmcl.ui.Controllers;
 import org.jackhuang.hmcl.util.FutureCallback;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,7 +75,20 @@ public class JsonEditorDialogPane extends DialogPane {
         this.validator = validator;
         this.callback = callback;
         setTitle(title);
-        setPrefWidth(760);
+        // Clamp to the main window instead of a fixed 760×(700×440): on a small window or at a
+        // high UI scale a fixed-size dialog can overflow past the window edge and hide the
+        // accept/cancel buttons entirely (bug-hunt 4.1). Falls back to the old fixed values when
+        // no main stage exists (bare TestFX harness) or it hasn't been laid out yet.
+        Stage stage = Controllers.getStage();
+        double dialogWidth = 760;
+        double editorHeight = 440;
+        if (stage != null && stage.getWidth() > 0) {
+            dialogWidth = Math.min(760, stage.getWidth() - 120);
+        }
+        if (stage != null && stage.getHeight() > 0) {
+            editorHeight = Math.min(440, stage.getHeight() - 260);
+        }
+        setPrefWidth(dialogWidth);
 
         codeArea.getStyleClass().add("json-editor-code-area");
         codeArea.setParagraphGraphicFactory(LineNumberFactory.get(codeArea));
@@ -83,8 +98,8 @@ public class JsonEditorDialogPane extends DialogPane {
         codeArea.getUndoManager().forgetHistory();
 
         VirtualizedScrollPane<CodeArea> scrollPane = new VirtualizedScrollPane<>(codeArea);
-        scrollPane.getStyleClass().add("json-editor-scroll");
-        scrollPane.setPrefSize(700, 440);
+        scrollPane.setPrefSize(700, editorHeight);
+        scrollPane.setMaxWidth(Double.MAX_VALUE);
         scrollPane.setMinHeight(240);
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
 

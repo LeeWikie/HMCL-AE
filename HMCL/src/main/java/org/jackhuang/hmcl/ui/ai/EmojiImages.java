@@ -77,7 +77,9 @@ public final class EmojiImages {
     }
 
     /// Whether the string contains at least one renderable emoji code point.
+    /// Null-safe: imported/legacy messages may carry a null content (BF P1).
     public static boolean containsEmoji(String text) {
+        if (text == null || text.isEmpty()) return false;
         int i = 0;
         while (i < text.length()) {
             int cp = text.codePointAt(i);
@@ -102,7 +104,7 @@ public final class EmojiImages {
                 String cluster = text.substring(i, clusterEnd);
                 String filename = toFilename(cluster);
                 Image image = imageFor(filename);
-                if (image != null) {
+                if (image != null && !image.isError()) {
                     if (plain.length() > 0) {
                         nodes.add(new Text(plain.toString()));
                         plain.setLength(0);
@@ -133,9 +135,22 @@ public final class EmojiImages {
     }
 
     /// Consumes an emoji grapheme cluster starting at index `start`: the base plus any
-    /// variation selectors, skin-tone modifiers, keycap, and ZWJ-joined emoji.
-    private static int consumeCluster(String text, int start) {
-        int i = start + Character.charCount(text.codePointAt(start));
+    /// variation selectors, skin-tone modifiers, keycap, and ZWJ-joined emoji. A flag is
+    /// exactly two regional indicators consumed as one cluster (BF P9). Package-visible
+    /// for unit tests.
+    static int consumeCluster(String text, int start) {
+        int firstCp = text.codePointAt(start);
+        int i = start + Character.charCount(firstCp);
+        // Flag = exactly two regional indicators paired into a single cluster.
+        if (firstCp >= 0x1F1E6 && firstCp <= 0x1F1FF) {
+            if (i < text.length()) {
+                int second = text.codePointAt(i);
+                if (second >= 0x1F1E6 && second <= 0x1F1FF) {
+                    return i + Character.charCount(second);
+                }
+            }
+            return i; // isolated regional indicator: treat as a single-character cluster
+        }
         while (i < text.length()) {
             int cp = text.codePointAt(i);
             if (cp == 0xFE0F || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF)) {
@@ -156,7 +171,8 @@ public final class EmojiImages {
     /// Builds the Noto Emoji filename for an emoji cluster: "emoji_u" followed by the code
     /// points in lowercase hex joined by '_', dropping U+FE0F (variation selector) but
     /// keeping U+200D (ZWJ), per noto-emoji's convention. e.g. 🧋 -> emoji_u1f9cb.
-    private static String toFilename(String cluster) {
+    /// Package-visible for unit tests.
+    static String toFilename(String cluster) {
         StringBuilder sb = new StringBuilder("emoji_u");
         boolean first = true;
         int i = 0;
@@ -195,6 +211,17 @@ public final class EmojiImages {
         // no monochrome text fallback that would otherwise "cover" the colour version.
         download(filename, file);
         Image remote = new Image(BASE_URL + filename + ".png", true);
+        // A failed download must not poison the cache for the rest of the session: evict on
+        // error so the next render retries (falling back to monochrome text meanwhile). The
+        // listener fires on the FX thread after this method (called on the FX thread) has
+        // already put the image, so remove(k, v) cannot race ahead of the put; remove(k, v)
+        // only evicts this exact instance, never a newer retry.
+        remote.errorProperty().addListener((o, ov, err) -> {
+            if (err) MEMORY.remove(filename, remote);
+        });
+        if (remote.isError()) {
+            return null; // failed synchronously (e.g. malformed URL): text fallback, no caching
+        }
         MEMORY.put(filename, remote);
         return remote;
     }

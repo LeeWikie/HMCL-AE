@@ -74,7 +74,9 @@ final class JobProgressBadge extends Label {
     private JobProgressBadge(@Nullable String singleJobId, @Nullable List<String> jobIds) {
         this.singleJobId = singleJobId;
         this.jobIds = jobIds;
-        getStyleClass().add("ai-job-progress-badge");
+        // "ai-approval-badge" supplies the shared small-pill base look (background, padding,
+        // radius); "ai-job-progress-badge" layers the badge-specific font size on top.
+        getStyleClass().addAll("ai-approval-badge", "ai-job-progress-badge");
         timeline.getKeyFrames().add(new KeyFrame(POLL_INTERVAL, e -> refresh()));
         timeline.setCycleCount(Timeline.INDEFINITE);
         // Only poll while this badge is actually visible on screen — a chat can accumulate many
