@@ -188,6 +188,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final Map<String, ChatAgent> agentCache = new HashMap<>();
     private final ToolRegistry toolRegistry = new ToolRegistry();
 
+    /// Session ids whose agent eviction was requested MID-STREAM (settings changed while that
+    /// agent's turn was still running) and therefore deferred to {@link #exitStreamingState()}.
+    /// FX-thread confined (written by {@link #clearAgentCache()}, drained by
+    /// {@code exitStreamingState()}, both only ever run on the FX thread), so no concurrent
+    /// container is needed.
+    private final java.util.Set<String> deferredEvictions = new java.util.HashSet<>();
+
     /// Evicts and shuts down a single cached agent (its dedicated single-thread executor never
     /// times out on its own, so a discarded-but-not-shutdown agent leaks a blocked worker thread).
     private void evictAgent(String sessionId) {
@@ -198,11 +205,25 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Shuts down every cached agent, then clears the cache — same rationale as {@link #evictAgent}.
+    ///
+    /// Exception: the agent CURRENTLY STREAMING a response is never shut down here —
+    /// {@code shutdownNow()} would interrupt its executor thread mid-turn and surface as a bogus
+    /// "connection failed" error bubble the instant the user touched any setting. That agent is
+    /// recorded in {@link #deferredEvictions} instead and evicted by {@link #exitStreamingState()}:
+    /// the in-flight turn finishes under the OLD settings, and the NEXT turn gets a fresh agent
+    /// built from the new ones — the only semantics that never interrupts the user.
     private void clearAgentCache() {
-        for (ChatAgent agent : agentCache.values()) {
-            agent.shutdown();
+        String streaming = (currentResponse != null) ? streamSessionId : null;
+        java.util.Iterator<Map.Entry<String, ChatAgent>> it = agentCache.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, ChatAgent> e = it.next();
+            if (e.getKey().equals(streaming)) {
+                deferredEvictions.add(e.getKey());
+                continue;
+            }
+            e.getValue().shutdown();
+            it.remove();
         }
-        agentCache.clear();
     }
 
     /// The live registry of all registered agent tools — the single source of truth the settings
@@ -271,6 +292,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     // ---- Toolbar ----
 
     private final LineSelectButton<String> modelSelector = new LineSelectButton<>();
+    /// Re-entrancy latch for {@link #setupModelSelector()}: true while the refresh itself is
+    /// writing items/value into {@link #modelSelector}, so the (single, installed-once) value
+    /// listener can tell a programmatic refresh apart from a real user selection and skip the
+    /// side effects (clearAgentCache + settings write) that must only follow a user action.
+    private boolean modelSelectorUpdating = false;
     // ---- Messages ----
 
     private final VBox messageList = new VBox(12);
@@ -541,6 +567,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Background jobs whose completion arrived while a turn was streaming; drained one-at-a-time by
     /// exitStreamingState() so a mid-turn completion still auto-continues instead of being dropped.
     private final java.util.ArrayDeque<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> pendingCompletions = new java.util.ArrayDeque<>();
+    /// External prompts (diagnostics/crash hand-offs) that arrived while a turn was streaming;
+    /// previously they were silently dropped. Drained one-at-a-time by {@link #exitStreamingState()}
+    /// — BEFORE {@link #pendingCompletions}, since a user-visible diagnostic request outranks a
+    /// background-job receipt.
+    private final java.util.ArrayDeque<String> pendingExternalPrompts = new java.util.ArrayDeque<>();
     /// Whether the turn currently being sent/streamed is a synthetic event turn (see
     /// {@link #isPossiblyUnattended}) rather than a direct, just-now user message. Set at the start
     /// of {@link #sendText} for every turn; read from the agent's background thread via
@@ -590,10 +621,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 SettingsManager.localConfigDirectory().resolve("logs").resolve("ai-trace"),
                 aiSettings.isTraceEnabled());
 
-        // First-use test-phase risk notice (one-time, must be acknowledged). Deferred so the page is shown.
-        if (!aiSettings.isAiRiskNoticeAccepted()) {
-            Platform.runLater(this::showAiRiskNotice);
-        }
+        // First-use dialogs (risk notice → privacy consent) are shown CHAINED at the end of the
+        // constructor — see runFirstUseDialogs(); queueing them separately stacked two modal
+        // dialogs on top of each other on a fresh install.
 
         // Warm the model library off the FX thread so the first model-dialog lookup (which auto-fills
         // context/pricing/modalities) doesn't stall the UI parsing the bundled JSON on the FX thread.
@@ -619,6 +649,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     "会话记录文件损坏，未能加载历史对话。原文件已保留为：" + preservedAt
                             + "（不会被覆盖，如需找回可以把它发给 AI 修复）。"));
         }
+
+        // Saves are asynchronous now (see persistStore() → AiSessionStore.saveAsync); flush one
+        // last synchronous snapshot on normal JVM exit so a save still sitting in the queue can't
+        // be lost. save() is synchronized, so this simply serialises with any in-flight async
+        // save and the LAST write is always the final in-memory state.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                sessionStore.save();
+            } catch (Exception ignored) {
+            }
+        }, "ai-session-save-flush"));
 
         this.chatSettings = loadChatSettings();
         this.searchConfig = loadSearchConfig();
@@ -649,18 +690,32 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         applyChatSettings();
 
+        // The model-switch listener is installed exactly ONCE here — setupModelSelector() used to
+        // re-register it on every refresh, accumulating listeners that each re-cleared the agent
+        // cache and re-saved the settings whenever the refresh itself touched the value (P2).
+        installModelSelectorListener();
         refreshModelSelector();
-        
 
         AiSession current = sessionStore.getCurrentSession();
         if (current != null) {
+            // Establish the draft-ownership invariant from the start: draftSessionId is ALWAYS
+            // the session whose text the composer currently holds (see stashDraftFor).
+            draftSessionId = current.getId();
             loadSessionMessages(current);
             updateHeader(current);
         }
 
-        // First run: disclose what data the AI sends off-device and get the user's acknowledgment.
-        // Deferred so it appears over the ready scene, not mid-construction.
-        Platform.runLater(AIMainPage::maybeShowPrivacyConsent);
+        // First-run dialogs (risk notice → privacy consent), chained so they can never stack.
+        // Deferred so they appear over the ready scene, not mid-construction.
+        Platform.runLater(this::runFirstUseDialogs);
+    }
+
+    /// Shows the first-use dialogs IN SEQUENCE: the test-phase risk notice first, and the privacy
+    /// disclosure only after it is acknowledged (or immediately when the notice was already
+    /// accepted on an earlier run). Both were previously queued in the same runLater window and
+    /// piled on top of each other as two stacked modal dialogs on a fresh install (bug 7.15).
+    private void runFirstUseDialogs() {
+        showAiRiskNotice(AIMainPage::maybeShowPrivacyConsent);
     }
 
     private static final String PRIVACY_TEXT =
@@ -1095,19 +1150,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private void deleteSession(String sessionId) {
+        // Deleting the session whose response is still streaming used to evict (shutdownNow) its
+        // agent without ever clearing currentResponse — if the interrupt never reached
+        // onError/onComplete, isStreaming() stayed true forever and the Send button was dead for
+        // the rest of the run. Stop the stream PROPERLY first (persistInterrupted +
+        // exitStreamingState + generation bump), then delete.
+        if (sessionId.equals(streamSessionId) && isStreaming()) {
+            stopResponse();
+        }
         String currentId = sessionStore.getCurrentSessionId();
         sessionStore.deleteSession(sessionId);
         evictAgent(sessionId);
 
         if (sessionId.equals(currentId)) {
-            messageList.getChildren().clear();
-            hideTodoCard();
-            toolActivityBox.getChildren().clear();
-            streamingBubble = null;
-            reasoningLiveCard = null;
-            pendingToolCards.clear();
-            activeToolCard = null;
-            endToolCallRun(); // discard any grouping state left over from the deleted session
+            resetConversationView(); // discard any view state left over from the deleted session
             AiSession newCurrent = sessionStore.getCurrentSession();
             if (newCurrent != null) {
                 loadSessionMessages(newCurrent);
@@ -1346,22 +1402,37 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         }
         if (labels.isEmpty()) labels.add(i18n("ai.model.select"));
-        modelSelector.setItems(labels);
-        // Collapsed button shows only the model name; the dropdown shows the provider
-        // as a second line below each model so the full "Provider / Model" is only
-        // revealed when the menu is pulled out.
-        modelSelector.setNullSafeConverter(AIMainPage::modelPartOf);
-        modelSelector.setDescriptionConverter(AIMainPage::providerPartOf);
+        // Latch the (installed-once) value listener out while this refresh writes items/value:
+        // the setValue below fires listeners exactly like a user pick, and before P2 every
+        // refresh both re-triggered clearAgentCache()+persistAiSettings() AND re-registered a
+        // brand-new listener, so the side effects multiplied with every refresh.
+        modelSelectorUpdating = true;
+        try {
+            modelSelector.setItems(labels);
+            // Collapsed button shows only the model name; the dropdown shows the provider
+            // as a second line below each model so the full "Provider / Model" is only
+            // revealed when the menu is pulled out.
+            modelSelector.setNullSafeConverter(AIMainPage::modelPartOf);
+            modelSelector.setDescriptionConverter(AIMainPage::providerPartOf);
 
-        AiProviderProfile active = aiSettings.findSelectedProfile();
-        if (active != null && active.getDefaultModelId() != null) {
-            String alias = active.getModelAliasOrId(active.getDefaultModelId());
-            modelSelector.setValue(active.getDisplayName() + " / " + alias);
-        } else if (!labels.isEmpty()) {
-            modelSelector.setValue(labels.get(0));
+            AiProviderProfile active = aiSettings.findSelectedProfile();
+            if (active != null && active.getDefaultModelId() != null) {
+                String alias = active.getModelAliasOrId(active.getDefaultModelId());
+                modelSelector.setValue(active.getDisplayName() + " / " + alias);
+            } else if (!labels.isEmpty()) {
+                modelSelector.setValue(labels.get(0));
+            }
+        } finally {
+            modelSelectorUpdating = false;
         }
+    }
 
+    /// Installs the model-switch listener on {@link #modelSelector} — called exactly ONCE from
+    /// the constructor. It used to live inside {@link #setupModelSelector()}, which runs on every
+    /// profile refresh / view switch, so listeners accumulated without bound (P2).
+    private void installModelSelectorListener() {
         modelSelector.valueProperty().addListener((obs, old, val) -> {
+            if (modelSelectorUpdating) return; // programmatic refresh, not a user selection
             if (val == null) return;
             String[] parts = val.split(" / ", 2);
             if (parts.length != 2) return;
@@ -1456,20 +1527,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         sessionStore.createSession();
         persistStore();
-        hideTodoCard();
-        messageList.getChildren().clear();
-        toolActivityBox.getChildren().clear();
-        streamingBubble = null;
-        reasoningLiveCard = null;
-        pendingToolCards.clear();
-        activeToolCard = null;
-        endToolCallRun(); // discard any grouping state left over from the previous session
+        resetConversationView(); // discard any view state left over from the previous session
         updateEmptyState();
         refreshSessionList();
         showChatView();
 
         AiSession current = sessionStore.getCurrentSession();
         if (current != null) {
+            // The composer must now hold the NEW session's (empty) draft; the text the user had
+            // typed stays stashed under the session it was written in (bug 7.9: it used to keep
+            // being attributed to the OLD session while the user kept typing in the new one).
+            restoreDraftFor(current.getId());
             updateHeader(current);
         }
         inputField.requestFocus();
@@ -1481,6 +1549,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (current == null) return;
         current.clear();
         evictAgent(current.getId());
+        resetConversationView(); // discard any view state left over from the cleared conversation
+        updateToolActivityVisibility();
+        updateEmptyState();
+        persistStore();
+    }
+
+    /// Resets every piece of per-conversation view state in one place (extracted from four call
+    /// sites that each hand-maintained the same 8-field block and drifted — bug 8.4). Call-site
+    /// specific extras (cancelActiveAsk, stickToBottom, updateEmptyState timing, …) deliberately
+    /// stay at the call sites.
+    private void resetConversationView() {
         hideTodoCard();
         messageList.getChildren().clear();
         toolActivityBox.getChildren().clear();
@@ -1488,10 +1567,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         reasoningLiveCard = null;
         pendingToolCards.clear();
         activeToolCard = null;
-        endToolCallRun(); // discard any grouping state left over from the cleared conversation
-        updateToolActivityVisibility();
-        updateEmptyState();
-        persistStore();
+        endToolCallRun(); // discard any tool-card grouping state along with the cards themselves
     }
 
     private boolean isPlanMode() {
@@ -1757,6 +1833,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 org.jackhuang.hmcl.ui.construct.RipplerContainer row = new org.jackhuang.hmcl.ui.construct.RipplerContainer(lbl);
                 FXUtils.onClicked(row, () -> {
                     aiSettings.reasoningEffortProperty().set(level);
+                    // AiSettings has no auto-save — without this the picked level silently
+                    // reverted on restart (P6).
+                    persistAiSettings();
                     FXUtils.installFastTooltip(thinkBtn, "思考: " + level);
                     if (thinkingPopup != null) {
                         thinkingPopup.hide();
@@ -2030,6 +2109,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sessionStore.setCurrentSessionId(sessionId);
         AiSession current = sessionStore.getCurrentSession();
         if (current != null) {
+            // This path calls loadSessionMessages directly (no debounce), so it must do the same
+            // draft hand-over loadSession does — it used to skip it entirely (bug 7.9).
+            restoreDraftFor(current.getId());
             loadSessionMessages(current);
             updateHeader(current);
         }
@@ -2127,22 +2209,39 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Maximum characters of one attachment appended to the outbound prompt.
     private static final int ATTACHMENT_MAX_CHARS = 200_000;
 
-    /// Reads the pending attachments and appends their content to the outbound prompt text.
-    /// Unreadable files are reported inline instead of failing the send.
-    private String appendAttachments(String text) {
-        if (attachedFiles.isEmpty()) {
+    /// Reads only the first {@link #ATTACHMENT_MAX_CHARS} characters of a file (streaming; stops
+    /// reading the moment the cap is hit) — `Files.readString` used to pull a multi-hundred-MB
+    /// log fully into memory just to throw most of it away. Package-private for the unit test.
+    static String readAttachmentHead(Path p) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        try (java.io.BufferedReader r = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
+            char[] buf = new char[8192];
+            int n;
+            while ((n = r.read(buf)) != -1) {
+                int remain = ATTACHMENT_MAX_CHARS - sb.length();
+                if (n >= remain) {
+                    sb.append(buf, 0, remain);
+                    sb.append("\n…（文件过大，已截断）");
+                    break;
+                }
+                sb.append(buf, 0, n);
+            }
+        }
+        return sb.toString();
+    }
+
+    /// Appends the given attachments' (truncated) content to the outbound prompt text. Runs on a
+    /// background thread (see sendMessage) — it must NOT touch page state, hence the explicit
+    /// file-list parameter. Unreadable files are reported inline instead of failing the send.
+    static String buildAttachmentText(String text, List<Path> files) {
+        if (files.isEmpty()) {
             return text;
         }
         StringBuilder sb = new StringBuilder(text);
-        for (Path p : attachedFiles) {
+        for (Path p : files) {
             sb.append("\n\n[附件: ").append(p.getFileName()).append("]\n");
             try {
-                String content = Files.readString(p, StandardCharsets.UTF_8);
-                if (content.length() > ATTACHMENT_MAX_CHARS) {
-                    content = content.substring(0, ATTACHMENT_MAX_CHARS)
-                            + "\n…（文件过大，已截断）";
-                }
-                sb.append(content);
+                sb.append(readAttachmentHead(p));
             } catch (IOException ex) {
                 sb.append("（读取失败：").append(ex.getMessage()).append("）");
             }
@@ -2157,17 +2256,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         rebuildFileChips();
     }
 
+    /// Text-like file extensions accepted by drag-and-drop attachment (single whitelist shared by
+    /// {@link #handleDragOver} and {@link #handleDragDropped}, which used to carry two separate,
+    /// narrower inline lists that had already drifted apart — bug 7.16). The FileChooser button
+    /// deliberately keeps its `*.*` fallback filter: a file the user EXPLICITLY picked is trusted,
+    /// and the read side truncates oversized content anyway (see readAttachmentHead).
+    private static final java.util.Set<String> ATTACHABLE_EXTENSIONS = java.util.Set.of(
+            "txt", "log", "crash", "json", "toml", "cfg", "properties", "yml", "yaml", "md", "csv");
+
+    /// Whether a dragged file's extension is on {@link #ATTACHABLE_EXTENSIONS}.
+    private static boolean isAttachable(java.io.File f) {
+        String name = f.getName();
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 && ATTACHABLE_EXTENSIONS.contains(
+                name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT));
+    }
+
     /// Handles drag-over events on the chat area for file drag-and-drop.
     private void handleDragOver(DragEvent event) {
         Dragboard db = event.getDragboard();
-        if (db.hasFiles()) {
-            boolean accepted = db.getFiles().stream().anyMatch(f -> {
-                String name = f.getName().toLowerCase();
-                return name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".crash");
-            });
-            if (accepted) {
-                event.acceptTransferModes(TransferMode.COPY);
-            }
+        if (db.hasFiles() && db.getFiles().stream().anyMatch(AIMainPage::isAttachable)) {
+            event.acceptTransferModes(TransferMode.COPY);
         }
         event.consume();
     }
@@ -2179,11 +2288,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         boolean success = false;
         if (db.hasFiles()) {
             for (java.io.File dropped : db.getFiles()) {
-                String name = dropped.getName().toLowerCase();
-                if (name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".crash")) {
+                if (isAttachable(dropped)) {
                     attachFile(dropped.toPath());
                     success = true;
                 }
+            }
+            if (!success) {
+                Controllers.showToast("仅支持文本类文件（.log/.txt/.json 等）"); // TODO(i18n)
             }
         }
         event.setDropCompleted(success);
@@ -2698,8 +2809,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Cancels any pending dangerous/critical confirm dialog (so the tool-execution thread blocked
     /// in {@link #showConfirmDialog} unblocks immediately as a decline) and dismisses its dialog.
-    /// Called on stop and on session switch — mirrors {@link #cancelActiveAsk()} exactly, and for
-    /// the same reason: see the {@link #activeConfirm} field doc.
+    /// Called on stop and before showing a NEW confirm; deliberately NOT on session switch — a
+    /// cross-session confirm stays answerable (see showConfirmDialog's owner labelling). This is
+    /// where it differs from {@link #cancelActiveAsk()}, which IS also cancelled on session switch;
+    /// the tracking rationale is the same though: see the {@link #activeConfirm} field doc.
     private void cancelActiveConfirm() {
         PendingConfirm pending = activeConfirm;
         activeConfirm = null;
@@ -2735,6 +2848,34 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     @Nullable
     private String loadingSessionId;
 
+    /// Stashes the composer's CURRENT text as {@code sessionId}'s draft (blank text removes the
+    /// stale draft). Field invariant maintained together with {@link #restoreDraftFor}:
+    /// {@link #draftSessionId} is ALWAYS the session whose text the composer currently holds.
+    private void stashDraftFor(@Nullable String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        String draft = inputField.getText();
+        if (draft == null || draft.isBlank()) {
+            sessionDrafts.remove(sessionId);
+        } else {
+            sessionDrafts.put(sessionId, draft);
+        }
+    }
+
+    /// Hands the composer over to {@code sessionId}: stashes the leaving session's draft, then
+    /// restores (possibly empty) {@code sessionId}'s. The single draft hand-over used by ALL
+    /// session-switch paths (loadSession / createSession / switchToSessionAndScroll) — bug 7.9
+    /// was two of them skipping it, leaving drafts attributed to the wrong session.
+    private void restoreDraftFor(String sessionId) {
+        if (sessionId.equals(draftSessionId)) {
+            return; // composer already holds this session's draft
+        }
+        stashDraftFor(draftSessionId);
+        inputField.setText(sessionDrafts.getOrDefault(sessionId, ""));
+        draftSessionId = sessionId;
+    }
+
     private void loadSession(AiSession session) {
         if (session == null) {
             return;
@@ -2742,18 +2883,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         String id = session.getId();
         // Per-session drafts: stash whatever is in the composer for the session we're leaving,
         // restore the (possibly empty) draft of the one we're entering.
-        if (!id.equals(draftSessionId)) {
-            if (draftSessionId != null) {
-                String draft = inputField.getText();
-                if (draft == null || draft.isBlank()) {
-                    sessionDrafts.remove(draftSessionId);
-                } else {
-                    sessionDrafts.put(draftSessionId, draft);
-                }
-            }
-            inputField.setText(sessionDrafts.getOrDefault(id, ""));
-            draftSessionId = id;
-        }
+        restoreDraftFor(id);
         // Already loading this session — don't restart.
         if (loadingSessionId != null && loadingSessionId.equals(id) && pendingSessionLoad != null && !pendingSessionLoad.isDone()) {
             return;
@@ -2779,18 +2909,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private void loadSessionMessages(AiSession session) {
         cancelActiveAsk(); // a pending question can't be answered for a backgrounded session
-        hideTodoCard(); // the pinned TODO list is per-turn UI, not part of session history
-        messageList.getChildren().clear();
-        toolActivityBox.getChildren().clear();
-        streamingBubble = null;
-        reasoningLiveCard = null;
-        pendingToolCards.clear();
-        activeToolCard = null;
-        endToolCallRun(); // discard any grouping state left over from a previous session's reload
+        resetConversationView(); // discard any view state left over from a previous session's render
         stickToBottom = true; // a freshly-opened session starts pinned to the latest message
         int index = 0;
         for (LlmMessage msg : session.getMessages()) {
             String role = msg.getRole();
+            // Imported/legacy/provider-mangled messages can carry a null content (importFromJson
+            // does not validate the field) — render them as empty rather than NPE'ing the whole
+            // session load (P1).
+            String content = msg.getContent() == null ? "" : msg.getContent();
             if (msg.isToolRecord()) {
                 // Persisted record of one tool invocation — rebuild the completed tool card so
                 // history shows what the AI actually did (cards used to vanish on reload).
@@ -2802,11 +2929,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             } else if (msg.isEvent()) {
                 // Synthetic turn (background-job auto-continue / crash injection): a neutral
                 // event pill, NOT a user bubble, and no copy/edit/resend action bar.
-                addEventPill(msg.getContent());
+                addEventPill(content);
                 endToolCallRun();
             } else if ("user".equals(role)) {
-                addUserBubble(msg.getContent(), true);
-                attachMessageActions(msg.getContent(), role, index);
+                addUserBubble(content, true);
+                attachMessageActions(content, role, index);
                 endToolCallRun();
             } else if ("assistant".equals(role)) {
                 // Reasoning/"思考过程" that came with this answer: a collapsed card above the bubble.
@@ -2814,16 +2941,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 if (reasoningText != null && !reasoningText.isBlank()) {
                     messageList.getChildren().add(wrapBubble(new ReasoningCard(reasoningText, false), Pos.CENTER_LEFT));
                 }
-                createAiBubble(msg.getContent(), msg.getUsage());
-                attachMessageActions(msg.getContent(), role, index);
+                createAiBubble(content, msg.getUsage());
+                attachMessageActions(content, role, index);
                 endToolCallRun();
-            } else if (isToolMessage(msg.getContent())) {
+            } else if (isToolMessage(content)) {
                 if (aiSettings.isToolCallDisplayEnabled()) {
-                    addToolMessage(msg.getContent());
+                    addToolMessage(content);
                 }
                 endToolCallRun();
             } else {
-                addSystemMessage(msg.getContent());
+                addSystemMessage(content);
                 endToolCallRun();
             }
             index++;
@@ -2855,9 +2982,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Returns true when the message content appears to be a tool execution
-    /// result stored by the ChatAgent.
-    private static boolean isToolMessage(String content) {
-        return content.startsWith("Tool result for ");
+    /// result stored by the ChatAgent. Null-safe (imported messages may lack content — P1);
+    /// package-private for the unit test.
+    static boolean isToolMessage(@Nullable String content) {
+        return content != null && content.startsWith("Tool result for ");
     }
 
     /// Appends a row of small icon-only action buttons below the message bubble most recently
@@ -3166,14 +3294,33 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         if (spendTracker().isOverLimit()) {
-            Controllers.showToast("已达今日 AI 花费上限（约 $"
-                    + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
-                    + "）。可在 AI 设置里调高上限，或明天再用。");
+            warnSpendLimitReached();
             return;
         }
         inputField.clear();
-        sendText(appendAttachments(text), null);
+        if (attachedFiles.isEmpty()) {
+            sendText(text, null);
+            return;
+        }
+        // Attachment content is read OFF the FX thread — a dropped 100MB log used to freeze the
+        // whole window for the duration of a synchronous readString right here (7a).
+        final String userText = text;
+        final List<Path> files = List.copyOf(attachedFiles);
         clearFileChip();
+        Thread reader = new Thread(() -> {
+            String full = buildAttachmentText(userText, files);
+            Platform.runLater(() -> sendText(full, null));
+        }, "ai-attachment-read");
+        reader.setDaemon(true);
+        reader.start();
+    }
+
+    /// Single toast for "daily AI spend cap reached" — the copy previously lived duplicated in
+    /// two call sites and had already started to drift (bug 8.2).
+    private void warnSpendLimitReached() {
+        Controllers.showToast("已达今日 AI 花费上限（约 $"
+                + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
+                + "）。可在 AI 设置里调高上限，或明天再用。"); // TODO(i18n)
     }
 
     /// Core send path shared by the composer ({@link #sendMessage}) and external/synthetic
@@ -3183,7 +3330,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// @param kind `null` for a normal user message, or {@link LlmMessage#KIND_EVENT} for a
     ///             synthetic turn (rendered as a neutral event pill, not a user bubble).
     private void sendText(String text, @Nullable String kind) {
-        if (isStreaming()) return;
+        if (isStreaming()) {
+            // Callers that pre-check isStreaming (the composer) never reach this; the ones that
+            // don't (resend/regenerate/inline-edit, the async attachment-read hand-off) used to
+            // drop the message with zero feedback.
+            Controllers.showToast("上一条回复仍在进行，本条消息未发送"); // TODO(i18n)
+            return;
+        }
         if (text == null || text.isBlank()) return;
         text = text.trim();
 
@@ -3195,9 +3348,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // loop is naturally bounded too since AUTO_CONTINUE_LIMIT still trips once enough
         // no-op attempts accumulate.
         if (spendTracker().isOverLimit()) {
-            Controllers.showToast("已达今日 AI 花费上限（约 $"
-                    + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
-                    + "）。可在 AI 设置里调高上限，或明天再用。");
+            warnSpendLimitReached();
             return;
         }
 
@@ -3266,16 +3417,77 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         StringBuilder fullContent = new StringBuilder();
         // Text of the current segment bubble (reset whenever a new segment starts).
         StringBuilder segment = new StringBuilder();
-        // Holds provider-reported usage (if any) so onComplete can render the footer.
-        LlmUsage[] usageHolder = {null};
+        // Holds provider-reported usage (if any) so onComplete can render the footer. Written on
+        // the provider's callback thread, read inside onComplete's FX runnable — AtomicReference
+        // for the cross-thread visibility a plain one-element array never guaranteed (2-1).
+        final java.util.concurrent.atomic.AtomicReference<LlmUsage> usageHolder =
+                new java.util.concurrent.atomic.AtomicReference<>();
         final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
         currentCancelled = cancelled;
         currentStreamAgent = agent;
-        currentResponse = agent.sendStreaming(userInput, kind, new LlmStreamCallback() {
+        currentResponse = agent.sendStreaming(userInput, kind,
+                createStreamCallback(agent, streamSession, generation, fullContent, segment, usageHolder),
+                cancelled::get).exceptionally(ex -> {
+            if (generation != responseGeneration) return null; // stopped; ignore
+            Throwable cause = ex;
+            while (cause.getCause() != null && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
+
+            LlmException error = cause instanceof LlmException
+                    ? (LlmException) cause
+                    : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
+            showAiError(streamingBubble, segment, error, streamSession, generation);
+            return null;
+        });
+
+        enterStreamingState();
+    }
+
+    /// Builds the production streaming callback for one turn. Extracted from
+    /// {@link #startAiResponse} and package-private so the FX test can drive the EXACT rendering
+    /// pipeline (token batching, segment/tool interleaving) without a live model behind it.
+    LlmStreamCallback createStreamCallback(@Nullable ChatAgent agent, AiSession streamSession, int generation,
+                                           StringBuilder fullContent, StringBuilder segment,
+                                           java.util.concurrent.atomic.AtomicReference<LlmUsage> usageHolder) {
+        // ---- P12: token batching ----
+        // Every token used to schedule its own Platform.runLater doing a full segment.toString()
+        // setText (O(n²) text churn per turn) plus a second runLater from scrollToBottom. Tokens
+        // now land in a buffer and at most ONE drain is queued at a time, so the FX thread
+        // re-renders at most once per pulse no matter how fast the provider streams.
+        //
+        // Ordering argument (why batching can't reorder against tool cards / completion): the
+        // provider invokes ALL callbacks on one thread, so a drain queued by onToken is enqueued
+        // on the FX queue BEFORE any onToolActivity/onComplete runnable submitted after it —
+        // FIFO guarantees `segment` already holds every earlier token when a finalize runs.
+        // Buffers are written on the callback thread and drained under their own lock.
+        final StringBuilder tokenBuffer = new StringBuilder();
+        final java.util.concurrent.atomic.AtomicBoolean tokenFlushScheduled =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final StringBuilder reasoningBuffer = new StringBuilder();
+        final java.util.concurrent.atomic.AtomicBoolean reasoningFlushScheduled =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        return new LlmStreamCallback() {
             @Override
             public void onToken(String token) {
                 fullContent.append(token);
+                synchronized (tokenBuffer) {
+                    tokenBuffer.append(token);
+                }
+                if (!tokenFlushScheduled.compareAndSet(false, true)) {
+                    return; // a drain is already queued; it will pick this token up
+                }
                 Platform.runLater(() -> {
+                    tokenFlushScheduled.set(false);
+                    String chunk;
+                    synchronized (tokenBuffer) {
+                        chunk = tokenBuffer.toString();
+                        tokenBuffer.setLength(0);
+                    }
+                    if (chunk.isEmpty()) return;
+                    // The discard branches below drop the chunk exactly like the old per-token
+                    // path did — a stale-generation / backgrounded-session token never entered
+                    // `segment` before either.
                     if (generation != responseGeneration) return; // stopped/superseded
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     if (streamingBubble == null) {
@@ -3285,10 +3497,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                             reasoningLiveCard.setExpanded(false);
                         }
                         streamingBubble = createAiBubble("");
+                        // A cached wrapper is invalidated on every streamed append — worse than no
+                        // cache at all; finalizeAiBubble switches it back on (P12).
+                        setWrapperCache(streamingBubble, false);
                         segment.setLength(0);
                         endToolCallRun();
                     }
-                    segment.append(token);
+                    segment.append(chunk);
                     streamingBubble.setText(segment.toString());
                     scrollToBottom();
                 });
@@ -3296,7 +3511,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onReasoningToken(String token) {
+                // Same batching as onToken (independent buffer/flag) — reasoning streams are
+                // usually LONGER than the visible answer, so this is the bigger win.
+                synchronized (reasoningBuffer) {
+                    reasoningBuffer.append(token);
+                }
+                if (!reasoningFlushScheduled.compareAndSet(false, true)) {
+                    return;
+                }
                 Platform.runLater(() -> {
+                    reasoningFlushScheduled.set(false);
+                    String chunk;
+                    synchronized (reasoningBuffer) {
+                        chunk = reasoningBuffer.toString();
+                        reasoningBuffer.setLength(0);
+                    }
+                    if (chunk.isEmpty()) return;
                     if (generation != responseGeneration) return; // stopped/superseded
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
                     if (reasoningLiveCard == null) {
@@ -3304,14 +3534,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         reasoningLiveCard = new ReasoningCard("", true);
                         messageList.getChildren().add(wrapBubble(reasoningLiveCard, Pos.CENTER_LEFT));
                     }
-                    reasoningLiveCard.append(token);
+                    reasoningLiveCard.append(chunk);
                     scrollToBottom();
                 });
             }
 
             @Override
             public void onUsage(LlmUsage usage) {
-                usageHolder[0] = usage;
+                usageHolder.set(usage);
             }
 
             @Override
@@ -3369,7 +3599,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         // full turn text glued earlier segments into it (duplicating them on
                         // screen for an instant); the reload below renders the canonical view.
                         if (streamingBubble != null) {
-                            finalizeAiBubble(streamingBubble, segment.toString(), usageHolder[0], true);
+                            finalizeAiBubble(streamingBubble, segment.toString(), usageHolder.get(), true);
                             streamingBubble = null;
                         }
                         setStatus(null);
@@ -3377,7 +3607,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     exitStreamingState();
                     persistStore();
                     // Accrue this response's estimated cost against the daily spend cap, warning near it.
-                    double turnCost = estimateCost(usageHolder[0]);
+                    double turnCost = estimateCost(usageHolder.get());
                     if (turnCost > 0) {
                         spendTracker().record(turnCost);
                         maybeWarnSpend();
@@ -3399,21 +3629,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // the last segment bubble duplicated the already-finalized earlier segments.
                 showAiError(streamingBubble, segment, error, streamSession, generation);
             }
-        }, cancelled::get).exceptionally(ex -> {
-            if (generation != responseGeneration) return null; // stopped; ignore
-            Throwable cause = ex;
-            while (cause.getCause() != null && cause.getCause() != cause) {
-                cause = cause.getCause();
-            }
-
-            LlmException error = cause instanceof LlmException
-                    ? (LlmException) cause
-                    : new LlmException(cause.getMessage() != null ? cause.getMessage() : "Connection failed", 0, cause);
-            showAiError(streamingBubble, segment, error, streamSession, generation);
-            return null;
-        });
-
-        enterStreamingState();
+        };
     }
 
     private boolean isStreaming() {
@@ -3675,6 +3891,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         Platform.runLater(() -> {
             if (isStreaming()) {
+                // Queue instead of silently dropping (bug 7.6): exitStreamingState() delivers the
+                // next queued prompt once the in-flight turn ends.
+                pendingExternalPrompts.addLast(text);
+                Controllers.showToast("AI 正在回复，你的诊断请求已排队，完成后自动发送"); // TODO(i18n)
                 return;
             }
             sendText(text, LlmMessage.KIND_EVENT);
@@ -3683,8 +3903,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Shows the one-time test-phase risk notice (forced 5s countdown). On acknowledgement the
     /// preference is persisted so it never shows again. No external project names in the copy.
-    private void showAiRiskNotice() {
+    /// {@code next} runs after acknowledgement — or immediately when the notice was already
+    /// accepted — so a follow-up dialog (privacy consent) is CHAINED instead of stacked.
+    private void showAiRiskNotice(Runnable next) {
         if (aiSettings.isAiRiskNoticeAccepted()) {
+            next.run();
             return;
         }
         String text = "HMCL-AE 的 AI 助手目前处于测试阶段。\n\n"
@@ -3696,6 +3919,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 () -> {
                     aiSettings.setAiRiskNoticeAccepted(true);
                     persistAiSettings();
+                    next.run();
                 },
                 null);
     }
@@ -3732,13 +3956,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void exitStreamingState() {
         currentResponse = null;
         streamSessionId = null;
+        // Agents whose eviction was deferred mid-stream (settings changed while their turn ran —
+        // see clearAgentCache) are idle now; evict them so the NEXT turn builds a fresh agent
+        // from the new settings.
+        if (!deferredEvictions.isEmpty()) {
+            for (String id : new java.util.ArrayList<>(deferredEvictions)) {
+                evictAgent(id);
+            }
+            deferredEvictions.clear();
+        }
         updateSendButtonMode();
         refreshSessionList(); // clear the "生成中…" indicator
         // Restore any tools plan mode disabled for the just-finished response.
         restorePlanGating();
-        // A background job that finished while this turn was streaming was queued; handle the next
-        // one now that we're idle (it starts its own turn, which naturally serializes the rest).
-        if (!pendingCompletions.isEmpty()) {
+        // Deliver ONE queued follow-up now that we're idle (it starts its own turn, whose own
+        // exitStreamingState naturally serializes the rest). A user-facing external prompt
+        // (diagnostics hand-off, bug 7.6) outranks a background-job receipt, so the two queues
+        // are drained mutually exclusively with the external one first.
+        if (!pendingExternalPrompts.isEmpty()) {
+            String nextPrompt = pendingExternalPrompts.pollFirst();
+            Platform.runLater(() -> submitExternalPrompt(nextPrompt));
+        } else if (!pendingCompletions.isEmpty()) {
             org.jackhuang.hmcl.ai.tools.AiJobManager.Job next = pendingCompletions.poll();
             Platform.runLater(() -> onBackgroundJobComplete(next));
         }
@@ -3774,7 +4012,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             activeAsk = future;
             askPanel.getChildren().clear();
 
-            Label title = new Label(i18n("ai.ask.title"));
+            // If the asking turn belongs to a session OTHER than the one on screen, prefix the
+            // panel title with that session's name — same treatment as showConfirmDialog's owner
+            // labelling, and for the same reason: an unmarked question reads as being about
+            // whatever the user is currently looking at (bug 7.8).
+            String askSourcePrefix = "";
+            AiSession displayed = sessionStore.getCurrentSession();
+            if (streamSessionId != null && (displayed == null || !streamSessionId.equals(displayed.getId()))) {
+                AiSession askOwner = sessionStore.getSession(streamSessionId);
+                String ownerTitle = (askOwner != null && askOwner.getTitle() != null && !askOwner.getTitle().isBlank())
+                        ? askOwner.getTitle() : streamSessionId;
+                askSourcePrefix = "[" + ownerTitle + "] "; // TODO(i18n)
+            }
+            final String titlePrefix = askSourcePrefix;
+
+            Label title = new Label(titlePrefix + i18n("ai.ask.title"));
             title.getStyleClass().add("ai-ask-title");
 
             int n = questions.size();
@@ -3817,7 +4069,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             Runnable render = () -> {
                 int i = current[0];
                 body.getChildren().setAll(qBoxes.get(i));
-                title.setText(n > 1 ? i18n("ai.ask.title") + "  (" + (i + 1) + "/" + n + ")" : i18n("ai.ask.title"));
+                title.setText(titlePrefix + (n > 1
+                        ? i18n("ai.ask.title") + "  (" + (i + 1) + "/" + n + ")" : i18n("ai.ask.title")));
                 back.setVisible(i > 0);
                 back.setManaged(i > 0);
                 boolean last = i == n - 1;
@@ -4064,14 +4317,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
     }
 
+    /// The single UI entry point for saving the session store. Asynchronous since 7c: the full
+    /// JSON serialisation + write used to run right here on the FX thread on every hot-path call
+    /// (each send/complete/stop/switch). saveAsync coalesces bursts onto one background writer and
+    /// logs its own failures; a shutdown hook registered in the constructor flushes the final
+    /// synchronous snapshot on normal exit.
     private void persistStore() {
-        try {
-            sessionStore.save();
-        } catch (Exception e) {
-            // Persistence failures must at least be observable — a silently swallowed save left
-            // the user believing the conversation was on disk when it only lived in memory.
-            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save session store", e);
-        }
+        sessionStore.saveAsync();
     }
 
     /// Mirrors {@link #persistStore()} for {@code aiSettings}: a silently swallowed save here
@@ -4098,7 +4350,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Builds a bubble's text content: a colour-emoji TextFlow when colour emoji is enabled
     /// and the text contains emoji, otherwise a plain wrapped Label. Both carry the given
     /// bubble style classes.
-    private static Node bubbleTextNode(String text, String... styleClasses) {
+    private static Node bubbleTextNode(@Nullable String text, String... styleClasses) {
+        if (text == null) {
+            text = ""; // EmojiImages.toNodes below does not tolerate null (P1)
+        }
         if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(text)) {
             javafx.scene.text.TextFlow flow = new javafx.scene.text.TextFlow();
             flow.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
@@ -4124,6 +4379,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // hint re-renders at quality on real transforms, so there is no blur on resize.
         wrapper.setCache(true);
         return wrapper;
+    }
+
+    /// Toggles the bitmap cache of the `.ai-bubble-wrapper` row enclosing {@code bubble}. While a
+    /// bubble is still STREAMING, every appended chunk invalidates the cached bitmap — paying the
+    /// rasterisation cost per frame for nothing — so the streaming path switches its wrapper's
+    /// cache off and {@link #finalizeAiBubble} switches it back on for cheap scrolling (P12).
+    private static void setWrapperCache(Node bubble, boolean cache) {
+        for (Node n = bubble; n != null; n = n.getParent()) {
+            if (n.getStyleClass().contains("ai-bubble-wrapper")) {
+                n.setCache(cache);
+                return;
+            }
+        }
     }
 
     private void addUserBubble(String text) {
@@ -4211,6 +4479,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 bubbleBox.getChildren().add(footer);
             }
         }
+        // The bubble is done growing — re-enable the wrapper's bitmap cache the streaming path
+        // switched off (see setWrapperCache).
+        setWrapperCache(aiBubble, true);
     }
 
     /// Builds the per-message token-usage footer shown under an AI bubble.
@@ -4355,6 +4626,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// background thread, so it marshals onto the FX thread.
     private void updateTodoCard(List<org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem> todos) {
         Platform.runLater(() -> {
+            // todo_write only ever happens inside a streaming turn — if that turn's session is
+            // NOT the one on screen, don't overwrite the visible session's checklist (bug 7.7).
+            AiSession cur = sessionStore.getCurrentSession();
+            if (streamSessionId != null && (cur == null || !streamSessionId.equals(cur.getId()))) {
+                return;
+            }
             todoCardContainer.getChildren().clear();
             if (todos == null || todos.isEmpty()) {
                 hideTodoCard();
@@ -4733,6 +5010,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         chatSettingsDrawer.getChildren().addAll(header, scrollBody);
     }
 
+    /// bindBidirectional only syncs MEMORY — AiSettings has no auto-save, so a drawer toggle that
+    /// stops here silently reverts on restart (P6; same trap AISettingsPage#buildAbilitySublist
+    /// documents). The save listener hangs off the SETTINGS property, not the button: the bind's
+    /// initial button-side sync then never triggers a redundant write, and a change made from the
+    /// settings page merely saves once more (idempotent).
+    private void bindPersisted(LineToggleButton btn, javafx.beans.property.BooleanProperty prop) {
+        btn.selectedProperty().bindBidirectional(prop);
+        prop.addListener((o, ov, nv) -> persistAiSettings());
+    }
+
     /// Builds the chat-settings drawer content using native HMCL list components.
     /// Only settings that actually affect rendering are kept; dead options were removed.
     private List<Node> buildChatSettingsContent() {
@@ -4799,7 +5086,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         LineToggleButton toolCalls = new LineToggleButton();
         toolCalls.setTitle(i18n("ai.settings.tool_call_display"));
         toolCalls.setSubtitle(i18n("ai.settings.tool_call_display.desc"));
-        toolCalls.selectedProperty().bindBidirectional(aiSettings.toolCallDisplayEnabledProperty());
+        bindPersisted(toolCalls, aiSettings.toolCallDisplayEnabledProperty());
         display.getContent().add(toolCalls);
 
         LineToggleButton colorEmoji = new LineToggleButton();
@@ -4856,7 +5143,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         LineToggleButton stream = new LineToggleButton();
         stream.setTitle("流式输出");
         stream.setSubtitle("逐字显示模型回答，关闭后等待完整响应");
-        stream.selectedProperty().bindBidirectional(aiSettings.streamProperty());
+        bindPersisted(stream, aiSettings.streamProperty());
         interaction.getContent().add(stream);
 
         LineToggleButton shortcut = new LineToggleButton();
@@ -4872,13 +5159,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         LineToggleButton enterSend = new LineToggleButton();
         enterSend.setTitle("回车发送");
         enterSend.setSubtitle("开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送");
-        enterSend.selectedProperty().bindBidirectional(aiSettings.sendOnEnterProperty());
+        bindPersisted(enterSend, aiSettings.sendOnEnterProperty());
         interaction.getContent().add(enterSend);
 
         LineToggleButton autoScroll = new LineToggleButton();
         autoScroll.setTitle("自动滚动到底部");
         autoScroll.setSubtitle("有新消息时自动滚到底（手动上滑时暂停）");
-        autoScroll.selectedProperty().bindBidirectional(aiSettings.autoScrollEnabledProperty());
+        bindPersisted(autoScroll, aiSettings.autoScrollEnabledProperty());
         interaction.getContent().add(autoScroll);
 
         return List.of(
