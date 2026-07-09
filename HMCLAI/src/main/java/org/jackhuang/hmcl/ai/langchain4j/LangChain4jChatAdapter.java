@@ -287,8 +287,11 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
     }
 
     /// Placeholder that replaces an evicted old tool result. Kept short and explicit so the
-    /// model knows the data is re-obtainable rather than mysteriously missing.
-    static final String EVICTED_TOOL_RESULT =
+    /// model knows the data is re-obtainable rather than mysteriously missing. Public because
+    /// {@code AiPromptBuilder} embeds this exact text in its one-time "context housekeeping is
+    /// not an error" education block (borrow-list E1) — referencing the constant keeps the taught
+    /// text from ever drifting from the injected one.
+    public static final String EVICTED_TOOL_RESULT =
             "[old tool result dropped to free context — re-run the tool if you still need it]";
 
     /// The most recent tool results are never evicted — they are what the model is
@@ -428,6 +431,13 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         /// Exact (tool+raw-arguments) fingerprint → repeat count. Only consulted for the
         /// pre-execution dup block on write-permission tools (see {@link #DUP_CALL_LIMIT}).
         final java.util.Map<String, Integer> fingerprintCounts = new java.util.HashMap<>();
+        /// Operations the user explicitly DECLINED this turn (borrow-list A1): a refusal is a
+        /// terminal state, so a repeat of the same (tool, canonical-arguments) call — argument
+        /// order/decoration perturbations included — is short-circuited pre-execution instead of
+        /// re-opening the confirmation dialog until {@link #DUP_CALL_LIMIT} finally trips. Lives
+        /// beside {@link #fingerprintCounts}; per-turn like everything else here, because the user
+        /// may change their mind on their next real message.
+        final TerminalDenialRegistry terminalDenials = new TerminalDenialRegistry();
         /// Sliding window of the last {@link #LOOP_SIGNATURE_WINDOW} executed-call signatures,
         /// oldest first (see {@link #buildLoopSignature}).
         final java.util.ArrayDeque<String> signatureWindow = new java.util.ArrayDeque<>();
@@ -653,7 +663,9 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         return "job".equals(toolName) && resultText.contains(AiJobManager.STILL_RUNNING_MARKER);
     }
 
-    private static final com.google.gson.Gson SIGNATURE_GSON = new com.google.gson.Gson();
+    /// Package-private (not {@code private}): {@link TerminalDenialRegistry} reuses this instance
+    /// and {@link #sortKeysForSignature} for its own canonical argument serialization.
+    static final com.google.gson.Gson SIGNATURE_GSON = new com.google.gson.Gson();
 
     /// Builds a loop-detection signature for one EXECUTED tool call: tool name + JSON-key-sorted
     /// arguments + the result text, both with every digit run blanked out. Blanking digits is
@@ -682,7 +694,8 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
     /// Recursively rewrites parsed JSON (Gson's raw {@code Object} tree of Map/List/primitives)
     /// into a form with every {@code Map}'s keys in sorted order, so {@link #SIGNATURE_GSON}
     /// serialises it back deterministically regardless of the original key order.
-    private static Object sortKeysForSignature(Object value) {
+    /// Package-private: also reused by {@link TerminalDenialRegistry}.
+    static Object sortKeysForSignature(Object value) {
         if (value instanceof java.util.Map<?, ?> map) {
             java.util.TreeMap<String, Object> sorted = new java.util.TreeMap<>();
             for (java.util.Map.Entry<?, ?> e : map.entrySet()) {
@@ -768,6 +781,19 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
     private ToolExecutionResultMessage executeWithLoopGuardUnsafe(ToolExecutionRequest req,
                                                             LoopGuardState state,
                                                             TraceContext tc, int cycle, int callIndex) {
+        // Terminal-denial short circuit (borrow-list A1): if the USER already declined this exact
+        // operation this turn, refuse it pre-execution — no tool run, and crucially no repeat
+        // confirmation dialog. Checked BEFORE the dup counter below: a refusal is terminal on the
+        // FIRST occurrence, not after "counting to 3", and the canonicalized signature also
+        // catches argument-order perturbations the raw-JSON fingerprint below would miss.
+        if (state.terminalDenials.isDenied(req.name(), req.arguments())) {
+            ToolExecutionResultMessage blocked = ToolExecutionResultMessage.from(req,
+                    TerminalDenialRegistry.SHORT_CIRCUIT_TEXT);
+            trace(tc, TraceEvents.guard(tc, cycle, "TERMINAL_DENIAL", req.name()));
+            trace(tc, TraceEvents.tool(tc, cycle, callIndex, req.id(), req.name(), req.arguments(),
+                    blocked.text(), false, false));
+            return blocked;
+        }
         // Exact-repeat PRE-execution block, narrowed to write-permission tools (see DUP_CALL_LIMIT's
         // doc) — read-only calls (including check_job/list_jobs polling, whose intended use IS
         // re-issuing the exact same call) skip this and fall through to actually running; if a
@@ -793,6 +819,12 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         ToolExecutionResultMessage raw = toolAdapter.execute(req);
         String fullText = raw != null && raw.text() != null ? raw.text() : "";
         boolean success = !fullText.startsWith("Error:") && !fullText.startsWith("BLOCKED:");
+        // Record a user refusal as a TERMINAL state for this turn (see the pre-execution short
+        // circuit above). Thread-safe registry: a parallel READ_ONLY batch can contain a
+        // force-confirmed MCP call whose decline lands here from a pool thread.
+        if (TerminalDenialRegistry.isUserDenialResult(fullText)) {
+            state.terminalDenials.recordDenial(req.name(), req.arguments());
+        }
         ToolExecutionResultMessage forModel = truncateToolResult(req, raw, tc, cycle, callIndex);
         boolean truncatedForModel = forModel != raw; // truncateToolResult returns the same instance if within budget
         trace(tc, TraceEvents.tool(tc, cycle, callIndex, req.id(), req.name(), req.arguments(), fullText, success, truncatedForModel));
@@ -858,6 +890,14 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         if (callback.isCancelled()) {
             // User pressed Stop — abort instead of issuing another model call / tool cycle, but
             // still terminate the callback chain so the partial reply gets persisted.
+            //
+            // Dangling-tool_use audit (borrow-list E3, verified 2026-07): abandoning `conversation`
+            // here (and at the two in-batch cancellation exits below) can leave an AiMessage whose
+            // tool calls have no paired results — but ONLY inside this turn-local list, which is
+            // discarded with the turn. Persistence stores plain-text LlmMessages (assistant
+            // segments + UI-only tool records), and ChatAgent.buildMessages() filters tool records
+            // off the wire entirely, so no provider ever sees an unpaired tool_use on the next
+            // request. No opencode-style "synthesize an output-error result" backfill is needed.
             trace(tc, org.jackhuang.hmcl.ai.langchain4j.TraceEvents.guard(tc, cycle, "CANCELLED", null));
             callback.onComplete(turnText.toString());
             return;
@@ -865,7 +905,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         if (cycle >= maxToolCycles) {
             trace(tc, org.jackhuang.hmcl.ai.langchain4j.TraceEvents.guard(tc, cycle, "CYCLE_CAP",
                     "maxToolCycles=" + maxToolCycles));
-            forceFinishTurn(conversation, callback, turnText, tc, cycle);
+            forceFinishTurn(conversation, callback, turnText, tc, cycle, ForceFinishCause.CYCLE_CAP);
             return;
         }
 
@@ -1107,7 +1147,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                                         state.todoNudgeCount++;
                                         trace(tc, TraceEvents.guard(tc, cycle, "TODO_SILENT_DISCARD",
                                                 "nudge#" + state.todoNudgeCount + " dropped=" + dropped.size()));
-                                        conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                                        conversation.add(GuardMessageFormatter.guardMessage("todo_silent_discard",
                                                 "[系统提示] 刚才这次 todo_write 调用让旧清单里 " + dropped.size()
                                                 + " 项内容凭空消失了（既没有标记为 done，也没有保留在新清单里）："
                                                 + String.join("；", dropped) + "。如果这些其实已经做完了，请更新清单把它们标为"
@@ -1139,14 +1179,22 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                                 } else if (LOOP_SIGNATURE_SOFT_THRESHOLDS.contains((int) repeatCount)) {
                                     trace(tc, TraceEvents.guard(tc, cycle, "LOOP_SIGNATURE_SOFT",
                                             req.name() + " x" + repeatCount));
-                                    conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                                    conversation.add(GuardMessageFormatter.guardMessage("loop_warning",
                                             loopSignatureSoftWarning(req.name(), (int) repeatCount)));
                                 }
                             }
                         }
                     }
                     if (hardLoopStop) {
-                        forceFinishTurn(conversation, callback, turnText, tc, cycle);
+                        // Doom-loop hard stop (borrow-list A2): the turn is now REALLY force-ended
+                        // — tools withdrawn, one final text-only request — instead of the model
+                        // being merely lectured and left holding the execution reins.
+                        // TODO(第二波·H4 弹窗): 在这里接入 UI 确认 —— 比照 AIMainPage 的
+                        // confirmDangerousOperation 弹窗问用户“模型似乎卡在重复调用，是否继续？”，
+                        // 用户选择继续则清空 state.signatureWindow 并 streamTurn(cycle+1) 放行，
+                        // 否则维持本强制收尾。钩子需要一个由 AIMainPage 注入的确认回调
+                        // （ToolConfirmHandler 形态即可），本波（第一波）不碰 UI，仅保留此挂载点。
+                        forceFinishTurn(conversation, callback, turnText, tc, cycle, ForceFinishCause.DOOM_LOOP);
                         return;
                     }
                     // No-progress guard: after a run of non-progress results, nudge the model ONCE to
@@ -1156,7 +1204,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                         AiLog.warn("[AI] 连续 " + state.noProgressStreak + " 次工具调用无进展，注入收敛提示");
                         trace(tc, TraceEvents.guard(tc, cycle, "NO_PROGRESS",
                                 "consecutiveNonProgress=" + state.noProgressStreak));
-                        conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                        conversation.add(GuardMessageFormatter.guardMessage("no_progress",
                                 "[系统提示] 已连续多次工具调用失败、没有取得进展。请停止继续尝试同类操作："
                                 + "用你已经获得的信息直接回答，或明确说明卡在哪里、需要用户提供什么，不要再盲目重试。"));
                         state.noProgressStreak = 0;
@@ -1175,7 +1223,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                             trace(tc, TraceEvents.guard(tc, cycle, "TODO_STALE",
                                     "nudge#" + state.todoNudgeCount
                                     + " outstanding=" + state.outstandingTodoContents.size()));
-                            conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                            conversation.add(GuardMessageFormatter.guardMessage("todo_stale",
                                     "[系统提示] TODO 清单已经有一段时间没有更新了，但还有 "
                                     + state.outstandingTodoContents.size() + " 项没有勾选完成。如果其中有已经做完的，"
                                     + "回去调用 todo_write 把它们标为 done；如果计划变了，也要用 todo_write 更新现有"
@@ -1212,7 +1260,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                     state.verifyNudgeCount++;
                     state.outstandingRiskyWrites.clear();
                     trace(tc, TraceEvents.guard(tc, cycle, "VERIFY_ON_STOP", "nudge#" + state.verifyNudgeCount));
-                    conversation.add(dev.langchain4j.data.message.UserMessage.from(
+                    conversation.add(GuardMessageFormatter.guardMessage("verify_on_stop",
                             "[系统提示] 你刚才修改了配置/状态，但还没有用只读工具验证改动确实生效。"
                             + "请先验证（比如重新读取刚改的内容、或用对应的list/details类工具确认），再收工。"));
                     streamTurn(conversation, callback, cycle + 1, state, turnText, tc);
@@ -1249,19 +1297,36 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         });
     }
 
-    /// Soft landing at the hard {@link #maxToolCycles} cap (borrow-list 2.4). The old behaviour ended
-    /// the turn with a canned Chinese paragraph and zero model involvement. This gives the model ONE
-    /// final, tool-free request to summarise what it finished / didn't / suggests in its own words —
-    /// a real closing reply beats a robotic cutoff message. Falls back to the canned message if this
-    /// final request itself errors or comes back empty.
+    /// WHY a turn is being force-finished — the two causes deserve DIFFERENT wording (borrow-list
+    /// A8's follow-up note): "you hit the 25-cycle budget" and "you were caught repeating the same
+    /// call in a loop" call for different closing summaries and different user advice.
+    enum ForceFinishCause { CYCLE_CAP, DOOM_LOOP }
+
+    /// Soft landing at the hard {@link #maxToolCycles} cap (borrow-list 2.4) or on a doom-loop
+    /// hard stop (borrow-list A2). The old behaviour ended the turn with a canned Chinese
+    /// paragraph and zero model involvement. This gives the model ONE final, tool-free request to
+    /// summarise what it finished / didn't / suggests in its own words — a real closing reply
+    /// beats a robotic cutoff message. Falls back to the canned message if this final request
+    /// itself errors or comes back empty. The closing instruction is attributed precisely to its
+    /// {@code cause} and rides the {@link GuardMessageFormatter} identity channel.
     private void forceFinishTurn(List<ChatMessage> conversation, LlmStreamCallback callback,
-                                 StringBuilder turnText, org.jackhuang.hmcl.ai.trace.TraceContext tc, int cycle) {
-        trace(tc, TraceEvents.guard(tc, cycle, "FORCE_FINISH", "maxToolCycles=" + maxToolCycles));
-        String cannedFallback = "（已连续调用工具 " + maxToolCycles
-                + " 轮仍未完成，已停止以避免无限空转。建议：换种说法或补充信息，必要时在右上角换一个更强的模型；也可在「高级」里调整工具调用轮数上限。）";
-        conversation.add(UserMessage.from(
-                "[系统提示] 已连续调用工具 " + maxToolCycles + " 轮，工具已禁用。"
-                + "请直接用文字总结：已完成什么、未完成什么、你的建议——不要再尝试调用任何工具。"));
+                                 StringBuilder turnText, org.jackhuang.hmcl.ai.trace.TraceContext tc, int cycle,
+                                 ForceFinishCause cause) {
+        trace(tc, TraceEvents.guard(tc, cycle, "FORCE_FINISH",
+                cause == ForceFinishCause.DOOM_LOOP
+                        ? "doom-loop hard stop" : "maxToolCycles=" + maxToolCycles));
+        String cannedFallback = cause == ForceFinishCause.DOOM_LOOP
+                ? "（检测到模型反复以几乎相同的方式调用同一工具且没有进展，本轮已强制停止。"
+                        + "建议：换种说法重试、补充缺少的信息，或在右上角换一个更强的模型。）"
+                : "（已连续调用工具 " + maxToolCycles
+                        + " 轮仍未完成，已停止以避免无限空转。建议：换种说法或补充信息，必要时在右上角换一个更强的模型；也可在「高级」里调整工具调用轮数上限。）";
+        conversation.add(GuardMessageFormatter.guardMessage("force_finish",
+                cause == ForceFinishCause.DOOM_LOOP
+                        ? "[系统提示] 检测到你反复以几乎相同的方式调用同一工具、得到基本相同的结果（疑似原地打转），"
+                                + "本轮已强制进入收尾，工具已禁用。请直接用文字总结：已完成什么、卡在哪里、"
+                                + "你需要用户提供什么——不要再尝试调用任何工具。"
+                        : "[系统提示] 已连续调用工具 " + maxToolCycles + " 轮，工具已禁用。"
+                                + "请直接用文字总结：已完成什么、未完成什么、你的建议——不要再尝试调用任何工具。"));
         ChatRequest.Builder requestBuilder = ChatRequest.builder().messages(conversation);
         // Deliberately no .toolSpecifications(...) — this really is the model's last, text-only word.
         streamingChatModel.chat(requestBuilder.build(), new StreamingChatResponseHandler() {
@@ -1300,12 +1365,11 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
 
     private static final int MAX_STREAM_RETRIES = 2; // up to 3 attempts total for a pre-token transient error
 
-    /// Whether a failure is worth a transparent retry: rate limits (429), server-side errors (5xx),
-    /// and connection/timeout failures (status 0, no HTTP response). Client errors (400/401/403/404)
-    /// are NOT retried — they won't succeed on a re-send.
+    /// Whether a failure is worth a transparent retry — delegated to the shared
+    /// {@link org.jackhuang.hmcl.ai.net.HttpRetryClassifier} (borrow-list A5: this table used to
+    /// live only here while the search/HTTP tools had none; it is now the one source of truth).
     private static boolean isRetryable(LlmException e) {
-        int s = e.getStatusCode();
-        return s == 0 || s == 429 || s == 500 || s == 502 || s == 503 || s == 504;
+        return org.jackhuang.hmcl.ai.net.HttpRetryClassifier.isRetryableStatus(e.getStatusCode());
     }
 
     /// Sends a non-streaming request via the LangChain4j chat model and
@@ -1446,22 +1510,11 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
         return new LlmException("AI request failed: " + error.getMessage(), extractStatus(error), error);
     }
 
-    /// Best-effort HTTP status from langchain4j's exception hierarchy (walking the cause chain).
-    /// langchain4j throws its OWN exception types, not HMCL's LlmException, so without this every
-    /// failure looked like status 0 and isRetryable's 429/5xx allowlist was dead (every pre-token
-    /// error, even a 401/400, got retried). 0 means unknown/network (genuinely retryable).
+    /// Best-effort HTTP status from langchain4j's exception hierarchy — extracted to the shared
+    /// {@link org.jackhuang.hmcl.ai.net.HttpRetryClassifier#extractStatus} (borrow-list A5) so
+    /// the search/HTTP tool layer can reuse the same walk; this thin alias keeps
+    /// {@link #wrapError}'s call site unchanged.
     private static int extractStatus(Throwable error) {
-        Throwable t = error;
-        for (int i = 0; t != null && i < 10; i++, t = t.getCause()) {
-            if (t instanceof dev.langchain4j.exception.HttpException) {
-                return ((dev.langchain4j.exception.HttpException) t).statusCode();
-            }
-            if (t instanceof dev.langchain4j.exception.AuthenticationException) return 401;
-            if (t instanceof dev.langchain4j.exception.RateLimitException) return 429;
-            if (t instanceof dev.langchain4j.exception.ModelNotFoundException) return 404;
-            if (t instanceof dev.langchain4j.exception.InvalidRequestException) return 400;
-            if (t instanceof dev.langchain4j.exception.InternalServerException) return 500;
-        }
-        return 0;
+        return org.jackhuang.hmcl.ai.net.HttpRetryClassifier.extractStatus(error);
     }
 }

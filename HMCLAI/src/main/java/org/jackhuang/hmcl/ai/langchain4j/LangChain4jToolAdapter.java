@@ -28,6 +28,7 @@ import org.jackhuang.hmcl.ai.tools.DangerousCommands;
 import org.jackhuang.hmcl.ai.tools.ShellToolOverlap;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolConfirmHandler;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -263,14 +264,20 @@ public final class LangChain4jToolAdapter {
     public ToolExecutionResultMessage execute(ToolExecutionRequest request) {
         Tool tool = registry.get(request.name());
         if (tool == null) {
-            return ToolExecutionResultMessage.from(request,
-                    "Error: tool '" + request.name() + "' not found");
+            return ToolExecutionResultMessage.from(request, "Error: " + ToolFailures.failureEnvelope(
+                    "tool '" + request.name() + "' not found",
+                    ToolFailures.Retryable.NO, "no tool with this name is registered",
+                    "use only tools from the provided tool list — check the spelling, or pick a "
+                            + "different tool that covers this need"));
         }
         // A disabled tool (plan-mode read-only gating, or an MCP server marked unavailable) must not
         // run even if the model calls it by name from stale context — get() alone doesn't gate this.
         if (registry.isDisabled(request.name())) {
-            return ToolExecutionResultMessage.from(request,
-                    "Error: tool '" + request.name() + "' is currently disabled and cannot be called.");
+            return ToolExecutionResultMessage.from(request, "Error: " + ToolFailures.failureEnvelope(
+                    "tool '" + request.name() + "' is currently disabled and cannot be called",
+                    ToolFailures.Retryable.LATER,
+                    "it may be re-enabled later (Plan Mode gating, or an unavailable MCP server)",
+                    "use a different tool now, or tell the user why this one is unavailable"));
         }
 
         Map<String, Object> parameters;
@@ -283,9 +290,10 @@ public final class LangChain4jToolAdapter {
             String schemaHint = (tool instanceof ToolSpec spec && spec.supportsStructuredSchema())
                     ? spec.getInputSchemaJson()
                     : "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}";
-            return ToolExecutionResultMessage.from(request,
-                    "Error: failed to parse tool arguments as JSON. Re-emit them exactly per this schema:\n"
-                            + schemaHint);
+            return ToolExecutionResultMessage.from(request, "Error: " + ToolFailures.failureEnvelope(
+                    "failed to parse tool arguments as JSON",
+                    ToolFailures.Retryable.YES, "the arguments string was not valid JSON",
+                    "re-emit the arguments exactly per this schema:\n" + schemaHint));
         }
 
         String text;
@@ -354,7 +362,8 @@ public final class LangChain4jToolAdapter {
             // AIMainPage.applyPlanGating's own doc for why the tool is no longer wholesale-disabled
             // for domain facades whose actions span multiple permission levels), and of whether the
             // turn may be unattended (DANGEROUS_WRITE then BLOCKs outright too, see above).
-            AiExecutionPolicy.Decision decision = policy.check(tool.getName(), resolvedAction, perm, planMode, unattended);
+            AiExecutionPolicy.Verdict verdict = policy.evaluate(tool.getName(), resolvedAction, perm, planMode, unattended);
+            AiExecutionPolicy.Decision decision = verdict.decision();
             // Part A: a per-tool/action (and, for path-taking tools, per-path-glob) override from
             // AiToolPermissionStore is applied AFTER the base decision, never able to relax a
             // non-negotiable BLOCK (Plan Mode, or unattended DANGEROUS_WRITE) — see
@@ -367,20 +376,17 @@ public final class LangChain4jToolAdapter {
                 decision = override.apply(decision, perm);
             }
             if (decision == AiExecutionPolicy.Decision.BLOCK) {
-                return ToolExecutionResultMessage.from(request,
-                        "Error: blocked — this call is either write-capable while Plan Mode is "
-                                + "active, or a dangerous operation while the current turn may be "
-                                + "running unattended (nobody is necessarily here to approve it). "
-                                + "Wait for a real user turn, or accomplish this a safer way.");
+                // Per-reason text (borrow-list A4 / rewrite #21): what the model should do next
+                // depends on WHICH gate fired, so the two causes get their own precise envelope
+                // instead of the old collapsed "either...or..." sentence.
+                return ToolExecutionResultMessage.from(request, blockedText(verdict.blockReason()));
             }
             if (decision == AiExecutionPolicy.Decision.ASK) {
                 boolean approved = confirmHandler != null
                         && confirmHandler.confirm(tool.getName(),
                                 confirmSummaryWithOverlap(tool.getName(), parameters, shellOverlapReason));
                 if (!approved) {
-                    return ToolExecutionResultMessage.from(request,
-                            "Error: the user declined to confirm this operation. Do not retry it; "
-                                    + "suggest an alternative or ask what they would prefer.");
+                    return ToolExecutionResultMessage.from(request, USER_DECLINED_TEXT);
                 }
             } else if ((dangerousShell || mcpTool || shellOverlapReason != null) && confirmHandler != null) {
                 // A dangerous shell command (format / dd / mkfs / fork bomb / recursive delete, incl.
@@ -395,9 +401,7 @@ public final class LangChain4jToolAdapter {
                 // block — see ShellToolOverlap's class doc, this is a nudge, not a gate.)
                 if (!confirmHandler.confirm(tool.getName(),
                         confirmSummaryWithOverlap(tool.getName(), parameters, shellOverlapReason))) {
-                    return ToolExecutionResultMessage.from(request,
-                            "Error: the user declined to confirm this operation. Do not retry it; "
-                                    + "suggest a safer alternative or ask what they would prefer.");
+                    return ToolExecutionResultMessage.from(request, USER_DECLINED_TEXT);
                 }
             }
 
@@ -418,17 +422,25 @@ public final class LangChain4jToolAdapter {
                     // that reaches this gate is refused outright while the turn may be unattended,
                     // never merely asked — see AiExecutionPolicy's class doc.
                     return ToolExecutionResultMessage.from(request,
-                            "Error: blocked — this is a CRITICAL operation (" + criticalReason + ") and "
-                                    + "the current turn may be running unattended, so it cannot be "
-                                    + "auto-approved. Wait for a real user turn, or ask them to run it "
-                                    + "directly.");
+                            "Error: blocked — " + ToolFailures.failureEnvelope(
+                                    "this is a CRITICAL operation (" + criticalReason + ") and the current "
+                                            + "turn may be running unattended, so it cannot be auto-approved",
+                                    ToolFailures.Retryable.LATER,
+                                    "it can be confirmed once a real user turn happens",
+                                    "end this turn now and leave this operation for a real user turn, or "
+                                            + "ask the user to run it directly"));
                 }
                 if (criticalConfirmHandler != null) {
                     String summary = criticalReason + "\n\n" + summarizeForConfirm(tool.getName(), parameters);
                     if (!criticalConfirmHandler.confirm(tool.getName(), summary)) {
                         return ToolExecutionResultMessage.from(request,
                                 "Error: the user declined this CRITICAL operation at the safety prompt. "
-                                        + "Do NOT retry it; explain the risk and ask how they want to proceed.");
+                                        + ToolFailures.failureEnvelope(
+                                                "the risk was explicitly presented and refused",
+                                                ToolFailures.Retryable.NO,
+                                                "a user refusal at the safety prompt is final for this turn",
+                                                "do NOT retry it; explain the risk and ask how they want to "
+                                                        + "proceed"));
                     }
                 }
             }
@@ -441,22 +453,28 @@ public final class LangChain4jToolAdapter {
                 final Tool bgTool = tool;
                 final Map<String, Object> bgParams = parameters;
                 String label = summarizeForConfirm(tool.getName(), parameters);
-                String jobId = org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
-                        .submit(sessionId, tool.getName(), label, () -> bgTool.execute(bgParams));
-                return ToolExecutionResultMessage.from(request,
-                        "已在后台开始执行（任务 #" + jobId + "：" + tool.getName() + "）。聊天不会被占用，"
-                                + "你可以继续做别的事；之后用 job(action=\"check\", jobId=\"" + jobId + "\") 查看结果，"
-                                + "用 job(action=\"list\") 看全部任务、job(action=\"cancel\", jobId=\"" + jobId
-                                + "\") 取消。"
-                                + "重要：在 job(action=\"check\") 显示该任务已完成之前，绝不要声称它已完成。"
-                                + "如果想在下一条回复里嵌入这个任务的实时进度，可以在文本中写 {{job_progress:" + jobId
-                                + "}}，界面会自动动态更新，无需你再发新消息。");
+                org.jackhuang.hmcl.ai.tools.AiJobManager jobs =
+                        org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance();
+                String jobId = jobs.submit(sessionId, tool.getName(), label, () -> bgTool.execute(bgParams));
+                // Rewrite #18 (borrow-list B11): submit() can fail IMMEDIATELY (worker pool
+                // rejected the task, e.g. during shutdown) and mark the job FAILED — the old
+                // unconditional "已在后台开始执行" reply was the sweep's one actively-lying receipt.
+                // Check the job's real status before claiming anything started.
+                org.jackhuang.hmcl.ai.tools.AiJobManager.Job dispatched = jobs.get(jobId);
+                return ToolExecutionResultMessage.from(request, backgroundDispatchText(
+                        tool.getName(), jobId,
+                        dispatched != null ? dispatched.getStatus() : null,
+                        dispatched != null ? dispatched.getError() : null));
             }
 
             ToolResult result = tool.execute(parameters);
             if (result == null) {
-                text = "Error: tool '" + request.name()
-                        + "' returned no result";
+                text = "Error: " + ToolFailures.failureEnvelope(
+                        "tool '" + request.name() + "' returned no result",
+                        ToolFailures.Retryable.NO,
+                        "a null result is a tool implementation defect, not an input problem",
+                        "treat this call as failed; accomplish the task another way or report it to "
+                                + "the user");
             } else if (result.isSuccess()) {
                 text = result.getOutput();
             } else {
@@ -473,12 +491,86 @@ public final class LangChain4jToolAdapter {
                 Thread.currentThread().interrupt();
             }
             String message = t.getMessage();
-            text = "Error: " + (message != null && !message.isBlank()
-                    ? message
-                    : t.getClass().getSimpleName());
+            text = "Error: " + ToolFailures.failureEnvelope(
+                    "tool '" + request.name() + "' failed: "
+                            + (message != null && !message.isBlank()
+                                    ? message : t.getClass().getSimpleName()),
+                    ToolFailures.Retryable.NO,
+                    "unclassified exception — do not assume it is transient",
+                    "diagnose the specific cause from the message and fix it before any retry; if it "
+                            + "looks environmental or unresolvable, stop and tell the user");
         }
 
         return ToolExecutionResultMessage.from(request, text);
+    }
+
+    /// The one canonical "user declined at the confirmation prompt" failure text, shared by the
+    /// ASK gate and the force-confirm gate. Its exact `"Error: the user declined"` prefix is what
+    /// {@link TerminalDenialRegistry#isUserDenialResult} keys on to record the denial as a
+    /// TERMINAL state for the rest of the turn — change one, change both.
+    static final String USER_DECLINED_TEXT = "Error: the user declined to confirm this operation. "
+            + ToolFailures.failureEnvelope(
+                    "the confirmation dialog was shown and refused",
+                    ToolFailures.Retryable.NO,
+                    "a user refusal is final for this turn",
+                    "do not retry it; suggest a safer alternative or ask what they would prefer");
+
+    /// Per-reason BLOCK text (borrow-list A4 / rewrite #21). Package-private for direct test
+    /// coverage. A {@code null} reason (theoretically unreachable — the policy always stamps one
+    /// on a BLOCK, and overrides never mint a new BLOCK) falls back to a generic envelope rather
+    /// than throwing inside the failure path.
+    static String blockedText(@Nullable AiExecutionPolicy.BlockReason reason) {
+        if (reason == AiExecutionPolicy.BlockReason.PLAN_MODE) {
+            return "Error: blocked — " + ToolFailures.failureEnvelope(
+                    "Plan Mode is active (read-only investigation only), so this write-capable call "
+                            + "was not executed",
+                    ToolFailures.Retryable.LATER,
+                    "not now, but after the user approves your plan",
+                    "keep investigating with read-only tools, or present your plan via ask; do not "
+                            + "retry this write while Plan Mode is on");
+        }
+        if (reason == AiExecutionPolicy.BlockReason.UNATTENDED_DANGEROUS) {
+            return "Error: blocked — " + ToolFailures.failureEnvelope(
+                    "this turn may be running unattended (e.g. an automatic follow-up after a "
+                            + "background job), so this dangerous operation cannot be auto-approved",
+                    ToolFailures.Retryable.LATER,
+                    "it can be re-attempted once a real user turn happens",
+                    "end this turn now; do not attempt this operation again in this same unattended "
+                            + "continuation");
+        }
+        return "Error: blocked — " + ToolFailures.failureEnvelope(
+                "this call was blocked by the execution policy",
+                ToolFailures.Retryable.NO, "a non-negotiable safety gate fired",
+                "choose a safer alternative, or ask the user how to proceed");
+    }
+
+    /// Builds the model-facing receipt for a background dispatch from the job's REAL immediate
+    /// status (rewrite #18): only a live (or already-finished) job earns the "已在后台开始执行"
+    /// text; a job that never started (FAILED/CANCELLED at submit, or — defensively — no job
+    /// record at all) gets a failure envelope instead of a lie. Package-private and pure so tests
+    /// can cover the FAILED branch without forcing the real singleton's worker pool to reject.
+    static String backgroundDispatchText(String toolName, String jobId,
+                                         @Nullable org.jackhuang.hmcl.ai.tools.AiJobManager.Status status,
+                                         @Nullable String error) {
+        if (status == null
+                || status == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.FAILED
+                || status == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.CANCELLED) {
+            return "Error: " + ToolFailures.failureEnvelope(
+                    "background task #" + jobId + " (" + toolName + ") could not be started"
+                            + (error != null && !error.isBlank() ? ": " + error : ""),
+                    ToolFailures.Retryable.LATER,
+                    "likely a transient resource issue (the worker pool rejected the task)",
+                    "retry the request once; if it fails again, stop and report it to the user");
+        }
+        // RUNNING — or, on a very fast job, already SUCCEEDED: "started in the background" is
+        // accurate either way, and job(action="check") remains the source of truth for completion.
+        return "已在后台开始执行（任务 #" + jobId + "：" + toolName + "）。聊天不会被占用，"
+                + "你可以继续做别的事；之后用 job(action=\"check\", jobId=\"" + jobId + "\") 查看结果，"
+                + "用 job(action=\"list\") 看全部任务、job(action=\"cancel\", jobId=\"" + jobId
+                + "\") 取消。"
+                + "重要：在 job(action=\"check\") 显示该任务已完成之前，绝不要声称它已完成。"
+                + "如果想在下一条回复里嵌入这个任务的实时进度，可以在文本中写 {{job_progress:" + jobId
+                + "}}，界面会自动动态更新，无需你再发新消息。";
     }
 
     /// Tool name → long-running action set, mirroring {@code CriticalOperations.CRITICAL_ACTIONS}'

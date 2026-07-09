@@ -200,6 +200,34 @@ public final class ChatAgentCompactTest {
         }
     }
 
+    /// H8 (borrow-list E1): every compaction summary must carry the routine-housekeeping
+    /// education note, so the model never reads its abruptly-shortened history as a signal to
+    /// hurry or wrap up.
+    @Test
+    public void testCompactSummaryCarriesTheHousekeepingEducationNote() throws IOException {
+        Path dir = Files.createTempDirectory("hmcl-ai-compact-edu-");
+        try {
+            AiSession session = new AiSession();
+            addTurn(session, "1");
+            addTurn(session, "2");
+            addTurn(session, "3");
+
+            FixedSummaryClient client = new FixedSummaryClient("摘要正文。");
+            ChatAgent agent = buildAgent(client, session, dir);
+            agent.compact().join();
+
+            LlmMessage summaryMessage = session.getMessages().get(0);
+            assertTrue(summaryMessage.getContent().contains("【上下文已压缩】"),
+                    "the header must be kept");
+            assertTrue(summaryMessage.getContent().contains(ChatAgent.COMPACT_EDUCATION_NOTE),
+                    "the summary message must carry the education note: " + summaryMessage.getContent());
+            assertTrue(summaryMessage.getContent().contains("摘要正文。"),
+                    "the summary text itself must still follow the note");
+        } finally {
+            cleanup(dir);
+        }
+    }
+
     private static String renderAll(List<LlmMessage> messages) {
         StringBuilder sb = new StringBuilder();
         for (LlmMessage m : messages) {
