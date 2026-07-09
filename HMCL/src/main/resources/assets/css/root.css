@@ -2126,6 +2126,37 @@
     -fx-fill: -monet-on-surface;
 }
 
+/* Markdown font sizing/weight lives entirely in CSS (no setFont in Java): em values scale
+   off the px base set by .ai-chat-font-* .ai-bubble, so the chat font-size setting applies
+   to Markdown messages too. Headings h5/h6 share md-h4. */
+.ai-markdown-view .md-bold {
+    -fx-font-weight: bold;
+}
+
+.ai-markdown-view .md-em {
+    -fx-font-style: italic;
+}
+
+.ai-markdown-view .md-h1 {
+    -fx-font-size: 1.4em;
+    -fx-font-weight: bold;
+}
+
+.ai-markdown-view .md-h2 {
+    -fx-font-size: 1.25em;
+    -fx-font-weight: bold;
+}
+
+.ai-markdown-view .md-h3 {
+    -fx-font-size: 1.15em;
+    -fx-font-weight: bold;
+}
+
+.ai-markdown-view .md-h4 {
+    -fx-font-size: 1.05em;
+    -fx-font-weight: bold;
+}
+
 /* Colour-emoji bubbles render text as a TextFlow; colour its Text nodes to match. */
 .ai-bubble-user .text {
     -fx-fill: -monet-on-secondary-container;
@@ -2140,6 +2171,8 @@
 
 .ai-markdown-view .md-code-inline {
     -fx-fill: -monet-primary;
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 0.92em;
 }
 
 .ai-markdown-view .md-link {
@@ -2148,7 +2181,7 @@
 
 .ai-markdown-view .md-code-block {
     -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 8;
+    -fx-background-radius: 6;
     -fx-padding: 4 4 8 12;
 }
 
@@ -2174,6 +2207,8 @@
 
 .ai-markdown-view .md-code-text {
     -fx-fill: -monet-on-surface;
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 0.92em;
 }
 
 .ai-markdown-view .md-code-kw {
@@ -2622,7 +2657,7 @@
 .ai-tool-card-result {
     -fx-text-fill: -monet-on-surface-variant;
     -fx-font-size: 11px;
-    -fx-font-family: "monospace";
+    -fx-font-family: "Monospaced";
     -fx-padding: 4 0 0 0;
 }
 
@@ -2682,7 +2717,7 @@
 /* ---- AI Chat Font Sizes ---- */
 
 .ai-chat-font-small .ai-bubble {
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
 }
 
 .ai-chat-font-normal .ai-bubble {

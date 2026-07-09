@@ -176,6 +176,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// todo card, …). Messages render one per row (never side-by-side), so this doesn't need to
     /// reserve mirrored empty space the way a two-column layout would — raised from the original
     /// 480px, which read as a narrow column with a large empty gutter on wide windows.
+    /// 未来 A4(气泡宽度绑定视口自适应)的单一改造点:全部气泡/卡片宽度(含
+    /// MarkdownMessageView 的工厂参数)都从这里派生,改这一处即可整体换轨。
     static final double AI_BUBBLE_MAX_WIDTH = 720;
 
     // ---- State ----
@@ -4428,7 +4430,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // When markdown is available, render it as the bubble and keep the plain
         // Label hidden behind it as the streaming text target.
         if (!text.isEmpty() && chatSettings.markdownRender) {
-            MarkdownMessageView mdView = MarkdownMessageView.create(text);
+            MarkdownMessageView mdView = MarkdownMessageView.create(text, AI_BUBBLE_MAX_WIDTH - 10);
             if (mdView != null) {
                 content.setVisible(false);
                 content.setManaged(false);
@@ -4463,7 +4465,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         if (!completeText.isEmpty() && chatSettings.markdownRender) {
-            MarkdownMessageView mdView = MarkdownMessageView.create(completeText);
+            MarkdownMessageView mdView = MarkdownMessageView.create(completeText, AI_BUBBLE_MAX_WIDTH - 10);
             if (mdView != null) {
                 aiBubble.setVisible(false);
                 aiBubble.setManaged(false);

@@ -65,7 +65,7 @@ public final class MarkdownCodeCopyFxTest {
     @Test
     public void copyButtonPutsCodeOnClipboardAndFlipsLabel() throws Exception {
         FxToolkit.setupSceneRoot(() -> {
-            MarkdownMessageView view = MarkdownMessageView.create("```java\n" + CODE + "\n```");
+            MarkdownMessageView view = MarkdownMessageView.create("```java\n" + CODE + "\n```", 710);
             assertNotNull(view, "fenced code must be recognised as markdown");
             StackPane root = new StackPane(view);
             root.setPrefSize(600, 400);

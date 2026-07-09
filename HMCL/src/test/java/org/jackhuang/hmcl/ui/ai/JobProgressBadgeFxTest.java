@@ -92,7 +92,7 @@ public final class JobProgressBadgeFxTest {
             MarkdownMessageView[] viewHolder = new MarkdownMessageView[1];
             FxToolkit.setupSceneRoot(() -> {
                 MarkdownMessageView view = MarkdownMessageView.create(
-                        "已安排后台下载mod，已安装 {{job_progress:" + job.getId() + "}}，还有什么别的要求吗？");
+                        "已安排后台下载mod，已安装 {{job_progress:" + job.getId() + "}}，还有什么别的要求吗？", 710);
                 assertNotNull(view, "text containing the job_progress marker must be recognised as markdown");
                 viewHolder[0] = view;
                 StackPane root = new StackPane(view);
@@ -138,7 +138,7 @@ public final class JobProgressBadgeFxTest {
             String marker = "{{job_progress:" + running1.getId() + "," + running2.getId() + "," + finishedId + "}}";
             MarkdownMessageView[] viewHolder = new MarkdownMessageView[1];
             FxToolkit.setupSceneRoot(() -> {
-                MarkdownMessageView view = MarkdownMessageView.create("批量安装中 " + marker + "，请稍候");
+                MarkdownMessageView view = MarkdownMessageView.create("批量安装中 " + marker + "，请稍候", 710);
                 assertNotNull(view);
                 viewHolder[0] = view;
                 StackPane root = new StackPane(view);
@@ -168,7 +168,7 @@ public final class JobProgressBadgeFxTest {
         MarkdownMessageView[] viewHolder = new MarkdownMessageView[1];
         FxToolkit.setupSceneRoot(() -> {
             MarkdownMessageView view = MarkdownMessageView.create(
-                    "进度：{{job_progress:this-job-id-does-not-exist-999999}}");
+                    "进度：{{job_progress:this-job-id-does-not-exist-999999}}", 710);
             assertNotNull(view);
             viewHolder[0] = view;
             StackPane root = new StackPane(view);

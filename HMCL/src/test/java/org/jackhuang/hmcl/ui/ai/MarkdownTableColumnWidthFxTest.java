@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /// Regression test for a table-column-collapse bug: without a per-column minimum width,
 /// GridPane's auto-sizing could shrink a short-text column (e.g. "release") narrower than a
-/// single glyph once the row's total preferred width exceeded MarkdownMessageView.MAX_WIDTH,
+/// single glyph once the row's total preferred width exceeded the view's max width,
 /// causing TextFlow to word-wrap mid-character. Asserts the built table grid carries one
 /// ColumnConstraints per column with a positive floor, and is wrapped in a horizontally
 /// scrollable container scoped to the table row whose vertical scrollbar policy is NEVER for
@@ -47,8 +47,8 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 /// to otherwise render as one very tall unbroken block.
 public final class MarkdownTableColumnWidthFxTest {
 
-    // Wide enough columns to push the row's natural width past MAX_WIDTH (710), forcing
-    // GridPane to shrink columns absent a floor.
+    // Wide enough columns to push the row's natural width past the max width passed to
+    // create() (710 here), forcing GridPane to shrink columns absent a floor.
     private static final String TABLE_MARKDOWN = "| Channel | Description | Status |\n"
             + "|---|---|---|\n"
             + "| release | This is a long description column meant to occupy most of the row width | on |\n"
@@ -73,7 +73,7 @@ public final class MarkdownTableColumnWidthFxTest {
     public void tableColumnsGetAMinimumWidthFloorAndScrollHorizontally() throws Exception {
         MarkdownMessageView[] viewHolder = new MarkdownMessageView[1];
         FxToolkit.setupSceneRoot(() -> {
-            MarkdownMessageView view = MarkdownMessageView.create(TABLE_MARKDOWN);
+            MarkdownMessageView view = MarkdownMessageView.create(TABLE_MARKDOWN, 710);
             assertNotNull(view, "GFM table markdown must be recognised as markdown");
             viewHolder[0] = view;
             StackPane root = new StackPane(view);
@@ -137,7 +137,7 @@ public final class MarkdownTableColumnWidthFxTest {
     public void tallTableIsHeightCappedAndScrollsVertically() throws Exception {
         MarkdownMessageView[] viewHolder = new MarkdownMessageView[1];
         FxToolkit.setupSceneRoot(() -> {
-            MarkdownMessageView view = MarkdownMessageView.create(manyRowTableMarkdown());
+            MarkdownMessageView view = MarkdownMessageView.create(manyRowTableMarkdown(), 710);
             assertNotNull(view, "GFM table markdown must be recognised as markdown");
             viewHolder[0] = view;
             StackPane root = new StackPane(view);

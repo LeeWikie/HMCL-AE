@@ -35,9 +35,6 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontPosture;
-import javafx.scene.text.FontWeight;
 import javafx.scene.text.TextFlow;
 import org.commonmark.ext.gfm.strikethrough.Strikethrough;
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension;
@@ -77,11 +74,11 @@ import java.util.Arrays;
 /// strikethrough and links via the commonmark library. Used only by the AI chat.
 public final class MarkdownMessageView extends VBox {
 
-    // A conservative upper bound just under AIMainPage.AI_BUBBLE_MAX_WIDTH (720) — not an exact
-    // fit for the enclosing bubble's real horizontal padding (.ai-bubble is `10 14 10 14`, i.e.
-    // 28px). setMaxWidth is only a ceiling: the parent VBox's fillWidth layout already caps
-    // children to the true available content width, so the exact number here isn't load-bearing.
-    private static final double MAX_WIDTH = 710;
+    // Max content width, supplied by the caller (AIMainPage passes AI_BUBBLE_MAX_WIDTH - 10) so
+    // the bubble width has a single source of truth instead of a second hard-coded magic number.
+    // setMaxWidth is only a ceiling: the parent VBox's fillWidth layout already caps children to
+    // the true available content width, so the exact number here isn't load-bearing.
+    private final double maxWidth;
 
     private static final Parser PARSER = Parser.builder()
             .extensions(Arrays.asList(TablesExtension.create(), StrikethroughExtension.create()))
@@ -95,19 +92,23 @@ public final class MarkdownMessageView extends VBox {
     private static final java.util.regex.Pattern JOB_PROGRESS_PATTERN =
             java.util.regex.Pattern.compile("\\{\\{job_progress:([^}]*)}}");
 
-    private MarkdownMessageView() {
+    private MarkdownMessageView(double maxWidth) {
+        this.maxWidth = maxWidth;
         getStyleClass().add("ai-markdown-view");
-        setMaxWidth(MAX_WIDTH);
+        setMaxWidth(maxWidth);
         setFillWidth(true);
         setSpacing(6);
     }
 
     /// Builds a Markdown view when the text actually contains Markdown; returns null for
     /// plain prose so the caller can keep a lightweight Label.
+    ///
+    /// @param maxWidth width ceiling for every rendered block (callers derive it from
+    ///                 {@code AIMainPage.AI_BUBBLE_MAX_WIDTH} minus bubble padding slack).
     @Nullable
-    public static MarkdownMessageView create(String text) {
+    public static MarkdownMessageView create(String text, double maxWidth) {
         if (!MarkdownRenderer.containsMarkdownSyntax(text)) return null;
-        MarkdownMessageView view = new MarkdownMessageView();
+        MarkdownMessageView view = new MarkdownMessageView(maxWidth);
         Node document = PARSER.parse(text != null ? text : "");
         view.appendBlocks(view, document);
         return view.getChildren().isEmpty() ? null : view;
@@ -127,21 +128,10 @@ public final class MarkdownMessageView extends VBox {
         if (node instanceof Heading heading) {
             TextFlow flow = baseFlow();
             renderInline(flow, heading, false, false, false);
-            double size = switch (heading.getLevel()) {
-                case 1 -> 18;
-                case 2 -> 16;
-                case 3 -> 15;
-                default -> 14;
-            };
-            for (javafx.scene.Node child : flow.getChildren()) {
-                if (child instanceof javafx.scene.text.Text t) {
-                    // Preserve any italic posture from nested emphasis (e.g. "## Some *italic*
-                    // heading") instead of unconditionally forcing FontPosture.REGULAR.
-                    FontPosture posture = t.getFont().getStyle().toLowerCase().contains("italic")
-                            ? FontPosture.ITALIC : FontPosture.REGULAR;
-                    t.setFont(Font.font(null, FontWeight.BOLD, posture, size));
-                }
-            }
+            // Size/weight come from CSS (md-h1..md-h4 em rules in root.css) so the reader's
+            // chat font-size setting scales headings too; levels 5/6 share the md-h4 style.
+            // Nested emphasis keeps its italic via the md-em class styledText() attaches.
+            flow.getStyleClass().add("md-h" + Math.min(heading.getLevel(), 4));
             return flow;
         }
         if (node instanceof Paragraph paragraph) {
@@ -168,14 +158,14 @@ public final class MarkdownMessageView extends VBox {
             HBox quote = new HBox(inner);
             HBox.setHgrow(inner, Priority.ALWAYS);
             quote.getStyleClass().add("md-blockquote");
-            quote.setMaxWidth(MAX_WIDTH);
+            quote.setMaxWidth(maxWidth);
             return quote;
         }
         if (node instanceof ThematicBreak) {
             Region hr = new Region();
             hr.getStyleClass().add("md-hr");
             hr.setPrefHeight(1);
-            hr.setMaxWidth(MAX_WIDTH);
+            hr.setMaxWidth(maxWidth);
             return hr;
         }
         if (node instanceof TableBlock table) {
@@ -194,7 +184,7 @@ public final class MarkdownMessageView extends VBox {
     private javafx.scene.Node renderList(Node listNode, boolean ordered) {
         VBox list = new VBox(2);
         list.setFillWidth(true);
-        list.setMaxWidth(MAX_WIDTH);
+        list.setMaxWidth(maxWidth);
         int index = ordered && listNode instanceof OrderedList orderedList ? orderedList.getStartNumber() : 1;
         for (Node item = listNode.getFirstChild(); item != null; item = item.getNext()) {
             if (!(item instanceof ListItem)) continue;
@@ -207,7 +197,7 @@ public final class MarkdownMessageView extends VBox {
             HBox.setHgrow(content, Priority.ALWAYS);
             HBox row = new HBox(6, marker, content);
             row.setAlignment(Pos.TOP_LEFT);
-            row.setMaxWidth(MAX_WIDTH);
+            row.setMaxWidth(maxWidth);
             list.getChildren().add(row);
             index++;
         }
@@ -231,7 +221,7 @@ public final class MarkdownMessageView extends VBox {
     private javafx.scene.Node renderTable(TableBlock tableBlock) {
         TableGrid grid = new TableGrid();
         grid.getStyleClass().add("md-table");
-        grid.setMaxWidth(MAX_WIDTH);
+        grid.setMaxWidth(maxWidth);
         // Screen-reader wiring: a table rendered as a bare GridPane otherwise carries zero
         // row/column semantics — a screen reader just sees an unstructured pile of Text
         // nodes. TABLE_VIEW plus the ROW_COUNT/COLUMN_COUNT answers wired into TableGrid
@@ -298,7 +288,7 @@ public final class MarkdownMessageView extends VBox {
         grid.setRowAndColumnCount(rowIndex, maxCol);
         // Without an explicit per-column minimum, GridPane's auto-sizing can shrink a
         // short-content column narrower than a single glyph once the row's total preferred
-        // width exceeds MAX_WIDTH, forcing TextFlow to wrap mid-word/mid-character.
+        // width exceeds maxWidth, forcing TextFlow to wrap mid-word/mid-character.
         for (int i = 0; i < maxCol; i++) {
             ColumnConstraints cc = new ColumnConstraints();
             cc.setMinWidth(MIN_COLUMN_WIDTH);
@@ -306,11 +296,10 @@ public final class MarkdownMessageView extends VBox {
             grid.getColumnConstraints().add(cc);
         }
 
-        // Per-column minimums can legitimately force the grid wider than MAX_WIDTH (JavaFX
+        // Per-column minimums can legitimately force the grid wider than maxWidth (JavaFX
         // resolves a min>max conflict by honoring min). Scope horizontal scrolling to just
         // this table's row so it doesn't overflow the bubble or scroll the whole conversation.
         ScrollPane scroll = new ScrollPane(grid);
-        scroll.getStyleClass().add("md-table-scroll");
         scroll.setFitToWidth(false);
         scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         // A many-row table is capped to MAX_TABLE_HEIGHT and only then gains its own
@@ -321,7 +310,7 @@ public final class MarkdownMessageView extends VBox {
         scroll.setVbarPolicy(overflowsHeightCap
                 ? ScrollPane.ScrollBarPolicy.AS_NEEDED
                 : ScrollPane.ScrollBarPolicy.NEVER);
-        scroll.setMaxWidth(MAX_WIDTH);
+        scroll.setMaxWidth(maxWidth);
         return scroll;
     }
 
@@ -482,14 +471,11 @@ public final class MarkdownMessageView extends VBox {
 
     private javafx.scene.text.Text styledText(String s, boolean bold, boolean italic, boolean code, boolean strike) {
         javafx.scene.text.Text t = new javafx.scene.text.Text(s);
-        FontWeight weight = bold ? FontWeight.BOLD : FontWeight.NORMAL;
-        FontPosture posture = italic ? FontPosture.ITALIC : FontPosture.REGULAR;
-        if (code) {
-            t.setFont(Font.font("Monospaced", weight, posture, 12));
-            t.getStyleClass().add("md-code-inline");
-        } else {
-            t.setFont(Font.font(null, weight, posture, 13));
-        }
+        // No setFont here: family/size/weight/posture all come from CSS classes so the chat
+        // font-size setting (.ai-chat-font-* on the message list) cascades into Markdown text.
+        if (bold) t.getStyleClass().add("md-bold");
+        if (italic) t.getStyleClass().add("md-em");
+        if (code) t.getStyleClass().add("md-code-inline");
         if (strike) t.setStrikethrough(true);
         t.getStyleClass().add("md-text");
         return t;
@@ -497,7 +483,7 @@ public final class MarkdownMessageView extends VBox {
 
     private TextFlow baseFlow() {
         TextFlow flow = new TextFlow();
-        flow.setMaxWidth(MAX_WIDTH);
+        flow.setMaxWidth(maxWidth);
         flow.setLineSpacing(2);
         return flow;
     }
@@ -545,17 +531,17 @@ public final class MarkdownMessageView extends VBox {
         HBox header = new HBox(6, langLabel, spacer, copyBtn);
         header.setAlignment(Pos.CENTER_LEFT);
         header.getStyleClass().add("md-code-header");
-        header.setMaxWidth(MAX_WIDTH);
+        header.setMaxWidth(maxWidth);
 
         TextFlow content = new TextFlow();
-        content.setMaxWidth(MAX_WIDTH);
+        content.setMaxWidth(maxWidth);
         content.getStyleClass().add("md-code-content");
         appendHighlighted(content, body);
 
         VBox box = new VBox(header, content);
         box.getStyleClass().add("md-code-block");
         box.setFillWidth(true);
-        box.setMaxWidth(MAX_WIDTH);
+        box.setMaxWidth(maxWidth);
         return box;
     }
 
@@ -581,7 +567,8 @@ public final class MarkdownMessageView extends VBox {
 
     private javafx.scene.text.Text codeRun(String s, @Nullable String styleClass) {
         javafx.scene.text.Text t = new javafx.scene.text.Text(s);
-        t.setFont(Font.font("Monospaced", 12));
+        // Monospaced family + 0.92em size come from the .md-code-text CSS rule (no setFont),
+        // keeping code blocks in step with the chat font-size setting.
         t.getStyleClass().add("md-code-text");
         if (styleClass != null) t.getStyleClass().add(styleClass);
         return t;
