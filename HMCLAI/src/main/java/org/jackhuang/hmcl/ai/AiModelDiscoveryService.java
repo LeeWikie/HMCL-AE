@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ai;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,9 +63,20 @@ public final class AiModelDiscoveryService {
 
     /// Creates a discovery service with a default HTTP client.
     public AiModelDiscoveryService() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(REQUEST_TIMEOUT)
+        // Route through HMCL's globally-configured proxy (explicitly, matching the repo idiom;
+        // see SearxngSearchClient) and answer proxy 407 challenges with the credentials HMCL
+        // pushed down — the JDK HttpClient ignores Authenticator.setDefault, so the
+        // authenticator must be attached explicitly (and conditionally, see
+        // ProxyAuthenticatorHolder.configure).
+        this.httpClient = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
+                        .proxy(java.net.ProxySelector.getDefault())
+                        .connectTimeout(REQUEST_TIMEOUT))
                 .build();
+    }
+
+    /// The internal client. Visible for tests asserting proxy/authenticator wiring.
+    HttpClient httpClient() {
+        return httpClient;
     }
 
     /// Discovers model ids for the given provider profile.

@@ -2,6 +2,7 @@ package org.jackhuang.hmcl.ai.search;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.net.URI;
@@ -31,9 +32,11 @@ public final class TavilySearchClient implements SearchClient {
         // Honour HMCL's globally-configured proxy. The JDK HttpClient does NOT use the
         // default ProxySelector unless told to (unlike HttpURLConnection/NetworkUtils),
         // so without this the search silently bypasses the user's proxy and fails (esp. in CN).
-        HttpClient client = HttpClient.newBuilder()
+        // ProxyAuthenticatorHolder.configure answers proxy 407 challenges with the credentials
+        // HMCL pushed down (the JDK HttpClient ignores Authenticator.setDefault).
+        HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
                 .proxy(java.net.ProxySelector.getDefault())
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(10)))
                 .build();
 
         String body = GSON.toJson(Map.of(

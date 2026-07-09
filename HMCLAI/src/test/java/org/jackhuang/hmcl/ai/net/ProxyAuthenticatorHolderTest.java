@@ -91,6 +91,30 @@ public final class ProxyAuthenticatorHolderTest {
         assertSame(pushed, seen.get(), "volatile field must publish the instance to reader threads");
     }
 
+    /// configure() must leave the builder authenticator-free while nothing is pushed: a JDK
+    /// HttpClient carrying ANY authenticator (even a no-op) fails 401/407 responses that lack
+    /// a WWW-Authenticate/Proxy-Authenticate header with IOException instead of surfacing
+    /// them — and bare 401s are the norm for API-key-authenticated endpoints.
+    @Test
+    void configureWithoutPushLeavesClientAuthenticatorFree() {
+        HttpClient.Builder builder = HttpClient.newBuilder();
+        assertSame(builder, ProxyAuthenticatorHolder.configure(builder),
+                "configure must return the same builder for chaining");
+        assertTrue(builder.build().authenticator().isEmpty(),
+                "no authenticator may be attached while nothing was pushed");
+    }
+
+    /// configure() must attach the exact pushed instance once credentials exist.
+    @Test
+    void configureAfterPushAttachesTheExactInstance() {
+        Authenticator pushed = new Authenticator() {
+        };
+        ProxyAuthenticatorHolder.set(pushed);
+        HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()).build();
+        assertSame(pushed, client.authenticator().orElseThrow(),
+                "the very instance HMCL pushed must reach the JDK HttpClient");
+    }
+
     @Test
     void noopIsAcceptedByHttpClientBuilder() {
         // HttpClient.Builder.authenticator(null) throws NPE — the whole point of getOrNoop()

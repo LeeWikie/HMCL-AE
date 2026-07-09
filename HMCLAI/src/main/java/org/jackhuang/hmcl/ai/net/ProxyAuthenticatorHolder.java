@@ -35,14 +35,20 @@ import java.net.PasswordAuthentication;
 /// batch; this class deliberately ships unwired), and each AI-side
 /// `HttpClient.newBuilder()` chain adds `.authenticator(ProxyAuthenticatorHolder.getOrNoop())`.
 ///
-/// Shape of the "absent" value: [`java.net.http.HttpClient.Builder#authenticator`] throws
-/// `NullPointerException` for `null`, so call sites that chain it unconditionally need a
-/// non-null stand-in. Per the [`Authenticator`] contract, an instance whose
-/// `getPasswordAuthentication()` returns `null` means "no credentials available": the client
-/// then simply does not answer 401/407 challenges and surfaces the response to the caller —
-/// byte-for-byte the behavior of a client built without any authenticator. `Authenticator`
-/// never prompts the user on its own, so the no-op can never open a dialog. Hence
-/// [`#getOrNoop`] returns that safe no-op instead of `null`.
+/// How call sites should wire it: via [`#configure`], which attaches the authenticator ONLY
+/// when one has actually been pushed. Attaching any authenticator — even a no-op — is NOT
+/// behavior-neutral: the JDK `AuthenticationFilter` then insists on parsing a
+/// `WWW-Authenticate`/`Proxy-Authenticate` challenge header on every 401/407 and throws
+/// `IOException("WWW-Authenticate header missing")` when the server omits it, which most
+/// API-key-authenticated LLM/search endpoints do on a plain 401. Without an authenticator the
+/// same 401 simply surfaces to the caller. (That residual quirk still applies to users who DO
+/// configure an authenticated proxy — unavoidable, and strictly better than the guaranteed 407.)
+///
+/// Shape of the "absent" value for the legacy [`#getOrNoop`] accessor:
+/// [`java.net.http.HttpClient.Builder#authenticator`] throws `NullPointerException` for
+/// `null`, so a non-null stand-in whose `getPasswordAuthentication()` returns `null` ("no
+/// credentials available" per the [`Authenticator`] contract) is returned instead. It never
+/// answers challenges and can never prompt — but see the caveat above: prefer [`#configure`].
 ///
 /// Note: once a real authenticator is set, the `HttpClient` will use it for BOTH proxy (407)
 /// and origin-server (401) challenges — same as HMCL's global `Authenticator.setDefault`
@@ -70,9 +76,34 @@ public final class ProxyAuthenticatorHolder {
 
     /// Returns the pushed authenticator, or the no-op stand-in (never `null`, so it can be
     /// chained unconditionally into `HttpClient.newBuilder().authenticator(...)`).
+    /// Prefer [`#configure`], which leaves the client authenticator-free (and therefore
+    /// tolerant of challenge-header-less 401s) until credentials are actually pushed.
     public static Authenticator getOrNoop() {
         Authenticator current = authenticator;
         return current != null ? current : NOOP;
+    }
+
+    /// Attaches the pushed proxy authenticator to `builder` — but only when HMCL has actually
+    /// pushed one (i.e. the user configured a username/password proxy). Returns the same
+    /// builder for chaining:
+    ///
+    /// ```java
+    /// HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
+    ///         .proxy(ProxySelector.getDefault())
+    ///         .connectTimeout(...))
+    ///         .build();
+    /// ```
+    ///
+    /// This is the recommended wiring: an authenticator-free client surfaces bare 401/407
+    /// responses to the caller, while a client with ANY authenticator attached (even a no-op)
+    /// fails such responses with `IOException("WWW-Authenticate header missing")` when the
+    /// server omits the challenge header — see the class docs.
+    public static java.net.http.HttpClient.Builder configure(java.net.http.HttpClient.Builder builder) {
+        Authenticator current = authenticator;
+        if (current != null) {
+            builder.authenticator(current);
+        }
+        return builder;
     }
 
     /// "No credentials available" per the [`Authenticator`] contract; equivalent to having no

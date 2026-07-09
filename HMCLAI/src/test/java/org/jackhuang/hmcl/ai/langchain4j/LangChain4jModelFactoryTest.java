@@ -17,9 +17,14 @@
  */
 package org.jackhuang.hmcl.ai.langchain4j;
 
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import org.jackhuang.hmcl.ai.LlmConfig;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.junit.jupiter.api.Test;
 
+import java.net.Authenticator;
+import java.net.ProxySelector;
+import java.net.http.HttpClient;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -103,6 +108,61 @@ public final class LangChain4jModelFactoryTest {
 
         LangChain4jModelFactory factory = new LangChain4jModelFactory();
         assertNotNull(factory.buildStreamingChatModel(config));
+    }
+
+    /// Verifies that Anthropic chat and streaming models can be built from a minimal
+    /// LlmConfig without throwing (both carry the proxy-aware HTTP client builder).
+    @Test
+    public void testBuildAnthropicModelsFromConfig() {
+        LlmConfig config = new LlmConfig(
+                "https://api.anthropic.com/v1/messages",
+                "sk-ant-test-key",
+                "claude-sonnet-4-5",
+                "anthropic",
+                4096,
+                0.7,
+                Duration.ofSeconds(30)
+        );
+
+        LangChain4jModelFactory factory = new LangChain4jModelFactory();
+        assertNotNull(factory.buildAnthropicChatModel(config));
+        assertNotNull(factory.buildAnthropicStreamingChatModel(config));
+    }
+
+    /// The proxy-aware HTTP client builder handed to all four model builders must wire the
+    /// globally-configured ProxySelector into the underlying JDK HttpClient. While no proxy
+    /// credentials have been pushed it must NOT attach an authenticator: a client with any
+    /// authenticator fails bare 401 responses (no WWW-Authenticate header — the norm for LLM
+    /// APIs rejecting an API key) with IOException instead of surfacing them.
+    @Test
+    public void testProxyAwareHttpClientBuilderWiresProxyButNoAuthenticatorByDefault() {
+        JdkHttpClientBuilder lc4jBuilder = LangChain4jModelFactory.proxyAwareHttpClientBuilder();
+        HttpClient client = lc4jBuilder.httpClientBuilder().build();
+
+        assertTrue(client.proxy().isPresent(),
+                "the underlying JDK HttpClient must route through a ProxySelector");
+        assertSame(ProxySelector.getDefault(), client.proxy().get(),
+                "the ProxySelector must be the process-wide default HMCL installs at startup");
+        assertTrue(client.authenticator().isEmpty(),
+                "no authenticator may be attached while no proxy credentials were pushed");
+    }
+
+    /// An authenticator pushed by HMCL (via ProxyAuthenticatorHolder) must be picked up by
+    /// clients assembled afterwards — models are rebuilt per configuration change, so build-time
+    /// capture is the intended lifecycle.
+    @Test
+    public void testProxyAwareHttpClientBuilderPicksUpPushedAuthenticator() {
+        Authenticator pushed = new Authenticator() {
+        };
+        ProxyAuthenticatorHolder.set(pushed);
+        try {
+            HttpClient client = LangChain4jModelFactory.proxyAwareHttpClientBuilder()
+                    .httpClientBuilder().build();
+            assertSame(pushed, client.authenticator().orElseThrow(),
+                    "the very instance HMCL pushed must reach the JDK HttpClient");
+        } finally {
+            ProxyAuthenticatorHolder.set(null);
+        }
     }
 
     /// Verifies that models can be built with logging enabled.
