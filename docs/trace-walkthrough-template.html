@@ -1,0 +1,200 @@
+<!--
+  ============================================================================
+  HMCL-AE 诊断 Trace 走查模板 (HTML 版)
+  ----------------------------------------------------------------------------
+  用途:每次用户真机测试后,拉取云端诊断 trace,按本模板填充,用 Artifact 工具发布供共同审阅。
+  发布方式:把本文件另存为 docs/trace-walkthrough-<反馈ID>.html,填内容后 Artifact 发布(favicon 用 🔬)。
+  设计语言与「夜间交接报告」一致:主题感知(明暗双色)、语义徽章、数据对齐。
+
+  填充约定:
+   1. 所有 <!-- FILL: ... --> 注释标出需替换的位置,填完可删注释。
+   2. 五类状态徽章用 <span class="b b-fixed|b-todo|b-new|b-check|b-ok">…</span>:
+        b-fixed  ✅ 已修复    b-todo ⏳ 仍待处理   b-new 🆕 新发现
+        b-check  ❓ 待确认    b-ok   ✔️ 无问题
+   3. 对话一律用 .dialog 表格呈现(角色 | 内容),真实按时间顺序,不要折叠成模糊摘要。
+   4. 每个发现用 .note 块,顶部挂对应徽章 + 一句话结论,正文给「文件:行号」证据,禁止凭印象。
+   5. 引用代码/日志原文用 <code> / <pre>,保持原文不翻译。
+   6. 截图走查按页面分组;修改意见汇总放文末表格。
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg:#f6f7f9; --surface:#fff; --surface-2:#eef1f5; --ink:#1a2230; --ink-2:#55627a; --ink-3:#8593aa; --line:#dde3ec;
+    --accent:#1f9d76; --amber:#b7791f; --blue:#2f6db3; --violet:#7a5cc0; --red:#c0392b;
+    --fixed-s:#e2f4ee; --todo-s:#fbf1dd; --new-s:#e4eefb; --check-s:#efe8fb; --ok-s:#eef1f5;
+    --mono:ui-monospace,"Cascadia Code",Consolas,"SFMono-Regular",monospace;
+    --sans:system-ui,"Segoe UI",-apple-system,"Microsoft YaHei UI",sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#10141b;--surface:#171d27;--surface-2:#1e2632;--ink:#e8edf4;--ink-2:#a7b4c8;--ink-3:#6f7d94;--line:#29323f;
+    --accent:#3fc79a;--amber:#e0a94a;--blue:#6aa7e0;--violet:#a98be0;--red:#e06a5c;
+    --fixed-s:#143026;--todo-s:#2e2513;--new-s:#16273a;--check-s:#221a33;--ok-s:#1e2632;
+  }}
+  :root[data-theme="light"]{--bg:#f6f7f9;--surface:#fff;--surface-2:#eef1f5;--ink:#1a2230;--ink-2:#55627a;--ink-3:#8593aa;--line:#dde3ec;--accent:#1f9d76;--amber:#b7791f;--blue:#2f6db3;--violet:#7a5cc0;--red:#c0392b;--fixed-s:#e2f4ee;--todo-s:#fbf1dd;--new-s:#e4eefb;--check-s:#efe8fb;--ok-s:#eef1f5;}
+  :root[data-theme="dark"]{--bg:#10141b;--surface:#171d27;--surface-2:#1e2632;--ink:#e8edf4;--ink-2:#a7b4c8;--ink-3:#6f7d94;--line:#29323f;--accent:#3fc79a;--amber:#e0a94a;--blue:#6aa7e0;--violet:#a98be0;--red:#e06a5c;--fixed-s:#143026;--todo-s:#2e2513;--new-s:#16273a;--check-s:#221a33;--ok-s:#1e2632;}
+
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.62;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:940px;margin:0 auto;padding:38px 22px 80px;}
+
+  header.hero{border-bottom:2px solid var(--line);padding-bottom:24px;margin-bottom:28px;}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:11px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;}
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);}
+  h1{font-size:clamp(24px,4vw,34px);line-height:1.16;margin:0 0 16px;letter-spacing:-.01em;text-wrap:balance;}
+  .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  .meta div{background:var(--surface);padding:11px 14px;}
+  .meta .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px;}
+  .meta .v{font-size:14px;font-weight:600;font-family:var(--mono);color:var(--ink);}
+
+  .callout{border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:14px 18px;margin:18px 0;background:var(--surface);}
+  .callout.warn{border-left-color:var(--red);}
+  .callout.decide{border-left-color:var(--violet);}
+  .callout .ct{font-weight:650;margin-bottom:4px;display:flex;gap:8px;align-items:center;}
+  .callout p{margin:0;font-size:14px;color:var(--ink-2);}
+
+  h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin:42px 0 16px;padding-bottom:9px;border-bottom:1px solid var(--line);}
+
+  .tally{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;}
+  .tally .b{font-size:13px;}
+  .progress{height:9px;border-radius:6px;background:var(--surface-2);overflow:hidden;display:flex;margin:8px 0 4px;}
+  .progress i{display:block;height:100%;}
+  .progress .pf{background:var(--accent);}
+  .progress .pt{background:var(--amber);}
+  .progress .pn{background:var(--blue);}
+  .progress-cap{font-size:12.5px;color:var(--ink-3);}
+
+  .b{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;padding:2px 10px;border-radius:20px;white-space:nowrap;}
+  .b-fixed{background:var(--fixed-s);color:var(--accent);}
+  .b-todo{background:var(--todo-s);color:var(--amber);}
+  .b-new{background:var(--new-s);color:var(--blue);}
+  .b-check{background:var(--check-s);color:var(--violet);}
+  .b-ok{background:var(--ok-s);color:var(--ink-3);}
+
+  .round{margin:26px 0;}
+  .round h3{font-size:17px;margin:0 0 12px;letter-spacing:-.01em;}
+  table.dialog{width:100%;border-collapse:collapse;font-size:14px;border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  table.dialog td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top;}
+  table.dialog tr:last-child td{border-bottom:none;}
+  table.dialog .role{width:88px;font-weight:600;color:var(--ink-3);font-size:12.5px;white-space:nowrap;}
+  table.dialog .role.user{color:var(--blue);}
+  table.dialog .role.ai{color:var(--accent);}
+  table.dialog .role.tool{color:var(--violet);font-family:var(--mono);}
+  table.dialog .role.dev{color:var(--red);}
+  .dwrap{overflow-x:auto;}
+
+  .note{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin:12px 0;}
+  .note .nh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+  .note .nh .title{font-weight:650;font-size:15px;}
+  .note p{margin:0 0 8px;font-size:14px;color:var(--ink-2);}
+  .note p:last-child{margin-bottom:0;}
+  code{font-family:var(--mono);font-size:.87em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--ink);}
+  pre{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--ink);line-height:1.5;}
+
+  table.summary{width:100%;border-collapse:collapse;font-size:13.5px;}
+  table.summary th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;border-bottom:2px solid var(--line);}
+  table.summary td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);}
+  table.summary td .num{font-family:var(--mono);color:var(--ink-3);}
+  .summary-wrap{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px 14px;overflow-x:auto;}
+
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3);}
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow"><span class="dot"></span>HMCL-AE · 诊断 Trace 走查 · <!-- FILL:日期 -->2026-XX-XX</div>
+    <h1><!-- FILL:一句话主标题,概括本轮体检最关键的发现 -->某整合包会话:mods_install 反复装错版本的根因走查</h1>
+    <div class="meta">
+      <div><div class="k">反馈 ID</div><div class="v"><!-- FILL -->F-XXXXXX</div></div>
+      <div><div class="k">模型</div><div class="v"><!-- FILL -->deepseek-chat</div></div>
+      <div><div class="k">回合数</div><div class="v"><!-- FILL -->5</div></div>
+      <div><div class="k">trace 时间</div><div class="v"><!-- FILL -->2026-XX-XX HH:MM</div></div>
+    </div>
+  </header>
+
+  <!-- 可选:安全/待拍板提醒块。无则整段删除。 -->
+  <div class="callout warn">
+    <div class="ct">🔒 安全提醒</div>
+    <p><!-- FILL:如截图/日志中出现明文 API Key、路径泄露等 -->截图 QQXXXX.png 含明文 Tavily API Key,建议轮换并处理该文件。</p>
+  </div>
+  <div class="callout decide">
+    <div class="ct">❓ 待你拍板</div>
+    <p><!-- FILL:需要用户决策的架构/产品问题;已讨论完则改为「✔️ 已讨论,决定X」 --></p>
+  </div>
+
+  <h2>本轮体检总览</h2>
+  <div class="tally">
+    <span class="b b-fixed">✅ 已修复 <!-- FILL -->2</span>
+    <span class="b b-todo">⏳ 仍待处理 <!-- FILL -->9</span>
+    <span class="b b-new">🆕 新发现 <!-- FILL -->6</span>
+    <span class="b b-check">❓ 待确认 <!-- FILL -->1</span>
+    <span class="b b-ok">✔️ 无问题 <!-- FILL -->3</span>
+  </div>
+  <!-- 修复进度条:各段宽度按数量占比设 flex-basis 或 width -->
+  <div class="progress">
+    <i class="pf" style="width:12%"></i>
+    <i class="pt" style="width:53%"></i>
+    <i class="pn" style="width:35%"></i>
+  </div>
+  <div class="progress-cap">绿=已修复 · 黄=仍待处理 · 蓝=新发现</div>
+
+  <!-- ===================== 对话回合 ===================== -->
+  <h2>对话回放</h2>
+
+  <div class="round">
+    <h3>🎬 回合 1 — <!-- FILL:该回合的用户诉求摘要 -->「我想装些模组」</h3>
+    <div class="dwrap"><table class="dialog">
+      <tr><td class="role user">用户</td><td><!-- FILL:原话 --></td></tr>
+      <tr><td class="role ai">AI</td><td><!-- FILL:回复要点 --></td></tr>
+      <tr><td class="role tool">search(mods)</td><td><!-- FILL:工具调用与结果要点 --></td></tr>
+      <tr><td class="role dev">[Dev]</td><td><!-- FILL:若用户留了 [Dev] 自定义选项,原文照录——这是给你看的一手信号,务必逐字对待 --></td></tr>
+    </table></div>
+
+    <!-- 该回合的发现 -->
+    <div class="note">
+      <div class="nh"><span class="b b-new">🆕 新发现</span><span class="title"><!-- FILL:发现一句话 --></span></div>
+      <p><!-- FILL:证据,给 文件:行号 --> 根因在 <code>ContentToolSupport.resolveVersion()</code>(<code>ContentToolSupport.java:501</code>)……</p>
+    </div>
+  </div>
+
+  <div class="round">
+    <h3>🎬 回合 2 — <!-- FILL --></h3>
+    <div class="dwrap"><table class="dialog">
+      <tr><td class="role user">用户</td><td><!-- FILL --></td></tr>
+      <tr><td class="role ai">AI</td><td><!-- FILL --></td></tr>
+    </table></div>
+    <div class="note">
+      <div class="nh"><span class="b b-todo">⏳ 仍待处理</span><span class="title"><!-- FILL --></span></div>
+      <p><!-- FILL --></p>
+    </div>
+  </div>
+  <!-- …按实际回合数复制 .round … -->
+
+  <!-- ===================== 截图走查 ===================== -->
+  <h2>📸 UI 截图走查</h2>
+  <!-- 按页面分组,每页一组发现 -->
+  <div class="note">
+    <div class="nh"><span class="b b-ok">✔️ 无问题</span><span class="title">AI 聊天页 — <!-- FILL --></span></div>
+    <p><!-- FILL:对照截图逐条,附 文件:行号 --></p>
+  </div>
+
+  <!-- ===================== 小结 ===================== -->
+  <h2>🏁 小结</h2>
+  <div class="note">
+    <p><!-- FILL:本轮最重要的 1-3 条结论,以及建议的下一步 --></p>
+  </div>
+
+  <!-- ===================== 修改意见汇总 ===================== -->
+  <h2>📝 修改意见汇总</h2>
+  <div class="summary-wrap"><table class="summary">
+    <thead><tr><th style="width:44px">#</th><th>意见</th><th style="width:96px">状态</th><th>出处 / 证据</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td><!-- FILL --></td><td><span class="b b-fixed">✅ 已修复</span></td><td class="num"><!-- FILL:文件:行号 或 截图名 --></td></tr>
+      <tr><td class="num">2</td><td><!-- FILL --></td><td><span class="b b-todo">⏳ 待处理</span></td><td class="num"><!-- FILL --></td></tr>
+      <!-- …逐条… -->
+    </tbody>
+  </table></div>
+
+  <footer>
+    HMCL-AE 诊断 Trace 走查 · 反馈 <!-- FILL -->F-XXXXXX · 生成于 <!-- FILL -->2026-XX-XX。所有结论以真实 trace 与「文件:行号」证据为准。
+  </footer>
+</div>
