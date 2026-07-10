@@ -17,12 +17,23 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.event.Event;
+import org.jackhuang.hmcl.event.EventBus;
+import org.jackhuang.hmcl.event.RemoveVersionEvent;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -30,12 +41,17 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-/// Covers [DeleteInstanceTool]'s parameter-resolution/validation branches and both the
-/// confirm-gate and the two delete strategies (recycle-bin vs. permanent), using a real
-/// [ProfileFixture]-backed instance on disk rather than mocks (this tool's only external
-/// dependencies are [org.jackhuang.hmcl.setting.Profiles] / [org.jackhuang.hmcl.game.HMCLGameRepository]
-/// and [FileTrash], both driven by real file-system state here).
+/// Covers [DeleteInstanceTool]'s parameter-resolution/validation branches, the confirm-gate,
+/// the [GameResourceGuard] occupancy guards (live-process probe + external-launch session.lock
+/// fallback), and the unified [org.jackhuang.hmcl.game.DefaultGameRepository#removeVersionFromDisk(String, boolean)]
+/// removal path (RemoveVersionEvent firing / veto), using a real [ProfileFixture]-backed
+/// instance on disk rather than mocks.
 public final class DeleteInstanceToolTest {
+
+    @AfterEach
+    void restoreInstanceRunningProbe() {
+        GameResourceGuard.setInstanceRunningProbeForTesting(null);
+    }
 
     @Test
     void missingInstanceParameterFails() throws Exception {
@@ -125,6 +141,142 @@ public final class DeleteInstanceToolTest {
             assertNotNull(result.getOutput());
             assertFalse(Files.exists(versionDir), "version directory should be gone from its original location");
             assertFalse(fx.repository().hasVersion("ToTrash"));
+        }
+    }
+
+    // -------------------------------------------------------------------------------
+    // G2: occupancy guards — running instance / externally-launched game (session.lock)
+    // -------------------------------------------------------------------------------
+
+    @Test
+    void runningInstanceIsRefusedAndNothingDeleted() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("RunningPack");
+            Path versionDir = fx.repository().getVersionRoot("RunningPack");
+            GameResourceGuard.setInstanceRunningProbeForTesting("RunningPack"::equals);
+            DeleteInstanceTool tool = new DeleteInstanceTool(() -> false);
+
+            ToolResult result = tool.execute(Map.of("instance", "RunningPack", "confirm", true));
+
+            assertFalse(result.isSuccess(), "deleting a running instance must be refused");
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("game(action=\"stop\", instance=\"RunningPack\")"),
+                    "rejection should direct the model to stop_instance first: " + result.getError());
+            assertTrue(Files.isDirectory(versionDir), "version directory must be untouched");
+            assertTrue(fx.repository().hasVersion("RunningPack"));
+        }
+    }
+
+    @Test
+    void lockedWorldUnderVersionRootIsRefusedAndNothingDeleted() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("ExternalRun");
+            Path versionDir = fx.repository().getVersionRoot("ExternalRun");
+            Path worldDir = versionDir.resolve("saves").resolve("LockedWorld");
+            Files.createDirectories(worldDir);
+            Path sessionLock = worldDir.resolve("session.lock");
+            Files.write(sessionLock, new byte[]{1});
+            DeleteInstanceTool tool = new DeleteInstanceTool(() -> false);
+
+            // Simulate a game launched OUTSIDE HMCL: the process table sees nothing, but the
+            // session holds the world's session.lock (a same-JVM FileLock trips the guard's
+            // OverlappingFileLockException branch, same as the native World#isLocked).
+            try (FileChannel holder = FileChannel.open(sessionLock, StandardOpenOption.WRITE);
+                 FileLock ignored = holder.lock()) {
+                ToolResult result = tool.execute(Map.of("instance", "ExternalRun", "confirm", true));
+
+                assertFalse(result.isSuccess(), "deleting an instance with a locked world must be refused");
+                assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                        "not a well-formed envelope: " + result.getError());
+                assertTrue(result.getError().contains("LockedWorld"),
+                        "rejection should name the locked world: " + result.getError());
+            }
+            assertTrue(Files.isDirectory(versionDir), "version directory must be untouched");
+            assertTrue(fx.repository().hasVersion("ExternalRun"));
+        }
+    }
+
+    @Test
+    void unheldSessionLockFileDoesNotBlockDeletion() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("IdleWorlds");
+            Path versionDir = fx.repository().getVersionRoot("IdleWorlds");
+            Path worldDir = versionDir.resolve("saves").resolve("IdleWorld");
+            Files.createDirectories(worldDir);
+            // A session.lock left behind by a past session, held by nobody: must not block.
+            Files.write(worldDir.resolve("session.lock"), new byte[]{1});
+            DeleteInstanceTool tool = new DeleteInstanceTool(() -> false);
+
+            ToolResult result = tool.execute(Map.of("instance", "IdleWorlds", "confirm", true));
+
+            assertTrue(result.isSuccess(), "expected success: " + result.getError());
+            assertFalse(Files.exists(versionDir));
+            assertFalse(fx.repository().hasVersion("IdleWorlds"));
+        }
+    }
+
+    // -------------------------------------------------------------------------------
+    // G12: unified removal path — RemoveVersionEvent always fires, and may veto
+    // -------------------------------------------------------------------------------
+
+    @Test
+    void removeVersionEventFiresOnRecycleBinPreferredPath() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("TrashHooked");
+            Path versionDir = fx.repository().getVersionRoot("TrashHooked");
+            List<String> removedVersions = new CopyOnWriteArrayList<>();
+            // registerWeak + a strong local reference scoped to this test: the listener dies with
+            // the test, so it cannot leak DENY/observation behavior into other tests (the event
+            // bus has no unregister API).
+            Consumer<RemoveVersionEvent> listener = event -> removedVersions.add(event.getVersion());
+            EventBus.EVENT_BUS.channel(RemoveVersionEvent.class).registerWeak(listener);
+            DeleteInstanceTool tool = new DeleteInstanceTool(() -> true);
+
+            ToolResult result = tool.execute(Map.of("instance", "TrashHooked", "confirm", true));
+
+            assertTrue(result.isSuccess(), "expected success: " + result.getError());
+            assertTrue(removedVersions.contains("TrashHooked"),
+                    "RemoveVersionEvent must fire on the recycle-bin-preferred path too (it was bypassed before)");
+            assertFalse(Files.exists(versionDir), "version directory should be gone from its original location");
+            assertFalse(fx.repository().hasVersion("TrashHooked"));
+        }
+    }
+
+    @Test
+    void vetoedRemovalFailsAndDeletesNothing() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("VetoedPack");
+            Path versionDir = fx.repository().getVersionRoot("VetoedPack");
+            Consumer<RemoveVersionEvent> veto = event -> {
+                if ("VetoedPack".equals(event.getVersion())) {
+                    event.setResult(Event.Result.DENY);
+                }
+            };
+            EventBus.EVENT_BUS.channel(RemoveVersionEvent.class).registerWeak(veto);
+            DeleteInstanceTool tool = new DeleteInstanceTool(() -> true);
+
+            ToolResult result = tool.execute(Map.of("instance", "VetoedPack", "confirm", true));
+
+            assertFalse(result.isSuccess(), "a vetoed removal must be reported as a failure");
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(Files.isDirectory(versionDir), "version directory must be untouched after a veto");
+            assertTrue(fx.repository().hasVersion("VetoedPack"));
+        }
+    }
+
+    @Test
+    void singleArgRemoveVersionFromDiskStillRemoves() throws Exception {
+        // Backward-compat lock for the DefaultGameRepository signature split: the historical
+        // single-argument overload must keep working (it delegates with moveToTrash=true).
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("LegacySignature");
+            Path versionDir = fx.repository().getVersionRoot("LegacySignature");
+
+            assertTrue(fx.repository().removeVersionFromDisk("LegacySignature"));
+
+            assertFalse(Files.exists(versionDir));
         }
     }
 

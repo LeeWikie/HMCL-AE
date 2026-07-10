@@ -231,6 +231,20 @@ public class DefaultGameRepository implements GameRepository {
     }
 
     public boolean removeVersionFromDisk(String id) {
+        return removeVersionFromDisk(id, true);
+    }
+
+    /// Removes version {@code id} from disk, firing {@link RemoveVersionEvent} first (which may
+    /// veto the removal). This is the single removal path — callers must not delete version
+    /// directories themselves, or the event hook is silently bypassed.
+    ///
+    /// @param id          the version id to remove
+    /// @param moveToTrash whether to attempt moving the version directory to the system recycle
+    ///                    bin / trash (recoverable) before falling back to a permanent delete;
+    ///                    {@code false} deletes permanently without consulting the trash.
+    ///                    The historical single-argument overload behaves as {@code true}.
+    /// @return whether the version was removed (also {@code false} when a listener vetoed it)
+    public boolean removeVersionFromDisk(String id, boolean moveToTrash) {
         if (EventBus.EVENT_BUS.fireEvent(new RemoveVersionEvent(this, id)) == Event.Result.DENY)
             return false;
         if (!versions.containsKey(id))
@@ -250,7 +264,7 @@ public class DefaultGameRepository implements GameRepository {
         try {
             versions.remove(id);
 
-            if (FileUtils.moveToTrash(removedFile)) {
+            if (moveToTrash && FileUtils.moveToTrash(removedFile)) {
                 return true;
             }
 

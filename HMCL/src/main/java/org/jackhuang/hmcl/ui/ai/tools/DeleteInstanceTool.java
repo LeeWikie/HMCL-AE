@@ -18,24 +18,39 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
 /// DANGEROUS: deletes a Minecraft instance (version) from disk.
 ///
-/// Honours the recycle-bin preference (mirroring {@link DeleteWorldTool}):
-/// - When {@code toRecycleBin} is true and the platform supports a recycle bin / trash, the
-///   version directory ({@link HMCLGameRepository#getVersionRoot(String)}) is moved to the
-///   recycle bin via {@link FileTrash#delete(Path, boolean)} (recoverable), then the repository
-///   is refreshed ({@link HMCLGameRepository#refreshVersions()}) so it forgets the version.
-/// - Otherwise (preference off, or no trash support, or the version directory cannot be located)
-///   it falls back to the exact repository call performed by the native delete action in
-///   {@code Versions.deleteVersion}: {@link HMCLGameRepository#removeVersionFromDisk(String)}.
+/// Both delete strategies funnel through the single native removal path
+/// {@link HMCLGameRepository#removeVersionFromDisk(String, boolean)} (the exact repository call
+/// performed by the native delete action in {@code Versions.deleteVersion}), so the
+/// {@link org.jackhuang.hmcl.event.RemoveVersionEvent} hook always fires and listeners keep
+/// their chance to observe or veto the removal. The user's recycle-bin preference is passed as
+/// the {@code moveToTrash} parameter: when it is on, the version directory is offered to the OS
+/// recycle bin / trash first (recoverable where the platform supports it); when it is off, the
+/// directory is deleted permanently.
+///
+/// Occupancy guard (see {@link GameResourceGuard}): before anything is deleted the tool refuses
+/// when
+/// - HMCL itself is tracking a live game process for the instance
+///   ({@link GameResourceGuard#checkInstanceNotRunning(String)}), pointing the model at
+///   {@code game(action="stop")} first; and, as a fallback for games launched OUTSIDE HMCL
+///   (which the process table cannot see),
+/// - any world under the version root's {@code saves/} directory holds its {@code session.lock}
+///   ({@link GameResourceGuard#checkWorldNotLocked(Path, String)}, the same probe
+///   {@link DeleteWorldTool} uses) — only the version root is scanned because that is the
+///   directory being deleted; shared (non-isolated) saves outside it are untouched by this
+///   operation.
 ///
 /// As a safety net (until a real UI confirmation dialog is wired in), this tool requires
 /// an explicit {@code confirm=true} parameter. Without it, nothing is deleted and the tool
@@ -62,6 +77,7 @@ public final class DeleteInstanceTool implements Tool {
         return "DANGEROUS: DELETE a Minecraft instance (version) from disk. "
                 + "Depending on the user's preference this either moves the instance to the system recycle bin "
                 + "(recoverable) or permanently removes it (cannot be undone). "
+                + "Refuses while the instance is running — stop the game first (game(action=\"stop\")). "
                 + "Parameters: instance (instance name to delete; falls back to 'query'), "
                 + "confirm (REQUIRED boolean). "
                 + "If confirm is not exactly true, NOTHING is deleted and the tool reports what would be removed; "
@@ -93,47 +109,77 @@ public final class DeleteInstanceTool implements Tool {
                     + "Re-invoke instance(action=\"delete\", instance=\"" + instance + "\", confirm=true) to proceed.");
         }
 
-        // Recoverable path: move the version's on-disk directory to the recycle bin, then let the
-        // repository rebuild its version list from disk so it forgets the now-removed version.
-        if (toRecycleBin.getAsBoolean() && FileTrash.trashSupported()) {
-            Path versionDir;
-            try {
-                versionDir = repository.getVersionRoot(instance);
-            } catch (Throwable e) {
-                versionDir = null;
-            }
-
-            if (versionDir != null && Files.isDirectory(versionDir)) {
-                try {
-                    boolean trashed = FileTrash.delete(versionDir, true);
-                    repository.refreshVersions();
-                    if (trashed) {
-                        return ToolResult.success("Moved instance '" + instance
-                                + "' to the system recycle bin (recoverable).\nPath: " + versionDir);
-                    }
-                    // FileTrash fell back to a permanent delete (the OS rejected the move-to-trash).
-                    return ToolResult.success("Permanently deleted instance '" + instance
-                            + "' from disk: the OS rejected the recycle-bin move, so it was removed permanently.\nPath: "
-                            + versionDir);
-                } catch (Throwable e) {
-                    // Could not move/delete the directory directly; fall back to the native path below.
-                }
-            }
-            // versionDir could not be located on disk: fall back to the native path below.
+        // Occupancy guard 1: HMCL's own per-instance process table — refuse while a game HMCL
+        // launched is still running (its rejection envelope directs the model to
+        // game(action="stop") first).
+        String rejection = GameResourceGuard.checkInstanceNotRunning(instance);
+        if (rejection != null) {
+            return ToolResult.failure(rejection);
         }
 
-        // Permanent / native path: reuses the exact repository call from Versions.deleteVersion.
-        boolean ok = repository.removeVersionFromDisk(instance);
+        // Occupancy guard 2 (external-launch fallback): the process table cannot see games
+        // started outside HMCL, but such a session still holds session.lock of the world it has
+        // open — probe every world under the version root's saves/ (the directory about to be
+        // deleted), mirroring DeleteWorldTool's session.lock guard.
+        rejection = checkNoWorldLockedUnderVersionRoot(repository, instance);
+        if (rejection != null) {
+            return ToolResult.failure(rejection);
+        }
+
+        // Single removal path (native, same call as Versions.deleteVersion) so the
+        // RemoveVersionEvent hook always fires; the recycle-bin preference selects whether the
+        // repository offers the directory to the OS trash before deleting permanently.
+        boolean preferTrash = toRecycleBin.getAsBoolean();
+        boolean ok = repository.removeVersionFromDisk(instance, preferTrash);
         if (!ok) {
-            return ToolResult.failure("Failed to delete instance '" + instance
-                    + "' from disk (an I/O error occurred).");
+            return ToolFailures.failure(
+                    "Failed to remove instance '" + instance + "' from disk — its version directory could not be "
+                            + "renamed (files inside it are likely held open by a running process, e.g. a game "
+                            + "launched outside HMCL) or a launcher component vetoed the removal; nothing was deleted",
+                    ToolFailures.Retryable.LATER,
+                    "the removal can succeed once no process holds the instance's files open",
+                    "Ask the user to close any game or program using this instance's files, then retry this call");
         }
 
         repository.refreshVersions();
-        // HMCL's native removeVersionFromDisk itself attempts a move-to-trash where the platform
-        // supports it, so the removal may in fact be recoverable — report honestly rather than
-        // claiming an irreversible permanent delete.
-        return ToolResult.success("Removed instance '" + instance
-                + "' from disk (it may be recoverable from the system recycle bin where supported).");
+        if (preferTrash) {
+            // The native path offers the directory to the OS trash first, but silently falls back
+            // to a permanent delete when the platform has no trash support — report honestly.
+            return ToolResult.success("Removed instance '" + instance
+                    + "' from disk. The recycle-bin preference is ON, so it was offered to the system recycle bin "
+                    + "first and should be recoverable from there where the platform supports it.");
+        }
+        return ToolResult.success("Permanently deleted instance '" + instance
+                + "' from disk (the recycle-bin preference is OFF).");
+    }
+
+    /// Probes `session.lock` of every world directory under the version root's `saves/`.
+    /// Returns the ready-to-return rejection envelope of the first locked world, or `null` when
+    /// no world is locked. Scan errors (unresolvable version root, unreadable directory) skip the
+    /// guard rather than blocking a deletion the user explicitly confirmed — this is an advisory
+    /// fallback on top of the process-table check.
+    @Nullable
+    private static String checkNoWorldLockedUnderVersionRoot(HMCLGameRepository repository, String instance) {
+        Path savesDir;
+        try {
+            savesDir = repository.getVersionRoot(instance).resolve("saves");
+        } catch (Throwable e) {
+            return null;
+        }
+        if (!Files.isDirectory(savesDir)) {
+            return null;
+        }
+        try (DirectoryStream<Path> worlds = Files.newDirectoryStream(savesDir, Files::isDirectory)) {
+            for (Path worldDir : worlds) {
+                String rejection = GameResourceGuard.checkWorldNotLocked(
+                        worldDir, worldDir.getFileName().toString());
+                if (rejection != null) {
+                    return rejection;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Best-effort scan; unreadable saves/ must not block the confirmed deletion.
+        }
+        return null;
     }
 }
