@@ -157,9 +157,6 @@ public final class AiSettings {
         @SerializedName("requestTimeoutSeconds")
         private int requestTimeoutSeconds = DEFAULT_REQUEST_TIMEOUT_SECONDS;
 
-        @SerializedName("toolCallLoggingEnabled")
-        private boolean toolCallLoggingEnabled = DEFAULT_TOOL_CALL_LOGGING_ENABLED;
-
         @SerializedName("shellToolEnabled")
         private boolean shellToolEnabled = DEFAULT_SHELL_TOOL_ENABLED;
 
@@ -257,7 +254,6 @@ public final class AiSettings {
     private final IntegerProperty maxContextMessages;
     private final IntegerProperty toolResultMaxChars;
     private final IntegerProperty requestTimeoutSeconds;
-    private final BooleanProperty toolCallLoggingEnabled;
     private final BooleanProperty shellToolEnabled;
     private final BooleanProperty webAccessEnabled;
     private final BooleanProperty autoScrollEnabled;
@@ -321,9 +317,6 @@ public final class AiSettings {
 
     /// Default per-request timeout in seconds.
     public static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 120;
-
-    /// Default value for the tool-call logging flag.
-    public static final boolean DEFAULT_TOOL_CALL_LOGGING_ENABLED = true;
 
     /// Default value for the shell-tool enabled flag. Off by default: every routine operation
     /// (mod toggle, memory/Java, world backups, accounts, …) now has a dedicated tool that's
@@ -420,7 +413,6 @@ public final class AiSettings {
         this.maxContextMessages = new SimpleIntegerProperty(this, "maxContextMessages", DEFAULT_MAX_CONTEXT_MESSAGES);
         this.toolResultMaxChars = new SimpleIntegerProperty(this, "toolResultMaxChars", DEFAULT_TOOL_RESULT_MAX_CHARS);
         this.requestTimeoutSeconds = new SimpleIntegerProperty(this, "requestTimeoutSeconds", DEFAULT_REQUEST_TIMEOUT_SECONDS);
-        this.toolCallLoggingEnabled = new SimpleBooleanProperty(this, "toolCallLoggingEnabled", DEFAULT_TOOL_CALL_LOGGING_ENABLED);
         this.shellToolEnabled = new SimpleBooleanProperty(this, "shellToolEnabled", DEFAULT_SHELL_TOOL_ENABLED);
         this.webAccessEnabled = new SimpleBooleanProperty(this, "webAccessEnabled", DEFAULT_WEB_ACCESS_ENABLED);
         this.autoScrollEnabled = new SimpleBooleanProperty(this, "autoScrollEnabled", DEFAULT_AUTO_SCROLL_ENABLED);
@@ -557,11 +549,6 @@ public final class AiSettings {
     /// Returns the per-request timeout (seconds) property.
     public IntegerProperty requestTimeoutSecondsProperty() {
         return requestTimeoutSeconds;
-    }
-
-    /// Returns the tool-call logging enabled flag property.
-    public BooleanProperty toolCallLoggingEnabledProperty() {
-        return toolCallLoggingEnabled;
     }
 
     /// Returns the shell-tool enabled flag property.
@@ -831,11 +818,6 @@ public final class AiSettings {
     /// Returns the per-request timeout in seconds.
     public int getRequestTimeoutSeconds() {
         return requestTimeoutSeconds.get();
-    }
-
-    /// Returns whether tool-call logging is enabled.
-    public boolean isToolCallLoggingEnabled() {
-        return toolCallLoggingEnabled.get();
     }
 
     /// Returns whether the shell tool is enabled.
@@ -1181,7 +1163,6 @@ public final class AiSettings {
         data.maxContextMessages = maxContextMessages.get();
         data.toolResultMaxChars = toolResultMaxChars.get();
         data.requestTimeoutSeconds = requestTimeoutSeconds.get();
-        data.toolCallLoggingEnabled = toolCallLoggingEnabled.get();
         data.shellToolEnabled = shellToolEnabled.get();
         data.webAccessEnabled = webAccessEnabled.get();
         data.autoScrollEnabled = autoScrollEnabled.get();
@@ -1364,7 +1345,6 @@ public final class AiSettings {
         maxContextMessages.set(Math.max(0, data.maxContextMessages));
         toolResultMaxChars.set(Math.max(0, data.toolResultMaxChars));
         requestTimeoutSeconds.set(data.requestTimeoutSeconds > 0 ? data.requestTimeoutSeconds : DEFAULT_REQUEST_TIMEOUT_SECONDS);
-        toolCallLoggingEnabled.set(data.toolCallLoggingEnabled);
         shellToolEnabled.set(data.shellToolEnabled);
         webAccessEnabled.set(data.webAccessEnabled);
         autoScrollEnabled.set(data.autoScrollEnabled);

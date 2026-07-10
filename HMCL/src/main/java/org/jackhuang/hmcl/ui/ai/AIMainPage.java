@@ -885,6 +885,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         // OCR a screenshot/image into text (crash/error shots) — backend chosen in AI 设置 > OCR.
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
+        // Lists the instance's screenshots/ directory (file name/size/mtime) so the model can find
+        // a file name to pass to ocr_image above instead of guessing — see OcrImageTool's own
+        // description ("pair with list_screenshots").
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ListScreenshotsTool());
         // Convenience (clipboard for pasted crash logs / errors, conversation export, prompt presets).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ReadClipboardTool());
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.CopyToClipboardTool());
