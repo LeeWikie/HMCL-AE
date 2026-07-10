@@ -2238,24 +2238,20 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow(i18n("ai.settings.advanced.critical_confirm"), i18n("ai.settings.advanced.critical_confirm.desc"),
                         aiSettings.criticalConfirmEnabledProperty()));
 
-        // ② 代理循环 — 一轮对话内 agent 循环的预算/压缩类参数。
+        // ② 代理循环 — 一轮对话内 agent 循环的预算护栏。上下文消息条数上限 / 工具结果长度上限 /
+        // 上下文接近上限自动压缩 三个旋钮已按 2026-07-11 真机反馈移除（分别硬编码为不限 / 20000 /
+        // 恒开的 DEFAULT，见 AiSettings.DEFAULT_*）——只留下防失控仍有意义的"工具调用轮数上限"。
         ComponentList loopList = new ComponentList();
         loopList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.max_tool_cycles"), i18n("ai.settings.advanced.max_tool_cycles.desc"),
-                        aiSettings.maxToolCyclesProperty(), 1, 50, ""),
-                sliderRow(i18n("ai.settings.advanced.max_context_messages"), i18n("ai.settings.advanced.max_context_messages.desc"),
-                        aiSettings.maxContextMessagesProperty(), 0, 100, ""),
-                sliderRow(i18n("ai.settings.advanced.tool_result_max"), i18n("ai.settings.advanced.tool_result_max.desc"),
-                        aiSettings.toolResultMaxCharsProperty(), 0, 20000, i18n("ai.settings.advanced.unit_chars")),
-                toggleRow(i18n("ai.settings.advanced.auto_compact"), i18n("ai.settings.advanced.auto_compact.desc"),
-                        aiSettings.autoCompactEnabledProperty()));
+                        aiSettings.maxToolCyclesProperty(), 1, 50, ""));
 
-        // ③ 模型请求 — 网络请求与花费。
+        // ③ 模型请求 — 网络请求。每日花费上限旋钮及其"达标暂停发送"enforcement 已移除（用户判定无意义，
+        // 单条回复气泡下的成本估算显示保留，见 AIMainPage#estimateCost/formatUsage）。
         ComponentList requestList = new ComponentList();
         requestList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.request_timeout"), i18n("ai.settings.advanced.request_timeout.desc"),
-                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, i18n("ai.settings.advanced.unit_seconds")),
-                buildSpendLimitRow());
+                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, i18n("ai.settings.advanced.unit_seconds")));
 
         // ④ 工具开关 — 默认关闭的可选工具域（NBT / Shell）。
         ComponentList toolsList = new ComponentList();
@@ -2264,12 +2260,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         aiSettings.nbtToolsEnabledProperty()),
                 buildShellToolRow());
 
-        // ⑤ 开发者 — 收尾：跳过确认 + 工具调用日志。
+        // ⑤ 开发者 — 收尾：跳过确认。工具调用日志开关已移除——诊断 Trace 已完整覆盖工具调用记录，
+        // 该开关与之冗余（见 2026-07-11 反馈）。
         ComponentList developerList = new ComponentList();
         developerList.getContent().addAll(
-                buildDangerouslySkipRow(),
-                toggleRow(i18n("ai.settings.advanced.tool_call_log"), i18n("ai.settings.advanced.tool_call_log.desc"),
-                        aiSettings.toolCallLoggingEnabledProperty()));
+                buildDangerouslySkipRow());
 
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.approval")), approvalList,
@@ -2375,11 +2370,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return t;
     }
 
-    /// Builds a native row with a trailing JFXSlider bound to an integer setting;
-    /// shows the live value and persists on change. Reuses the search-tab slider idiom.
-    /// Daily AI-spend cap row: reuses {@link #sliderRow} but backs it with the shared SpendTracker
-    /// (not an AiSettings property), so setting it persists to the spend file and the chat page's cap
-    /// check sees it immediately. Whole-dollar granularity (0 = no limit) is plenty for a safety cap.
     /// A re-viewable "隐私与数据说明" entry (the same notice shown once on first AI use).
     private LineButton buildPrivacyNoticeRow() {
         LineButton row = new LineButton();
@@ -2415,15 +2405,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         row.setTrailingIcon(SVG.FEEDBACK);
         row.setOnAction(e -> DiagnosticUploadFlow.trigger(aiSettings));
         return row;
-    }
-
-    private LineButton buildSpendLimitRow() {
-        org.jackhuang.hmcl.ai.cost.SpendTracker tracker = AIMainPage.spendTracker();
-        IntegerProperty prop = new javafx.beans.property.SimpleIntegerProperty(
-                (int) Math.round(tracker.getDailyLimitUsd()));
-        prop.addListener((obs, old, val) -> tracker.setDailyLimitUsd(val.doubleValue()));
-        return sliderRow(i18n("ai.settings.advanced.spend_limit"), i18n("ai.settings.advanced.spend_limit.desc"),
-                prop, 0, 50, i18n("ai.settings.advanced.unit_usd"));
     }
 
     private LineButton sliderRow(String title, String subtitle, IntegerProperty prop,

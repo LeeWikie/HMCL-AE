@@ -72,7 +72,6 @@ import org.jackhuang.hmcl.ai.agent.ChatAgentFactory;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
 import org.jackhuang.hmcl.ai.llm.LlmStreamCallback;
-import org.jackhuang.hmcl.ai.cost.SpendTracker;
 import org.jackhuang.hmcl.ai.llm.LlmUsage;
 import org.jackhuang.hmcl.ai.tools.EditTool;
 import org.jackhuang.hmcl.ai.tools.FileReadTool;
@@ -2809,13 +2808,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
     }
 
-    /// Trims a tool argument/result string for a single log line.
-    private static String abbreviateLog(String s) {
-        if (s == null) return "";
-        String oneLine = s.replace('\n', ' ').replace('\r', ' ');
-        return oneLine.length() > 500 ? oneLine.substring(0, 500) + "…" : oneLine;
-    }
-
     /// Returns true when the message content appears to be a tool execution
     /// result stored by the ChatAgent. Null-safe (imported messages may lack content — P1);
     /// package-private for the unit test.
@@ -3145,10 +3137,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         }
 
-        if (spendTracker().isOverLimit()) {
-            warnSpendLimitReached();
-            return;
-        }
         inputField.clear();
         if (attachedFiles.isEmpty()) {
             sendText(text, null);
@@ -3167,13 +3155,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         reader.start();
     }
 
-    /// Single toast for "daily AI spend cap reached" — the copy previously lived duplicated in
-    /// two call sites and had already started to drift (bug 8.2).
-    private void warnSpendLimitReached() {
-        Controllers.showToast(i18n("ai.spend.over_limit",
-                String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())));
-    }
-
     /// Core send path shared by the composer ({@link #sendMessage}) and external/synthetic
     /// prompts ({@link #submitExternalPrompt}). External prompts no longer go THROUGH the
     /// composer — they used to overwrite whatever draft the user was typing and send it away.
@@ -3190,18 +3171,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         if (text == null || text.isBlank()) return;
         text = text.trim();
-
-        // The composer's own sendMessage() already checks this before clearing the input field (so
-        // a declined send doesn't lose the user's draft) — but resendUserMessage/regenerateFrom/the
-        // inline-edit-confirm path/submitExternalPrompt (background-job auto-continue) all call
-        // straight into this method and had NO daily-spend-cap check of their own. Re-checking here
-        // makes every path that can start a new turn subject to the same cap; the auto-continue
-        // loop is naturally bounded too since AUTO_CONTINUE_LIMIT still trips once enough
-        // no-op attempts accumulate.
-        if (spendTracker().isOverLimit()) {
-            warnSpendLimitReached();
-            return;
-        }
 
         boolean event = LlmMessage.KIND_EVENT.equals(kind);
         // A real user message resets the auto-continue depth guard; synthetic event turns
@@ -3399,10 +3368,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolActivity(String toolName, String arguments) {
-                if (aiSettings.isToolCallLoggingEnabled()) {
-                    org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool call: " + toolName
-                            + " args=" + abbreviateLog(arguments));
-                }
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
@@ -3423,10 +3388,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             @Override
             public void onToolResult(String toolName, boolean success, String resultSummary) {
-                if (aiSettings.isToolCallLoggingEnabled()) {
-                    org.jackhuang.hmcl.util.logging.Logger.LOG.info("[AI] tool result: " + toolName + " -> "
-                            + (success ? "ok" : "FAILED") + " | " + abbreviateLog(resultSummary));
-                }
                 Platform.runLater(() -> {
                     if (generation != responseGeneration) return;
                     if (sessionStore.getCurrentSession() != streamSession) return; // viewing another session
@@ -3459,12 +3420,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     exitStreamingState();
                     persistStore();
-                    // Accrue this response's estimated cost against the daily spend cap, warning near it.
-                    double turnCost = estimateCost(usageHolder.get());
-                    if (turnCost > 0) {
-                        spendTracker().record(turnCost);
-                        maybeWarnSpend();
-                    }
                     // Re-render the finished conversation so the just-completed messages get their
                     // action icons (copy/edit/resend/branch/delete) immediately — live-streamed
                     // bubbles are rendered without an action bar; only the reload path attaches one.
@@ -4351,15 +4306,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Wraps an inline subordinate card (reasoning / tool / tool group) in a left-aligned row
-    /// mirroring {@link #wrapBubble}, indented 16px deeper than the bubble column (VS §3.3).
-    /// Since the B3 redesign the card is fit-content (no {@code Hgrow ALWAYS}): collapsed it hugs
-    /// its compact capsule header, and it only grows toward the 704px max once the body is
+    /// mirroring {@link #wrapBubble}. The left inset MATCHES the bubble column (16px, same as
+    /// {@link #wrapBubble}) so the compact capsule's left edge lines up with the AI bubble's left
+    /// edge as one column — the old deeper 32px inset (VS §3.3) left the capsule floating out of
+    /// alignment above the bubble (2026-07-11 real-device feedback). Vertical padding is trimmed to
+    /// 1px (bubbles use 4) so the capsule↔bubble gap reads as one visual group instead of a big
+    /// space. Since the B3 redesign the card is fit-content (no {@code Hgrow ALWAYS}): collapsed it
+    /// hugs its compact capsule header, and it only grows toward the 704px max once the body is
     /// revealed. Deliberately NO `.ai-bubble-wrapper` style class — that class is the marker
     /// {@link #setWrapperCache} climbs for, and card wrappers manage their own cache here.
     private static HBox wrapCard(Region card) {
         HBox wrapper = new HBox(card);
         wrapper.setAlignment(Pos.CENTER_LEFT);
-        wrapper.setPadding(new Insets(2, 16, 2, 32));
+        wrapper.setPadding(new Insets(1, 16, 1, 16));
         wrapper.setCache(true); // same rasterise-once treatment as wrapBubble
         return wrapper;
     }
@@ -4497,24 +4456,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return footer;
     }
 
-    /// Formats a usage instance into a localized footer string, appending the
-    /// estimated cost when cost display is enabled and the active profile has pricing.
-    /// Shared cross-session daily spend tracker (backs the cost cap + warning). Lazily bound to the
-    /// config file so the chat page and the settings page act on one instance.
-    private static SpendTracker spendTrackerInstance;
-
-    static synchronized SpendTracker spendTracker() {
-        if (spendTrackerInstance == null) {
-            spendTrackerInstance = new SpendTracker(
-                    SettingsManager.localConfigDirectory().resolve("ai-spend.json"));
-        }
-        return spendTrackerInstance;
-    }
-
-    private boolean spendWarned80 = false;
-
     /// Estimated USD cost of one response from its token usage and the active model's pricing, or 0
-    /// when usage or pricing is unavailable.
+    /// when usage or pricing is unavailable. Still used for the per-response cost estimate shown in
+    /// the usage footer (see {@link #formatUsage}); the former daily-spend cap that also consumed it
+    /// was removed (2026-07-11 feedback: the cap was judged pointless), the estimate display stays.
     private double estimateCost(@Nullable LlmUsage usage) {
         if (usage == null || !usage.hasData()) {
             return 0.0;
@@ -4525,20 +4470,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return model != null && model.hasPricing()
                 ? model.computeCost(usage.getPromptTokens(), usage.getCompletionTokens(), 0, 0)
                 : 0.0;
-    }
-
-    /// Toasts once when today's spend crosses 80% of the daily limit; re-arms when a new day resets it.
-    private void maybeWarnSpend() {
-        double ratio = spendTracker().todayUsageRatio();
-        if (ratio >= 0.8 && ratio < 1.0) {
-            if (!spendWarned80) {
-                spendWarned80 = true;
-                Controllers.showToast(i18n("ai.spend.warn_80", Math.round(ratio * 100),
-                        String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())));
-            }
-        } else if (ratio < 0.8) {
-            spendWarned80 = false;
-        }
     }
 
     private String formatUsage(LlmUsage usage) {

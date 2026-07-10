@@ -190,6 +190,25 @@ public final class LangChain4jChatAdapterTest {
         assertEquals("第二个回答", ((AiMessage) result.get(3)).text());
     }
 
+    /// The over-limit tool-result offload pointer must actively steer the model to LOCATE the needed
+    /// slice (grep / read with offset+maxLines) and read only that, rather than re-reading the whole
+    /// file or re-running the tool for the full payload — otherwise the token-saving offload is moot.
+    /// Guards the batch-6 hardened copy (2026-07-11).
+    @Test
+    public void testToolResultOffloadHintSteersToLocatedRead() {
+        String hint = LangChain4jChatAdapter.TOOL_RESULT_OFFLOAD_HINT;
+        assertNotNull(hint);
+        assertTrue(hint.contains("grep"), "should mention grep for locating");
+        assertTrue(hint.contains("read"), "should mention read");
+        assertTrue(hint.contains("offset"), "should mention read offset");
+        assertTrue(hint.contains("maxLines"), "should mention read maxLines");
+        // Must discourage pulling the whole payload back into context.
+        assertTrue(hint.toLowerCase(java.util.Locale.ROOT).contains("do not")
+                        || hint.contains("do NOT"),
+                "should explicitly discourage a full re-read/re-run");
+        assertTrue(hint.contains("whole"), "should call out not re-reading the whole file");
+    }
+
     /// Verifies that a model-based adapter can be built from LlmConfig
     /// using the factory.
     @Test

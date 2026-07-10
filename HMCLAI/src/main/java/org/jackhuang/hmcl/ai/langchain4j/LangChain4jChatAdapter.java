@@ -272,7 +272,7 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                         + "\n…[" + (text.length() - head.length() - tail.length()) + " chars omitted]…\n"
                         + tail
                         + "\n\n[full output (" + text.length() + " chars) saved to " + offloadFile
-                        + " — use read/grep on that path if you need the omitted part]";
+                        + " — " + TOOL_RESULT_OFFLOAD_HINT + "]";
                 return ToolExecutionResultMessage.from(req, preview);
             } catch (IOException e) {
                 AiLog.warn("[AI] 工具输出落盘失败，回退为截断：" + e.getMessage());
@@ -285,6 +285,15 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                 + " if you need the rest]";
         return ToolExecutionResultMessage.from(req, truncated);
     }
+
+    /// Guidance appended to the head/tail preview of an over-limit tool result whose full text was
+    /// offloaded to disk. Steers the model to LOCATE the needed slice (grep / read with offset+maxLines)
+    /// and read only that slice, instead of blindly re-running the tool and pulling the whole payload
+    /// back into context — the entire point of the offload is to save tokens, so a full re-read defeats
+    /// it. Extracted as a constant so the copy is unit-testable (see LangChain4jChatAdapterTest).
+    public static final String TOOL_RESULT_OFFLOAD_HINT =
+            "to read the omitted part, locate it first with grep(path, pattern) or read(path, offset, maxLines)"
+            + " and read only that slice — do NOT re-read the whole file or re-run the tool for the full output";
 
     /// Placeholder that replaces an evicted old tool result. Kept short and explicit so the
     /// model knows the data is re-obtainable rather than mysteriously missing. Public because
