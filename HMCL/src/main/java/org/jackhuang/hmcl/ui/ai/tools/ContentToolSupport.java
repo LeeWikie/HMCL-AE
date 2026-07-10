@@ -21,13 +21,17 @@ import javafx.application.Platform;
 import javafx.beans.InvalidationListener;
 import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
+import org.jackhuang.hmcl.addon.mod.ModLoaderType;
 import org.jackhuang.hmcl.addon.repository.CurseForgeRemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolProgress;
 import org.jackhuang.hmcl.download.BMCLAPIDownloadProvider;
 import org.jackhuang.hmcl.download.DownloadProvider;
+import org.jackhuang.hmcl.download.LibraryAnalyzer;
 import org.jackhuang.hmcl.download.MojangDownloadProvider;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jackhuang.hmcl.game.Version;
 import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
@@ -50,6 +54,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +64,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /// Shared helpers for the content (resource pack / shader / modpack / world) AI tools.
@@ -78,6 +85,14 @@ final class ContentToolSupport {
         thread.setDaemon(true);
         return thread;
     });
+
+    /// Test seam for the T3 default-loader filter: when non-null, supplies the "currently
+    /// selected instance's mod loaders" used to narrow the mods auto-pick when the caller passed
+    /// no loader. Production leaves this {@code null} — the real {@link #resolveSelectedInstanceLoaders()}
+    /// (Profiles + [LibraryAnalyzer]) path runs. Tests inject a known set to exercise the filter
+    /// without standing up a fully modded instance on disk, and must reset it to {@code null}
+    /// afterwards.
+    static volatile @Nullable Supplier<Set<ModLoaderType>> instanceLoaderOverride;
 
     /// Selects the remote source by name (defaults to Modrinth, which needs no API key).
     enum Source {
@@ -534,7 +549,14 @@ final class ContentToolSupport {
             if (match.isPresent()) {
                 return match.get();
             }
-            throw new IOException("No version matching '" + versionId + "' for '" + addon.title() + "'.");
+            // #7: hand the model the versions it is looking for (the full list is already in
+            // scope) so it can retry with a real id/tag instead of blindly guessing.
+            throw new IOException(ToolFailures.failureEnvelope(
+                    "No version matching '" + versionId + "' for '" + addon.title() + "'",
+                    ToolFailures.Retryable.YES,
+                    "the id/tag is wrong, not the mod",
+                    "available versions: " + recentVersionLabels(versions, 10)
+                            + ". Retry with one of those, or omit 'version' to auto-pick the latest compatible build"));
         }
 
         List<RemoteAddon.Version> candidates = versions;
@@ -543,18 +565,45 @@ final class ContentToolSupport {
                     .filter(v -> v.gameVersions() != null && v.gameVersions().contains(gameVersion))
                     .collect(Collectors.toList());
             if (filtered.isEmpty()) {
-                throw new IOException("No version of '" + addon.title() + "' supports game version " + gameVersion + ".");
+                // #8: list the MC versions this project actually publishes for.
+                throw new IOException(ToolFailures.failureEnvelope(
+                        "No version of '" + addon.title() + "' supports game version " + gameVersion,
+                        ToolFailures.Retryable.YES,
+                        "wrong MC version, not a dead end",
+                        "this project supports: " + availableGameVersions(versions)
+                                + ". Retry with one of those, or drop the gameVersion filter"));
             }
             candidates = filtered;
         }
 
+        // #9 + T3: apply a loader filter. An explicit loader always wins; otherwise, for a MOD
+        // project, default to the CURRENTLY SELECTED instance's own mod loaders instead of
+        // silently auto-picking the newest file across EVERY loader (which is how a Fabric build
+        // lands on a Forge/NeoForge instance). This pushes the native DownloadPage's implicit
+        // protection (DownloadPage.java:283, LibraryAnalyzer.analyze(...).getModLoaders()) down
+        // into the shared resolver. Resource packs / shaders / worlds carry no loader metadata,
+        // so their installs (repository type != MOD) are left untouched; when the instance's
+        // loaders can't be determined (none selected / vanilla / lookup error) the set is empty
+        // and the historical no-filter auto-pick is kept.
+        Set<ModLoaderType> loaderFilter;
+        boolean loaderInferred;
         if (loader != null) {
+            loaderFilter = Set.of(loader);
+            loaderInferred = false;
+        } else if (repository.getType() == RemoteAddonRepository.Type.MOD) {
+            loaderFilter = selectedInstanceModLoaders();
+            loaderInferred = true;
+        } else {
+            loaderFilter = Set.of();
+            loaderInferred = false;
+        }
+
+        if (!loaderFilter.isEmpty()) {
             List<RemoteAddon.Version> byLoader = candidates.stream()
-                    .filter(v -> v.loaders() != null && v.loaders().contains(loader))
+                    .filter(v -> v.loaders() != null && v.loaders().stream().anyMatch(loaderFilter::contains))
                     .collect(Collectors.toList());
             if (byLoader.isEmpty()) {
-                throw new IOException("No version of '" + addon.title() + "' supports loader " + loader
-                        + (gameVersion != null ? " for game version " + gameVersion : "") + ".");
+                throw new IOException(loaderMismatchEnvelope(addon, loaderFilter, loaderInferred, gameVersion, candidates));
             }
             candidates = byLoader;
         }
@@ -563,6 +612,113 @@ final class ContentToolSupport {
                 .max(Comparator.comparing(RemoteAddon.Version::datePublished,
                         Comparator.nullsFirst(Comparator.naturalOrder())))
                 .orElse(candidates.get(0));
+    }
+
+    /// The currently selected instance's mod loaders, used as the default loader filter on the
+    /// mods auto-pick path (T3). Honours {@link #instanceLoaderOverride} when a test has injected
+    /// one; otherwise runs the real {@link #resolveSelectedInstanceLoaders()} resolution.
+    private static Set<ModLoaderType> selectedInstanceModLoaders() {
+        Supplier<Set<ModLoaderType>> override = instanceLoaderOverride;
+        if (override != null) {
+            Set<ModLoaderType> loaders = override.get();
+            return loaders != null ? loaders : Set.of();
+        }
+        return resolveSelectedInstanceLoaders();
+    }
+
+    /// Best-effort resolution of the selected instance's mod loaders, exactly as the native
+    /// {@code DownloadPage} does (analyze the resolved, patch-preserving game version). Any
+    /// failure (no instance selected, unresolved version, analysis error) degrades to an empty
+    /// set so a mod install is never blocked by an inability to introspect the instance — it
+    /// simply falls back to the historical no-filter auto-pick.
+    private static Set<ModLoaderType> resolveSelectedInstanceLoaders() {
+        try {
+            String instance = Profiles.getSelectedInstance();
+            if (instance == null) {
+                return Set.of();
+            }
+            HMCLGameRepository repository = Profiles.getSelectedProfile().getRepository();
+            Version game = repository.getResolvedPreservingPatchesVersion(instance);
+            String gameVersion = repository.getGameVersion(game).orElse(null);
+            return LibraryAnalyzer.analyze(game, gameVersion).getModLoaders();
+        } catch (Throwable t) {
+            return Set.of();
+        }
+    }
+
+    /// Builds the loader-mismatch failure envelope: #9 for an explicit loader, plus the T3
+    /// inferred-loader variant, both listing the loaders the project actually publishes for.
+    private static String loaderMismatchEnvelope(RemoteAddon addon, Set<ModLoaderType> requested,
+                                                 boolean inferred, @Nullable String gameVersion,
+                                                 List<RemoteAddon.Version> candidates) {
+        String requestedLabel = requested.stream().map(Enum::toString).collect(Collectors.joining(", "));
+        String forGame = gameVersion != null ? " for game version " + gameVersion : "";
+        String available = availableLoaders(candidates);
+        if (inferred) {
+            return ToolFailures.failureEnvelope(
+                    "No version of '" + addon.title() + "' matches the selected instance's mod loader(s) "
+                            + requestedLabel + forGame,
+                    ToolFailures.Retryable.YES,
+                    "no loader was specified, so it was inferred from the current instance",
+                    "this project publishes builds for: " + available
+                            + ". Pass loader=<one of those> to target a different-loader build, or search for an alternative mod");
+        }
+        return ToolFailures.failureEnvelope(
+                "No version of '" + addon.title() + "' supports loader " + requestedLabel + forGame,
+                ToolFailures.Retryable.YES,
+                "this project publishes builds for: " + available
+                        + ". Retry with one of those, or search for an alternative mod if none fit");
+    }
+
+    /// Deduped, sorted union of loaders across the given versions, or a placeholder when none
+    /// carry loader metadata.
+    private static String availableLoaders(List<RemoteAddon.Version> versions) {
+        Set<String> loaders = versions.stream()
+                .filter(v -> v.loaders() != null)
+                .flatMap(v -> v.loaders().stream())
+                .map(Enum::toString)
+                .collect(Collectors.toCollection(TreeSet::new));
+        return loaders.isEmpty() ? "(no loader metadata)" : String.join(", ", loaders);
+    }
+
+    /// Deduped, sorted union of game versions across the given versions, or a placeholder when
+    /// none carry game-version metadata.
+    private static String availableGameVersions(List<RemoteAddon.Version> versions) {
+        Set<String> gameVersions = versions.stream()
+                .filter(v -> v.gameVersions() != null)
+                .flatMap(v -> v.gameVersions().stream())
+                .collect(Collectors.toCollection(TreeSet::new));
+        return gameVersions.isEmpty() ? "(no game-version metadata)" : String.join(", ", gameVersions);
+    }
+
+    /// The most-recently-published version labels (name, plus the version number when it differs),
+    /// newest first and capped at {@code limit} — the candidates a model can retry a bad `version`
+    /// against.
+    private static String recentVersionLabels(List<RemoteAddon.Version> versions, int limit) {
+        List<String> labels = versions.stream()
+                .sorted(Comparator.comparing(RemoteAddon.Version::datePublished,
+                        Comparator.nullsFirst(Comparator.<java.time.Instant>naturalOrder())).reversed())
+                .map(ContentToolSupport::versionLabel)
+                .filter(s -> s != null && !s.isBlank())
+                .distinct()
+                .limit(limit)
+                .collect(Collectors.toList());
+        return labels.isEmpty() ? "(none)" : String.join(", ", labels);
+    }
+
+    /// A model-facing label for a version: its {@code name}, plus the {@code version} number in
+    /// parentheses when that differs (both are accepted by the `version` parameter).
+    @Nullable
+    private static String versionLabel(RemoteAddon.Version v) {
+        String name = v.name();
+        String version = v.version();
+        if (name != null && !name.isBlank()) {
+            if (version != null && !version.isBlank() && !version.equalsIgnoreCase(name)) {
+                return name + " (" + version + ")";
+            }
+            return name;
+        }
+        return version;
     }
 
     /// Resolves {@code <instance>/subdirectory} for the currently selected profile/instance,
