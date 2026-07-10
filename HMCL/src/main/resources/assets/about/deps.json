@@ -103,5 +103,35 @@
     "title": "WebURL for Java",
     "subtitle": "Licensed under the Apache 2.0 License.",
     "externalLink": "https://github.com/Glavo/weburl-java"
+  },
+  {
+    "title": "LangChain4j",
+    "subtitle": "Licensed under the Apache 2.0 License.",
+    "externalLink": "https://github.com/langchain4j/langchain4j"
+  },
+  {
+    "title": "commonmark-java",
+    "subtitle": "Copyright © Robin Stocker and contributors.\nLicensed under the BSD 2-clause License.",
+    "externalLink": "https://github.com/commonmark/commonmark-java"
+  },
+  {
+    "title": "RichTextFX",
+    "subtitle": "Copyright © Tomas Mikula and contributors.\nLicensed under the BSD 2-clause License.",
+    "externalLink": "https://github.com/FXMisc/RichTextFX"
+  },
+  {
+    "title": "Apache OpenNLP",
+    "subtitle": "Copyright © The Apache Software Foundation.\nLicensed under the Apache 2.0 License.",
+    "externalLink": "https://opennlp.apache.org/"
+  },
+  {
+    "title": "SLF4J",
+    "subtitle": "Copyright © QOS.ch.\nLicensed under the MIT License.",
+    "externalLink": "https://www.slf4j.org/"
+  },
+  {
+    "title": "jspecify",
+    "subtitle": "Copyright © jspecify contributors.\nLicensed under the Apache 2.0 License.",
+    "externalLink": "https://jspecify.dev/"
   }
 ]
