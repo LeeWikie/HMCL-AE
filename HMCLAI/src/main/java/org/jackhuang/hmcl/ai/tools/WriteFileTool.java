@@ -34,9 +34,17 @@ import java.util.Map;
 @NotNullByDefault
 public final class WriteFileTool implements ToolSpec {
     private final List<Path> roots = new ArrayList<>();
+    private final ReadLedger ledger;
 
     public WriteFileTool(Path primaryRoot) {
+        this(primaryRoot, ReadLedger.global());
+    }
+
+    /// Ledger-injecting constructor for tests (production wiring uses [`ReadLedger#global`]
+    /// so reads recorded by [`FileReadTool`] are visible here).
+    public WriteFileTool(Path primaryRoot, ReadLedger ledger) {
         roots.add(primaryRoot.toAbsolutePath().normalize());
+        this.ledger = ledger;
     }
 
     public void addRoot(@Nullable Path root) {
@@ -64,12 +72,10 @@ public final class WriteFileTool implements ToolSpec {
     public String getDescription() {
         StringBuilder sb = new StringBuilder("Write a UTF-8 text file (creating parent directories). ");
         sb.append("Pass 'path' (relative to the config root or absolute) and 'content'. ");
-        sb.append("Set 'append' to true to append instead of overwrite. Allowed roots: ");
-        for (int i = 0; i < roots.size(); i++) {
-            if (i > 0) sb.append("; ");
-            sb.append(roots.get(i));
-        }
-        sb.append('.');
+        sb.append("Set 'append' to true to append instead of overwrite. ");
+        sb.append("Overwriting an EXISTING file requires having read it with the read tool first ");
+        sb.append("(creating a new file does not).");
+        sb.append(FileToolFailures.allowedRootsSentence(roots));
         return sb.toString();
     }
 
@@ -117,7 +123,7 @@ public final class WriteFileTool implements ToolSpec {
             Path resolved = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(pathObj.toString()))
                     .toAbsolutePath().normalize();
             if (roots.stream().noneMatch(resolved::startsWith)) {
-                return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                return FileToolFailures.outsideRoots(resolved, roots);
             }
             // Real-path containment for an EXISTING target: mirrors EditTool's symlink-escape fix.
             // A symlink can be planted under an allowed root (e.g. via the shell tool's `mklink` /
@@ -126,10 +132,29 @@ public final class WriteFileTool implements ToolSpec {
             // would otherwise let the lexical/normalized containment check above pass while the
             // bytes actually land in an arbitrary external file. A target that does not exist yet has
             // nothing to resolve — that case is unaffected and still lets new files be created.
-            if (Files.exists(resolved, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                Path real = resolved.toRealPath();
-                if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
-                    return ToolResult.failure("Path is outside the allowed roots: " + real);
+            Path real = Files.exists(resolved, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    ? resolved.toRealPath() : null;
+            if (real != null && roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
+                return FileToolFailures.outsideRoots(real, roots);
+            }
+            // Read precondition for OVERWRITING an existing regular file: without a prior read
+            // the model is destroying content it has never seen. Creating a new file is
+            // unrestricted, and append is exempt too (it does not discard existing content).
+            if (real != null && !append && Files.isRegularFile(resolved)) {
+                ReadLedger.Status ledgerStatus = ledger.check(real, Files.readAllBytes(resolved));
+                if (ledgerStatus == ReadLedger.Status.NOT_READ) {
+                    return ToolFailures.failure(
+                            "File already exists and has not been read yet — read it first before overwriting (" + real + ")",
+                            ToolFailures.Retryable.LATER,
+                            "overwriting content you have never seen risks silent data loss",
+                            "call read on this path to confirm what you are replacing, then retry the write (or use append:true to add instead of replace)");
+                }
+                if (ledgerStatus == ReadLedger.Status.STALE) {
+                    return ToolFailures.failure(
+                            "The file has been modified since it was last read — re-read it before overwriting (" + real + ")",
+                            ToolFailures.Retryable.LATER,
+                            "the on-disk content changed after your last read",
+                            "call read on this path again to see the current content, then retry the write");
                 }
             }
             if (resolved.getParent() != null) {
@@ -141,11 +166,26 @@ public final class WriteFileTool implements ToolSpec {
             } else {
                 Files.write(resolved, bytes);
             }
-            return ToolResult.success((append ? "Appended to " : "Wrote ") + resolved + " (" + bytes.length + " bytes).");
+            // Self-record the written bytes so a follow-up edit/overwrite doesn't demand a
+            // redundant re-read. For append the ledger must reflect the WHOLE resulting file.
+            byte[] wholeFile = append ? Files.readAllBytes(resolved) : bytes;
+            ledger.recordRead(resolved.toRealPath(), wholeFile);
+            StringBuilder receipt = new StringBuilder(append ? "Appended to " : "Wrote ")
+                    .append(resolved).append(" (").append(bytes.length).append(" bytes).");
+            String warning;
+            try {
+                warning = PostWriteValidator.validate(resolved, new String(wholeFile, StandardCharsets.UTF_8));
+            } catch (RuntimeException e) {
+                warning = null; // validation is best-effort; the write itself already succeeded
+            }
+            if (warning != null) {
+                receipt.append('\n').append(warning);
+            }
+            return ToolResult.success(receipt.toString());
         } catch (IOException e) {
-            return ToolResult.failure("IO error: " + e.getMessage());
+            return FileToolFailures.io("writing the file", e);
         } catch (RuntimeException e) {
-            return ToolResult.failure("Invalid path: " + e.getMessage());
+            return FileToolFailures.invalid("path", e);
         }
     }
 

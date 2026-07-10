@@ -19,6 +19,7 @@ package org.jackhuang.hmcl.ai.search;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.net.URI;
@@ -51,9 +52,11 @@ public final class ZhipuSearchClient implements SearchClient {
 
     @Override
     public SearchResponse search(String query, int maxResults) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
+        // ProxyAuthenticatorHolder.configure answers proxy 407 challenges with the credentials
+        // HMCL pushed down (the JDK HttpClient ignores Authenticator.setDefault).
+        HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
                 .proxy(java.net.ProxySelector.getDefault())
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(10)))
                 .build();
 
         int count = Math.max(1, Math.min(50, maxResults));

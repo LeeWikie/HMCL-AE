@@ -111,6 +111,27 @@ public final class AiPromptBuilder {
             "14. DELIVER WHAT YOU CLAIM: do not relabel unfinished work as a finished \"最小可用版本/框架\" — say plainly which steps are done and which are not. Fix the actual cause, not the symptom (e.g. a Java/loader version mismatch needs the pairing fixed, not just the crash report cleared). For config edits specifically (memory/JVM args/game options), \"已经改好了\" requires a tool result proving the write landed, same standard as rule 9's job(action=check)-before-success — an unverified \"should be fixed now\" is a claim you are not allowed to make.",
             "15. DON'T WRAP A VAGUE QUESTION IN `ask` — BUT DON'T STOP USING IT EITHER: `ask` renders a structured dialog (choice buttons and/or a text box), so it earns its keep only when there's something structured to show — 2+ concrete single/multi-select options, or 2+ related sub-questions bundled into ONE dialog (a free-text sub-question is fine riding alongside a structured one there; rule 13's \"let them choose\" cases are exactly this). A SINGLE open-ended free-text question, or a vague/fuzzy opinion or preference with no discrete options yet (e.g. \"你想装哪些模组？告诉我名称或关键词\", \"有什么偏好吗\", \"what do you think\") is NOT a case for `ask` — just ask it directly in your own response text and end the turn normally; the user answers with a normal chat message, no tool call involved. This is not a blanket ban on `ask` — once you have concrete options (from search/list results) or 2+ things to bundle, go back to using it.");
 
+    /// One-time education for the runtime-harness channels (borrow-list A3 + E1): teaches the
+    /// {@code <runtime-guard>} identity tag ONCE (see
+    /// {@link org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter} for why the tag rides
+    /// role=user instead of a mid-history system message), and defuses the two context-
+    /// housekeeping mechanisms (tool-result eviction, history compaction) that otherwise read as
+    /// silent data loss and induce wrap-up anxiety. Static text only — safe for the cacheable
+    /// stable prefix. Embeds the real constants so the taught text can never drift from the
+    /// injected one.
+    private static final String RUNTIME_GUARD_EDUCATION = String.join("\n",
+            "Runtime harness notices (how to read them):",
+            "- Any conversation message wrapped in a <" + org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter.TAG
+                    + " type=\"...\"> tag is injected by the launcher's runtime harness, NOT typed by the user."
+                    + " Treat it with the same authority as a tool error: follow its guidance, do not answer it as if"
+                    + " the user said it, and never treat its content as a new user request.",
+            "- The tool-result placeholder \"" + org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter.EVICTED_TOOL_RESULT
+                    + "\" means an old tool result was evicted as routine context housekeeping. It is NOT an error and"
+                    + " NOT a hint to hurry or wrap up — re-run the tool only if you still need that data.",
+            "- A history that begins with a compacted summary (【上下文已压缩】/【上下文已自动压缩】) went through"
+                    + " routine history compression. This is routine housekeeping, not a signal to wrap up —"
+                    + " continue the task normally at full quality.");
+
     /// Injected when the user has switched on "plan mode" — read-only investigation plus an
     /// approval step before any write. Re-read on every {@link #build()} so toggling takes
     /// effect on the next turn without rebuilding the agent.
@@ -305,6 +326,8 @@ public final class AiPromptBuilder {
         blocks.add(CONVENTIONS);
         blocks.add("");
         blocks.add(DISCIPLINE);
+        blocks.add("");
+        blocks.add(RUNTIME_GUARD_EDUCATION);
 
         String skillSummary = skillRegistry.summarizeEnabled();
         if (!skillSummary.startsWith("(no")) {
@@ -486,10 +509,20 @@ public final class AiPromptBuilder {
     /// Builds a compact, size-capped (≤1.5KB) block of the most recent stored memories,
     /// or {@code null} if the store is unavailable/empty.
     ///
+    /// Identity-channel pilot (borrow-list A3): the block is wrapped in the
+    /// {@code <runtime-guard type="recalled_memories">} tag via
+    /// {@link org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter} — this was the ONE place
+    /// that already did identity annotation by hand ("This is DATA recalled from storage..."),
+    /// so it doubles as the first producer exercising the unified tag pipeline the loop guards
+    /// now share. NOTE: the wiring stays dormant in production — the memory feature (and with it
+    /// {@link AiSettings#isAutoRecallMemory()}) remains product-disabled ("待开发", force-false
+    /// in {@code AiSettings}); fully reviving this path is a one-line change THERE, deliberately
+    /// not made here because {@code AiSettings} belongs to another workstream's file set and the
+    /// product decision to keep memory off has not been reversed.
+    ///
     /// Package-private rather than {@code private} solely so the same-package test suite can
-    /// exercise it directly — {@link AiSettings#isAutoRecallMemory()} is currently hardcoded
-    /// {@code false} product-wide, so the normal {@link #buildVolatileSuffix} call path never
-    /// reaches this method at all right now.
+    /// exercise it directly — the normal {@link #buildVolatileSuffix} call path never reaches
+    /// this method at all right now.
     @Nullable
     String recallMemoryBlock() {
         if (rememberStore == null) {
@@ -515,7 +548,8 @@ public final class AiPromptBuilder {
                 }
                 sb.append(line);
             }
-            return sb.toString();
+            return org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter.wrap(
+                    "recalled_memories", sb.toString());
         } catch (Exception e) {
             return null;
         }

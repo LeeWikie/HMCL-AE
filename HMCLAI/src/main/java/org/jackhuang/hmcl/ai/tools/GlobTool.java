@@ -64,7 +64,8 @@ public final class GlobTool implements ToolSpec {
     @Override
     public String getDescription() {
         return "Find files by glob pattern. Pass 'pattern' (e.g. **/*.json or logs/*.log) "
-                + "and optional 'path' (base directory). Returns matching file paths.";
+                + "and optional 'path' (base directory). Returns matching file paths."
+                + FileToolFailures.allowedRootsSentence(roots);
     }
 
     @Override
@@ -101,7 +102,7 @@ public final class GlobTool implements ToolSpec {
             base = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(pathObj.toString()))
                     .toAbsolutePath().normalize();
             if (roots.stream().noneMatch(base::startsWith)) {
-                return ToolResult.failure("Path is outside the allowed roots: " + base);
+                return FileToolFailures.outsideRoots(base, roots);
             }
         } else {
             base = roots.get(0);
@@ -114,14 +115,18 @@ public final class GlobTool implements ToolSpec {
         List<Path> realRoots = realRootsOf(roots);
         Path realBase = realOrSelf(base);
         if (realRoots.stream().noneMatch(realBase::startsWith)) {
-            return ToolResult.failure("Path is outside the allowed roots: " + realBase);
+            return FileToolFailures.outsideRoots(realBase, roots);
         }
 
         java.nio.file.PathMatcher matcher;
         try {
             matcher = base.getFileSystem().getPathMatcher("glob:" + patternObj);
         } catch (RuntimeException e) {
-            return ToolResult.failure("Invalid glob: " + e.getMessage());
+            return ToolFailures.failure(
+                    "Invalid glob: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()),
+                    ToolFailures.Retryable.YES,
+                    "this is java.nio glob syntax (*, **, ?, {a,b}, [...]), not regex",
+                    "fix the pattern and retry; do not retry unchanged");
         }
 
         List<String> results = new ArrayList<>();
@@ -144,7 +149,7 @@ public final class GlobTool implements ToolSpec {
                 }
             }
         } catch (IOException e) {
-            return ToolResult.failure("IO error: " + e.getMessage());
+            return FileToolFailures.io("walking the directory tree", e);
         }
 
         if (results.isEmpty()) {

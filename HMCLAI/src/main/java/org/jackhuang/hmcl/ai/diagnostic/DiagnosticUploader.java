@@ -21,6 +21,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jackhuang.hmcl.ai.trace.TraceRecorder;
 import org.jackhuang.hmcl.ai.util.Redactor;
 import org.jetbrains.annotations.Nullable;
@@ -148,9 +149,11 @@ public final class DiagnosticUploader {
     /// POSTs the zip to {@code url} per the HMCL-AE-Site /api/feedback contract and parses {ok, id}.
     /// Honours HMCL's proxy if one is set (harmless when direct).
     static UploadResult post(byte[] zip, String version, String os, String url) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
+        // ProxyAuthenticatorHolder.configure answers proxy 407 challenges with the credentials
+        // HMCL pushed down (the JDK HttpClient ignores Authenticator.setDefault).
+        HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
                 .proxy(ProxySelector.getDefault())
-                .connectTimeout(Duration.ofSeconds(15))
+                .connectTimeout(Duration.ofSeconds(15)))
                 .build();
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                 .header("Content-Type", "application/zip")

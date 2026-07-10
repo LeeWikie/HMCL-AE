@@ -52,6 +52,38 @@ public final class AiModelDiscoveryServiceTest {
         return server.getAddress().getPort();
     }
 
+    /// The discovery client must route through the process-wide ProxySelector HMCL installs
+    /// at startup — otherwise model-list probing bypasses the user's proxy. While no proxy
+    /// credentials were pushed, NO authenticator may be attached (an authenticator-carrying
+    /// client fails bare 401s with IOException instead of surfacing them — see
+    /// testNon200ReturnsEmpty, whose server answers 401 without a WWW-Authenticate header).
+    @Test
+    public void testHttpClientHonoursProxyWithoutDefaultAuthenticator() {
+        AiModelDiscoveryService service = new AiModelDiscoveryService();
+        assertTrue(service.httpClient().proxy().isPresent(),
+                "discovery HttpClient must be built with .proxy(ProxySelector.getDefault())");
+        assertSame(java.net.ProxySelector.getDefault(), service.httpClient().proxy().get(),
+                "the ProxySelector must be the process-wide default");
+        assertTrue(service.httpClient().authenticator().isEmpty(),
+                "no authenticator may be attached while no proxy credentials were pushed");
+    }
+
+    /// A proxy authenticator pushed by HMCL before the service is constructed must reach the
+    /// discovery client (build-time capture — the service is created per settings-page use).
+    @Test
+    public void testHttpClientPicksUpPushedProxyAuthenticator() {
+        java.net.Authenticator pushed = new java.net.Authenticator() {
+        };
+        org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder.set(pushed);
+        try {
+            AiModelDiscoveryService service = new AiModelDiscoveryService();
+            assertSame(pushed, service.httpClient().authenticator().orElseThrow(),
+                    "the pushed authenticator must be attached for proxy 407 challenges");
+        } finally {
+            org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder.set(null);
+        }
+    }
+
     /// Verifies parsing of a standard OpenAI /v1/models response.
     @Test
     public void testParseStandardModelsResponse() throws IOException, InterruptedException {

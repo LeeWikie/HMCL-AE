@@ -42,6 +42,30 @@ public final class AiExecutionPolicy {
         BLOCK
     }
 
+    /// WHY a {@link Decision#BLOCK} fired — Plan Mode and unattended-dangerous demand DIFFERENT
+    /// next actions from the model (keep investigating read-only vs. end the turn), so collapsing
+    /// them into one "either...or..." sentence left the model guessing (borrow-list A4).
+    public enum BlockReason {
+        /// Plan Mode is active: write-capable calls are blocked until the user approves the plan.
+        PLAN_MODE,
+        /// The current turn may be running unattended: a DANGEROUS_WRITE is refused outright.
+        UNATTENDED_DANGEROUS
+    }
+
+    /// A {@link Decision} plus, when it is {@link Decision#BLOCK}, the {@link BlockReason} that
+    /// caused it ({@code blockReason} is {@code null} for ALLOW/ASK). The plain {@link Decision}
+    /// enum is kept unchanged because other layers ({@link AiToolPermissionStore.OverrideMode
+    /// #apply} and its callers) compare and switch on it; this record is the reason-carrying
+    /// upgrade for callers that need to explain a BLOCK precisely.
+    public record Verdict(Decision decision, @Nullable BlockReason blockReason) {
+        static final Verdict ALLOW = new Verdict(Decision.ALLOW, null);
+        static final Verdict ASK = new Verdict(Decision.ASK, null);
+
+        static Verdict block(BlockReason reason) {
+            return new Verdict(Decision.BLOCK, reason);
+        }
+    }
+
     private final AiApprovalMode mode;
     private final boolean dangerousConfirmationEnabled;
     private final boolean fileWriteConfirmEnabled;
@@ -121,20 +145,29 @@ public final class AiExecutionPolicy {
     ///                   derived in production
     public Decision check(@Nullable String toolName, @Nullable String action, ToolPermission permission,
                            boolean planMode, boolean unattended) {
+        return evaluate(toolName, action, permission, planMode, unattended).decision();
+    }
+
+    /// Same evaluation as {@link #check(String, String, ToolPermission, boolean, boolean)}, but
+    /// returning the reason-carrying {@link Verdict} so a BLOCK can be explained precisely (which
+    /// gate fired decides what the model should do next — see {@link BlockReason}). {@code check}
+    /// delegates here, so the two can never drift.
+    public Verdict evaluate(@Nullable String toolName, @Nullable String action, ToolPermission permission,
+                             boolean planMode, boolean unattended) {
         // Developer-only bypass: skip every gate (dangerous + critical + Plan Mode + unattended)
         // outright.
         if (dangerouslySkipPermissions) {
-            return Decision.ALLOW;
+            return Verdict.ALLOW;
         }
         if (planMode && (permission == ToolPermission.CONTROLLED_WRITE || permission == ToolPermission.DANGEROUS_WRITE)) {
-            return Decision.BLOCK;
+            return Verdict.block(BlockReason.PLAN_MODE);
         }
         // Non-negotiable safety net (see class doc): a dangerous operation reached while the turn
         // may be unattended is refused outright, not merely asked — there may be nobody present to
         // answer a confirmation prompt, and silently letting it through (or leaving it stuck waiting
         // on a prompt nobody will ever see) are both unacceptable outcomes for a destructive command.
         if (unattended && permission == ToolPermission.DANGEROUS_WRITE) {
-            return Decision.BLOCK;
+            return Verdict.block(BlockReason.UNATTENDED_DANGEROUS);
         }
         // PRODUCT DECISION: fileWriteConfirmEnabled=false only ever suppresses confirmation for
         // PURE CREATION — an action that edits or removes something that already existed always
@@ -142,12 +175,12 @@ public final class AiExecutionPolicy {
         boolean forcedAsk = toolName != null && permission == ToolPermission.CONTROLLED_WRITE
                 && EditOrRemoveActions.isEditOrRemove(toolName, action);
         if (permission == ToolPermission.DANGEROUS_WRITE) {
-            return dangerousConfirmationEnabled ? Decision.ASK : Decision.ALLOW;
+            return dangerousConfirmationEnabled ? Verdict.ASK : Verdict.ALLOW;
         }
         if (permission == ToolPermission.CONTROLLED_WRITE && (fileWriteConfirmEnabled || forcedAsk)) {
-            return Decision.ASK;
+            return Verdict.ASK;
         }
-        return Decision.ALLOW;
+        return Verdict.ALLOW;
     }
 
     /// Returns a copy of this policy with {@code newMode} substituted for the approval mode, every

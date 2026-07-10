@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.setting;
 
 import javafx.beans.InvalidationListener;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jackhuang.hmcl.task.FetchTask;
 import org.jackhuang.hmcl.util.StringUtils;
 import org.jackhuang.hmcl.util.io.NetworkUtils;
@@ -113,8 +114,19 @@ public final class ProxyManager {
         settings().proxyHostProperty().addListener(updateProxySelector);
         settings().proxyPortProperty().addListener(updateProxySelector);
 
+        // Push the proxy credentials to the AI module as well: java.net.http.HttpClient does
+        // NOT consult Authenticator.setDefault(...) (and Authenticator has no public
+        // getDefault()), and HMCLAI cannot import ProxyManager (dependency direction is
+        // HMCL -> HMCLAI). AI-side clients chain .authenticator(ProxyAuthenticatorHolder
+        // .getOrNoop()) explicitly; we hand them the very SimpleAuthenticator instance so the
+        // HttpClient populates its request fields directly and the PROXY requestor-type check
+        // in getPasswordAuthentication() works. null clears the holder back to its no-op.
         defaultAuthenticator = getAuthenticator();
-        InvalidationListener updateAuthenticator = observable -> defaultAuthenticator = getAuthenticator();
+        ProxyAuthenticatorHolder.set(defaultAuthenticator);
+        InvalidationListener updateAuthenticator = observable -> {
+            defaultAuthenticator = getAuthenticator();
+            ProxyAuthenticatorHolder.set(defaultAuthenticator);
+        };
         settings().proxyTypeProperty().addListener(updateAuthenticator);
         settings().hasProxyAuthProperty().addListener(updateAuthenticator);
         settings().proxyUserProperty().addListener(updateAuthenticator);

@@ -31,12 +31,31 @@ import java.util.Map;
 /// Targeted in-place edit: replaces an exact substring in a text file, inside one of the
 /// allowlisted roots. Unlike {@link WriteFileTool}, it changes only the matched text.
 /// By default the match must be unique; pass `replaceAll=true` to replace every occurrence.
+///
+/// File-tool contract (this wave):
+///   - **read precondition / staleness** — the file must have been read (via the `read` tool)
+///     and be unchanged on disk since, enforced through the shared [`ReadLedger`];
+///   - **no-op interception** — `old_string == new_string` is rejected instead of returning a
+///     fake success;
+///   - **fallback matching** — when the exact substring is absent, a line-trimmed →
+///     whole-trimmed → whitespace-normalized [`EditReplacers`] chain absorbs CRLF/indentation
+///     drift, with an anti-over-match circuit breaker;
+///   - **post-write validation** — `.json`/`.properties` content is re-validated after the
+///     write and a WARNING is appended to the success receipt when it came out broken.
 @NotNullByDefault
 public final class EditTool implements ToolSpec {
     private final List<Path> roots = new ArrayList<>();
+    private final ReadLedger ledger;
 
     public EditTool(Path primaryRoot) {
+        this(primaryRoot, ReadLedger.global());
+    }
+
+    /// Ledger-injecting constructor for tests (production wiring uses [`ReadLedger#global`]
+    /// so reads recorded by [`FileReadTool`] are visible here).
+    public EditTool(Path primaryRoot, ReadLedger ledger) {
         roots.add(primaryRoot.toAbsolutePath().normalize());
+        this.ledger = ledger;
     }
 
     public void addRoot(@Nullable Path root) {
@@ -64,7 +83,10 @@ public final class EditTool implements ToolSpec {
     public String getDescription() {
         return "Replace an exact text snippet in a file in place. Pass 'path', 'old_string' "
                 + "(must match exactly), and 'new_string'. The match must be unique unless "
-                + "'replace_all' is true. Prefer this over write for small changes.";
+                + "'replace_all' is true. Prefer this over write for small changes. "
+                + "The file must have been read with the read tool first (and re-read after "
+                + "any external change), or the edit is refused."
+                + FileToolFailures.allowedRootsSentence(roots);
     }
 
     @Override
@@ -101,13 +123,23 @@ public final class EditTool implements ToolSpec {
         if (oldString.isEmpty()) {
             return ToolResult.failure("'old_string' must not be empty.");
         }
+        // No-op interception (spec rewrite #3): replacing text with itself would previously
+        // return "Edited ... (1 replacement(s))" while the file bytes stayed identical — a
+        // silent fake success, worse than an error.
+        if (oldString.equals(newString)) {
+            return ToolFailures.failure(
+                    "'old_string' and 'new_string' are identical — nothing to change",
+                    ToolFailures.Retryable.NO,
+                    "this call is a no-op by definition",
+                    "if you intended a real edit, fix new_string; if you only wanted to verify the text exists, use read instead");
+        }
 
         try {
             Path candidate = Path.of(pathObj.toString());
             Path resolved = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(pathObj.toString()))
                     .toAbsolutePath().normalize();
             if (roots.stream().noneMatch(resolved::startsWith)) {
-                return ToolResult.failure("Path is outside the allowed roots: " + resolved);
+                return FileToolFailures.outsideRoots(resolved, roots);
             }
             if (!Files.isRegularFile(resolved)) {
                 return ToolResult.failure("File does not exist: " + resolved);
@@ -118,25 +150,88 @@ public final class EditTool implements ToolSpec {
             // and overwrite an arbitrary external file's content.
             Path real = resolved.toRealPath();
             if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
-                return ToolResult.failure("Path is outside the allowed roots: " + real);
+                return FileToolFailures.outsideRoots(real, roots);
             }
-            String content = Files.readString(resolved, StandardCharsets.UTF_8);
-            int count = countOccurrences(content, oldString);
-            if (count == 0) {
-                return ToolResult.failure("'old_string' not found in " + resolved);
+
+            byte[] raw = Files.readAllBytes(resolved);
+            // Read precondition + staleness detection against the shared ledger. Checked on the
+            // raw bytes BEFORE decoding, so even undecodable external changes are caught.
+            ReadLedger.Status ledgerStatus = ledger.check(real, raw);
+            if (ledgerStatus == ReadLedger.Status.NOT_READ) {
+                return ToolFailures.failure(
+                        "File has not been read yet — read it first before editing (" + real + ")",
+                        ToolFailures.Retryable.LATER,
+                        "old_string must be copied from the file's actual content, not guessed",
+                        "call read on this path, then retry the edit with old_string taken from what read returned");
             }
-            if (count > 1 && !replaceAll) {
-                return ToolResult.failure("'old_string' is not unique (" + count + " matches); set replace_all or add more context.");
+            if (ledgerStatus == ReadLedger.Status.STALE) {
+                return ToolFailures.failure(
+                        "The file has been modified since it was last read — re-read it before editing (" + real + ")",
+                        ToolFailures.Retryable.LATER,
+                        "the on-disk content no longer matches what old_string was based on",
+                        "call read on this path again, then retry the edit with old_string taken from the fresh content");
             }
-            String updated = replaceAll
-                    ? content.replace(oldString, newString)
-                    : content.replaceFirst(java.util.regex.Pattern.quote(oldString), java.util.regex.Matcher.quoteReplacement(newString));
-            Files.writeString(resolved, updated, StandardCharsets.UTF_8);
-            return ToolResult.success("Edited " + resolved + " (" + (replaceAll ? count : 1) + " replacement(s)).");
+
+            // Strict decode (same failure behavior as the previous Files.readString): a
+            // malformed-UTF-8 file must error out, NOT be decoded leniently and re-encoded
+            // with replacement characters, which would corrupt it on write-back.
+            String content = StandardCharsets.UTF_8.newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(raw)).toString();
+            EditReplacers.Result match = EditReplacers.locate(content, oldString);
+            if (match.disproportionate()) {
+                EditReplacers.Span span = match.spans().get(0);
+                return ToolFailures.failure(
+                        "Refusing the replacement: the closest match (via the " + match.strategy()
+                                + " fallback) spans " + span.length() + " characters, far more than old_string's "
+                                + oldString.length(),
+                        ToolFailures.Retryable.YES,
+                        "a fuzzy match that much larger than old_string almost certainly grabbed unintended text",
+                        "re-read the file and provide the full exact old_string for the intended replacement");
+            }
+            List<EditReplacers.Span> spans = match.spans();
+            if (spans.isEmpty()) {
+                return ToolFailures.failure(
+                        "'old_string' not found in " + resolved,
+                        ToolFailures.Retryable.YES,
+                        "it must match the file's current content (near-miss fallbacks ignoring whitespace also found nothing)",
+                        "re-read the file and copy old_string exactly from what read returns, including punctuation");
+            }
+            if (spans.size() > 1 && !replaceAll) {
+                return ToolFailures.failure(
+                        "'old_string' is not unique (" + spans.size() + " matches)",
+                        ToolFailures.Retryable.YES,
+                        "an ambiguous match must not silently pick one occurrence",
+                        "set replace_all to change every occurrence, or add surrounding context to old_string to make it unique");
+            }
+
+            List<EditReplacers.Span> toReplace = replaceAll ? spans : List.of(spans.get(0));
+            StringBuilder updated = new StringBuilder(content);
+            for (int i = toReplace.size() - 1; i >= 0; i--) {
+                EditReplacers.Span span = toReplace.get(i);
+                updated.replace(span.start(), span.end(), newString);
+            }
+            String result = updated.toString();
+            byte[] resultBytes = result.getBytes(StandardCharsets.UTF_8);
+            Files.write(resolved, resultBytes);
+            // Self-record the write so a follow-up edit doesn't demand a redundant re-read.
+            ledger.recordRead(real, resultBytes);
+
+            StringBuilder receipt = new StringBuilder("Edited ").append(resolved)
+                    .append(" (").append(toReplace.size()).append(" replacement(s)");
+            if (!match.isExact()) {
+                receipt.append(", matched via the ").append(match.strategy())
+                        .append(" fallback — surrounding whitespace was taken from the file, not from old_string");
+            }
+            receipt.append(").");
+            String warning = PostWriteValidator.validate(resolved, result);
+            if (warning != null) {
+                receipt.append('\n').append(warning);
+            }
+            return ToolResult.success(receipt.toString());
         } catch (IOException e) {
-            return ToolResult.failure("IO error: " + e.getMessage());
+            return FileToolFailures.io("editing the file", e);
         } catch (RuntimeException e) {
-            return ToolResult.failure("Edit failed: " + e.getMessage());
+            return FileToolFailures.invalid("edit request", e);
         }
     }
 
@@ -149,13 +244,5 @@ public final class EditTool implements ToolSpec {
         } catch (IOException e) {
             return p;
         }
-    }
-
-    private static int countOccurrences(String haystack, String needle) {
-        int count = 0;
-        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
-            count++;
-        }
-        return count;
     }
 }

@@ -71,7 +71,8 @@ public final class GrepTool implements ToolSpec {
         return "Search file contents by regular expression. Pass 'pattern' (Java regex), "
                 + "optional 'path' (sub-directory or single file to search) and optional 'glob' "
                 + "(filename filter like *.json, ignored when 'path' names a single file). "
-                + "Returns matching 'path:line: text' lines.";
+                + "Returns matching 'path:line: text' lines."
+                + FileToolFailures.allowedRootsSentence(roots);
     }
 
     @Override
@@ -105,7 +106,12 @@ public final class GrepTool implements ToolSpec {
         try {
             pattern = Pattern.compile(patternObj.toString());
         } catch (RuntimeException e) {
-            return ToolResult.failure("Invalid regex: " + e.getMessage());
+            // Spec rewrite #2: carry the dialect hint and forbid an unchanged retry.
+            return ToolFailures.failure(
+                    "Invalid regex: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()),
+                    ToolFailures.Retryable.YES,
+                    "this is Java regex, not glob/PCRE",
+                    "escape literal '(' ')' '.' etc. and retry; do not retry unchanged");
         }
 
         Path base;
@@ -115,7 +121,7 @@ public final class GrepTool implements ToolSpec {
             base = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(pathObj.toString()))
                     .toAbsolutePath().normalize();
             if (roots.stream().noneMatch(base::startsWith)) {
-                return ToolResult.failure("Path is outside the allowed roots: " + base);
+                return FileToolFailures.outsideRoots(base, roots);
             }
         } else {
             base = roots.get(0);
@@ -128,7 +134,7 @@ public final class GrepTool implements ToolSpec {
         List<Path> realRoots = realRootsOf(roots);
         Path realBase = realOrSelf(base);
         if (realRoots.stream().noneMatch(realBase::startsWith)) {
-            return ToolResult.failure("Path is outside the allowed roots: " + realBase);
+            return FileToolFailures.outsideRoots(realBase, roots);
         }
 
         if (Files.isRegularFile(base)) {
@@ -173,7 +179,7 @@ public final class GrepTool implements ToolSpec {
                 }
             }
         } catch (IOException e) {
-            return ToolResult.failure("IO error: " + e.getMessage());
+            return FileToolFailures.io("walking the directory tree", e);
         }
 
         if (results.isEmpty()) {

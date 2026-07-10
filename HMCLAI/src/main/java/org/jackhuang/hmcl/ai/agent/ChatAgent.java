@@ -156,6 +156,17 @@ public final class ChatAgent {
     /// token-budget-aware sliding window.
     private static final int COMPACT_KEEP_TURNS = 2;
 
+    /// Model-education line prefixed to every compaction summary (borrow-list E1): without it,
+    /// seeing its history abruptly replaced by a summary reads to the model like an alarm —
+    /// inducing "wrap up quickly" behaviour — when it is actually routine housekeeping. Rides
+    /// inside the same assistant summary message (manual /compact and auto-compact both pass
+    /// through {@link #doCompact}); the system prompt's runtime-harness block teaches the same
+    /// fact statically, this repeats it exactly where the model encounters the summary.
+    /// Package-private for the compaction test suite.
+    static final String COMPACT_EDUCATION_NOTE =
+            "(This summary replaced older context as routine housekeeping. It is NOT a signal to "
+                    + "hurry or wrap up — continue the task normally at full quality.)";
+
     /// Runs the single summarisation call and replaces the session history with the summary
     /// (prefixed by {@code header} — the manual /compact path and the automatic path use different
     /// headers so the user can tell which happened) followed by the raw tail of the last
@@ -186,7 +197,8 @@ public final class ChatAgent {
         // ToolPayload — stay intact to re-append after the summary.
         List<LlmMessage> keepRaw = lastRawTurns(history, COMPACT_KEEP_TURNS);
         session.clear();
-        session.addMessage(new LlmMessage("assistant", header + "\n" + summary));
+        session.addMessage(new LlmMessage("assistant",
+                header + "\n" + COMPACT_EDUCATION_NOTE + "\n" + summary));
         for (LlmMessage m : keepRaw) {
             session.addMessage(m);
         }

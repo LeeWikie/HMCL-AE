@@ -17,13 +17,17 @@
  */
 package org.jackhuang.hmcl.ai.langchain4j;
 
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.jackhuang.hmcl.ai.LlmConfig;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.net.ProxySelector;
+import java.net.http.HttpClient;
 import java.time.Duration;
 
 /// Builds LangChain4j chat and streaming models from HMCL's
@@ -60,6 +64,30 @@ public final class LangChain4jModelFactory {
         this.logResponses = logResponses;
     }
 
+    /// Builds a LangChain4j HTTP client builder whose underlying JDK [`HttpClient`] honours
+    /// HMCL's globally-configured proxy and proxy credentials.
+    ///
+    /// LangChain4j's default JDK client is built from a bare `HttpClient.newBuilder()`, and the
+    /// JDK `HttpClient` consults neither the default [`ProxySelector`] nor
+    /// `Authenticator.setDefault(...)` unless told to explicitly — so without this hook the main
+    /// chat traffic (streaming and non-streaming, OpenAI-compatible and Anthropic alike)
+    /// bypasses the user's proxy entirely and fails for many users, especially in CN. Same
+    /// idiom as `WebFetchTool`/`SearxngSearchClient`.
+    ///
+    /// LangChain4j applies each model's own connect/read timeout on top of this builder
+    /// (`JdkHttpClient` only overrides `connectTimeout` when one is set on the LangChain4j
+    /// side), so timeouts configured via [`LlmConfig`] are unaffected.
+    ///
+    /// The proxy authenticator is attached conditionally via
+    /// [`ProxyAuthenticatorHolder#configure`]: attaching one unconditionally would make the
+    /// JDK client fail bare 401 responses (no `WWW-Authenticate` header — the norm for LLM
+    /// APIs rejecting an API key) with `IOException` instead of surfacing them.
+    static JdkHttpClientBuilder proxyAwareHttpClientBuilder() {
+        return new JdkHttpClientBuilder()
+                .httpClientBuilder(ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
+                        .proxy(ProxySelector.getDefault())));
+    }
+
     /// Builds a LangChain4j [`ChatModel`] from the given configuration.
     ///
     /// The returned model is configured with the endpoint, API key, model name,
@@ -69,6 +97,7 @@ public final class LangChain4jModelFactory {
     /// @return a new LangChain4j chat model instance
     public ChatModel buildChatModel(LlmConfig config) {
         OpenAiChatModel.OpenAiChatModelBuilder builder = OpenAiChatModel.builder()
+                .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .baseUrl(extractBaseUrl(config.getEndpoint()))
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
@@ -108,6 +137,7 @@ public final class LangChain4jModelFactory {
     public StreamingChatModel buildStreamingChatModel(LlmConfig config) {
         OpenAiStreamingChatModel.OpenAiStreamingChatModelBuilder builder =
                 OpenAiStreamingChatModel.builder()
+                        .httpClientBuilder(proxyAwareHttpClientBuilder())
                         .baseUrl(extractBaseUrl(config.getEndpoint()))
                         .apiKey(config.getApiKey())
                         .modelName(config.getModel())
@@ -144,6 +174,7 @@ public final class LangChain4jModelFactory {
     /// Builds a LangChain4j Anthropic ChatModel from the given configuration.
     public ChatModel buildAnthropicChatModel(LlmConfig config) {
         var builder = dev.langchain4j.model.anthropic.AnthropicChatModel.builder()
+                .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
                 .temperature(config.getTemperature())
@@ -159,6 +190,7 @@ public final class LangChain4jModelFactory {
     /// Builds a LangChain4j Anthropic StreamingChatModel from the given configuration.
     public StreamingChatModel buildAnthropicStreamingChatModel(LlmConfig config) {
         var builder = dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.builder()
+                .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
                 .temperature(config.getTemperature())

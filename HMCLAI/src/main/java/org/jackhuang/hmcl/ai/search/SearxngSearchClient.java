@@ -2,6 +2,7 @@ package org.jackhuang.hmcl.ai.search;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.net.URI;
@@ -30,10 +31,12 @@ public final class SearxngSearchClient implements SearchClient {
     public SearchResponse search(String query, int maxResults) throws Exception {
         // Honour HMCL's globally-configured proxy (JDK HttpClient ignores the default
         // ProxySelector otherwise) and follow redirects (self-hosted instances often 301).
-        HttpClient client = HttpClient.newBuilder()
+        // ProxyAuthenticatorHolder.configure answers proxy 407 challenges with the credentials
+        // HMCL pushed down (the JDK HttpClient ignores Authenticator.setDefault).
+        HttpClient client = ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
                 .proxy(java.net.ProxySelector.getDefault())
                 .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(10)))
                 .build();
 
         String uri = endpoint + "?q=" + java.net.URLEncoder.encode(query, "UTF-8")
