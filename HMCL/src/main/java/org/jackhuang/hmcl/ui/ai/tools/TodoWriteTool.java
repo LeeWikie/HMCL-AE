@@ -60,6 +60,11 @@ public final class TodoWriteTool implements ToolSpec {
 
     private final TodoUiHandler handler;
 
+    /// The list accepted on the previous successful call, used only to detect unfinished items
+    /// that were silently dropped from the plan (a non-blocking discipline echo). Session-scoped:
+    /// one tool instance per chat page, and tool calls run sequentially, so a plain field is safe.
+    private List<TodoItem> previousTodos = List.of();
+
     public TodoWriteTool(TodoUiHandler handler) {
         this.handler = handler;
     }
@@ -150,7 +155,42 @@ public final class TodoWriteTool implements ToolSpec {
         }
         sb.append("(").append(done).append(" done, ").append(inProgress).append(" in progress, ")
                 .append(todos.size() - done - inProgress).append(" pending)");
+
+        // Non-blocking discipline echo: surface rule violations the model itself declared so it can
+        // self-correct NOW, instead of being caught 15 cycles later by the runtime staleness guard.
+        // These do NOT fail the call — the list is already accepted and rendered.
+        if (inProgress > 1) {
+            sb.append("\n[WARNING] ").append(inProgress).append(" items are 'in_progress' at once — ")
+                    .append("the rule is exactly ONE at a time; double-check this reflects reality.");
+        }
+        List<String> dropped = droppedUnfinished(previousTodos, todos);
+        if (!dropped.isEmpty()) {
+            sb.append("\n[WARNING] ").append(dropped.size()).append(" unfinished item(s) from the previous "
+                    + "list are gone without being marked 'done': ").append(String.join("; ", dropped))
+                    .append(" — if that was intentional keep going, otherwise carry them over.");
+        }
+
+        previousTodos = todos;
         return ToolResult.success(sb.toString().trim());
+    }
+
+    /// Returns the contents of items that were NOT 'done' in {@code previous} and are absent (by
+    /// exact content) from {@code current} — i.e. unfinished work silently dropped from the plan.
+    private static List<String> droppedUnfinished(List<TodoItem> previous, List<TodoItem> current) {
+        if (previous.isEmpty()) {
+            return List.of();
+        }
+        java.util.Set<String> currentContents = new java.util.HashSet<>();
+        for (TodoItem t : current) {
+            currentContents.add(t.content());
+        }
+        List<String> dropped = new ArrayList<>();
+        for (TodoItem t : previous) {
+            if (!"done".equals(t.status()) && !currentContents.contains(t.content())) {
+                dropped.add(t.content());
+            }
+        }
+        return dropped;
     }
 
     @SuppressWarnings("unchecked")

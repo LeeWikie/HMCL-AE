@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import javafx.application.Platform;
+import org.jackhuang.hmcl.auth.Account;
 import org.jackhuang.hmcl.auth.offline.OfflineAccount;
 import org.jackhuang.hmcl.auth.offline.OfflineAccountFactory;
 import org.jackhuang.hmcl.ai.tools.Tool;
@@ -66,13 +67,6 @@ public final class AddOfflineAccountTool implements Tool {
             CompletableFuture<String> future = new CompletableFuture<>();
             Runnable task = () -> {
                 try {
-                    // Reject duplicate offline names so we don't create confusing duplicates.
-                    boolean exists = Accounts.getAccounts().stream()
-                            .anyMatch(a -> a instanceof OfflineAccount && username.equalsIgnoreCase(a.getProfileName()));
-                    if (exists) {
-                        future.complete("An offline account named '" + username + "' already exists.");
-                        return;
-                    }
                     // Must NOT pass a null uuid: OfflineAccountFactory#create(String, UUID) forwards
                     // it straight into `new OfflineAccount(...)`, which does `requireNonNull(profileID)`
                     // — every brand-new username would throw NPE unconditionally. Derive the same
@@ -80,11 +74,31 @@ public final class AddOfflineAccountTool implements Tool {
                     // account" UI) falls back to when no uuid is explicitly supplied.
                     OfflineAccount account = Accounts.FACTORY_OFFLINE.create(
                             username, OfflineAccountFactory.getUUIDFromUserName(username));
-                    Accounts.getAccounts().add(account);
+
+                    // If an offline account with this name already exists, REPLACE it in place with the
+                    // freshly-created one — the same semantics as HMCL's own "add account" UI
+                    // (CreateAccountPane#completeLogin), which replaces an already-added account with the
+                    // new credentials rather than rejecting it. This keeps AI and native behaviour aligned.
+                    int oldIndex = -1;
+                    for (int i = 0; i < Accounts.getAccounts().size(); i++) {
+                        Account existing = Accounts.getAccounts().get(i);
+                        if (existing instanceof OfflineAccount && username.equalsIgnoreCase(existing.getProfileName())) {
+                            oldIndex = i;
+                            break;
+                        }
+                    }
+                    boolean replaced = oldIndex >= 0;
+                    if (replaced) {
+                        Accounts.getAccounts().remove(oldIndex);
+                        Accounts.getAccounts().add(oldIndex, account);
+                    } else {
+                        Accounts.getAccounts().add(account);
+                    }
                     if (select) {
                         Accounts.setSelectedAccount(account);
                     }
-                    future.complete("✓ Created offline account '" + username + "' (uuid=" + account.getProfileID() + ")"
+                    future.complete("✓ " + (replaced ? "Replaced existing" : "Created new")
+                            + " offline account '" + username + "' (uuid=" + account.getProfileID() + ")"
                             + (select ? " and set it as the active account." : "."));
                 } catch (Throwable t) {
                     future.completeExceptionally(t);

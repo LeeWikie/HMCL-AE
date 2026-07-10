@@ -68,13 +68,21 @@ public final class GameContextTool implements ToolSpec {
         return "Resolves directory paths for a Minecraft instance: gameDirectory, modsDir, logsDir, "
                 + "crashReportsDir, configDir, resourcePacksDir, savesDir, shaderPacksDir, plus the "
                 + "selected instance name and its version-isolation state. "
-                + "Uses the currently selected game directory.";
+                + "Uses the currently selected game directory. NOTE: these values are a snapshot taken "
+                + "at the START of the turn; if the user switches the selected instance mid-turn, prefer "
+                + "the live result from list_instances over this tool's cached paths.";
     }
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
         if (gameDir == null || !Files.isDirectory(gameDir)) {
-            return ToolResult.failure("No game directory configured or directory does not exist.");
+            return ToolFailures.failure(
+                    "No game directory is configured, or the configured one no longer exists"
+                            + (gameDir != null ? " (" + gameDir + ")" : ""),
+                    ToolFailures.Retryable.NO,
+                    "there is no selected instance / game directory in this context",
+                    "ask the user to select an instance in the launcher, or call list_instances to see "
+                            + "what is available and pick one first");
         }
 
         Map<String, String> paths = new LinkedHashMap<>();
@@ -88,6 +96,10 @@ public final class GameContextTool implements ToolSpec {
         paths.put("shaderPacksDir", gameDir.resolve("shaderpacks").toString());
 
         StringBuilder sb = new StringBuilder();
+        sb.append("Note: this is a snapshot captured at the start of this turn. If the selected instance "
+                + "or its game directory changed since (e.g. the user switched instances mid-turn, or "
+                + "list_instances shows something different), trust that live result over these cached "
+                + "paths.\n\n");
         if (instanceName != null) {
             sb.append("selectedInstance: ").append(instanceName).append('\n');
         }
