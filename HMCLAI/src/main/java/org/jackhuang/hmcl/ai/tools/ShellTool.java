@@ -78,19 +78,49 @@ public final class ShellTool implements ToolSpec {
 
     @Override
     public String getDescription() {
-        return "Run a shell command on the user's computer and return its combined stdout/stderr."
-                + " Operating system: " + osLabel + ". Shell: " + shellName
-                + ". Emit commands in the syntax of this shell (e.g. PowerShell on Windows 10/11,"
-                + " or bash/fish/zsh on Linux/macOS)."
-                + " Always pass the literal command in plain text — never obfuscate it with base64,"
-                + " PowerShell -EncodedCommand/-enc, or similar encodings, so the user can read and"
-                + " confirm exactly what will run (encoded payloads are decoded and re-checked by the"
-                + " safety filter, and ones that cannot be decoded are blocked)."
-                + " Pass the full command line as 'command'. Commands run with a "
-                + TIMEOUT_SECONDS + "s timeout. Avoid interactive or long-running commands."
-                + " ALWAYS also pass 'description': one short plain-language sentence (in the user's"
-                + " language) saying what this command does and why — it is shown to the user in the"
-                + " confirmation dialog, who likely cannot read the raw command.";
+        return buildDescription(osLabel, shellName, windows, TIMEOUT_SECONDS);
+    }
+
+    /// Builds the model-visible tool description. Package-private and static so both the Windows
+    /// (PowerShell 5.1) and Unix branches can be unit-tested regardless of the host OS the test
+    /// runs on — the constructor bakes the OS in, so the instance can only ever exercise one branch.
+    static String buildDescription(String osLabel, String shellName, boolean windows, int timeoutSeconds) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Run a shell command on the user's computer and return its combined stdout/stderr.")
+                .append(" Operating system: ").append(osLabel).append(". Shell: ").append(shellName).append('.')
+                // Golden rule: shell is a last resort, dedicated tools come first (mirrors the
+                // TOOLS_GUIDE rule so the model sees it at the call site, not only once at session start).
+                .append(" *** LAST RESORT ONLY: prefer a dedicated tool (read/glob/grep/instance/search/…)")
+                .append(" over this. Do NOT use shell to run find/grep/cat/dir/type for something a dedicated")
+                .append(" tool already covers, and do NOT use it to toggle a mod's .jar/.jar.disabled suffix —")
+                .append(" use instance(action=mods_toggle) instead. ***");
+
+        if (windows) {
+            sb.append(" Emit commands in the syntax of this shell (PowerShell on Windows 10/11).")
+                    .append(" WINDOWS/POWERSHELL 5.1 PITFALLS — this shell is PowerShell 5.1, not pwsh 7:")
+                    .append(" - '&&' and '||' do NOT exist here (parser error); chain unconditionally with ';',")
+                    .append(" or 'A; if ($?) { B }' for conditional chaining.")
+                    .append(" - 'New-Item -Force' on an EXISTING file TRUNCATES it — never use -Force to 'touch'")
+                    .append(" a file that might already have content; check Test-Path first.")
+                    .append(" - Redirecting a native exe's stderr with '2>&1' wraps each line as a")
+                    .append(" NativeCommandError and makes $? false even on exit code 0 — avoid it; the tool")
+                    .append(" already captures stderr for you.")
+                    .append(" - No ternary/null-coalescing operators; use if/else.");
+        } else {
+            sb.append(" Emit commands in the syntax of this shell (").append(shellName)
+                    .append(" on Linux/macOS).");
+        }
+
+        sb.append(" Always pass the literal command in plain text — never obfuscate it with base64,")
+                .append(" PowerShell -EncodedCommand/-enc, or similar encodings, so the user can read and")
+                .append(" confirm exactly what will run (encoded payloads are decoded and re-checked by the")
+                .append(" safety filter, and ones that cannot be decoded are blocked).")
+                .append(" Pass the full command line as 'command'. Commands run with a ")
+                .append(timeoutSeconds).append("s timeout. Avoid interactive or long-running commands.")
+                .append(" ALWAYS also pass 'description': one short plain-language sentence (in the user's")
+                .append(" language) saying what this command does and why — it is shown to the user in the")
+                .append(" confirmation dialog, who likely cannot read the raw command.");
+        return sb.toString();
     }
 
     @Override

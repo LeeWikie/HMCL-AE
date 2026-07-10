@@ -147,11 +147,16 @@ public final class InstanceTool implements ToolSpec {
                 + "clean_logs (keep), open_folder.\n"
                 + "- Java: list_java, download_java (gameVersion or javaVersion).\n"
                 + "- Mods (already-known/installed content only — search via the 'search' tool first): "
-                + "mods_list, mods_install (id, source, loader, gameVersion, version — ALWAYS pass the "
-                + "loader/gameVersion that 'search' already resolved for this mod; omitting them silently "
-                + "falls back to that mod's single most-recently-published file across EVERY loader and MC "
-                + "version, which is how a Fabric build ends up on a Forge/NeoForge instance or the wrong "
-                + "game version gets installed — pass version too when you need one exact build locked), "
+                + "mods_list, mods_install (id, source, loader, gameVersion, version — 'search' does NOT "
+                + "verify per-result which loader/version a mod actually supports (its loader field is a "
+                + "hint, not a filter), so PASS the loader/gameVersion the USER actually wants, not just "
+                + "whatever you queried search with; omitting them silently falls back to that mod's single "
+                + "most-recently-published file across EVERY loader and MC version, which is how a Fabric "
+                + "build ends up on a Forge/NeoForge instance or the wrong game version gets installed — "
+                + "pass version too when you need one exact build locked. If mods_install then reports 'no "
+                + "version supports loader X', that mod likely ships no build for X at all — the error lists "
+                + "the loaders/versions it DOES support, so pick one of those or search for an alternative "
+                + "mod rather than retrying the same call), "
                 + "mods_toggle (mod, enable), mods_info (mod), "
                 + "mods_check_updates, mods_update (mod), mods_delete (mod, DANGEROUS).\n"
                 + "- Worlds: worlds_list, worlds_info (world; NBT tools must be enabled), "
@@ -185,8 +190,8 @@ public final class InstanceTool implements ToolSpec {
                    "instance": {"type": "string", "description": "Target instance id; most actions default to the currently selected instance."},
                    "newName": {"type": "string", "description": "rename: the new instance name."},
                    "confirm": {"type": "boolean", "description": "delete/mods_delete/worlds_delete/worlds_backup_restore: confirmation flag some leaf tools require."},
-                   "gameVersion": {"type": "string", "description": "create/download_java: Minecraft version, or 'latest'. mods_install: the Minecraft version to filter to when auto-picking a version — strongly recommended (pass the value 'search' already resolved); omitting it risks installing a build for the wrong game version."},
-                   "loader": {"type": "string", "description": "create: vanilla/fabric/forge/neoforge/quilt/optifine (loader to install). mods_install: fabric/forge/neoforge/quilt — filters to a version built for this loader; strongly recommended (pass the value 'search' already resolved), since omitting it risks installing a jar built for the wrong loader."},
+                   "gameVersion": {"type": "string", "description": "create/download_java: Minecraft version, or 'latest'. mods_install: the Minecraft version you actually want to target when auto-picking a version — strongly recommended; 'search' does NOT verify this per result, so pass the version the user wants, not just whatever you queried search with. Omitting it risks installing a build for the wrong game version."},
+                   "loader": {"type": "string", "description": "create: vanilla/fabric/forge/neoforge/quilt/optifine (loader to install). mods_install: fabric/forge/neoforge/quilt — the loader you actually want to target; strongly recommended. 'search' does NOT verify per result which loader a mod supports (loader there is only a query hint, not a filter), so pass the loader the user wants; omitting it risks installing a jar built for the wrong loader."},
                    "loaderVersion": {"type": "string", "description": "create: specific loader version; default = newest compatible."},
                    "version": {"type": "string", "description": "mods_install: an exact version name/number to lock onto (e.g. from the matching 'search' result); when set, this exact version is installed instead of auto-picking the newest match."},
                    "name": {"type": "string", "description": "create: optional new instance name."},

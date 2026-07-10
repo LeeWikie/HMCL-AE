@@ -50,10 +50,15 @@ public final class JobTool implements ToolSpec {
         return "Background job bookkeeping for long-running tool calls (installs/downloads/backups) started "
                 + "without blocking. Parameter 'action' (required): "
                 + "list — running + most-recent-finished jobs with id/status/label, no parameters, READ-ONLY; "
+                + "NOTE: listing a FINISHED job here marks it as acknowledged, exactly as check(jobId) does — "
+                + "once list shows a job as SUCCEEDED/FAILED/CANCELLED, its automatic completion notification "
+                + "will NOT fire again, so if you need that job's full result text call check(jobId) for it NOW "
+                + "rather than assuming you'll be told later. "
                 + "check(jobId) — one job's status and, once finished, its full result text, READ-ONLY; "
                 + "cancel(jobId) — interrupt a running job's worker. "
                 + "A finished job's result is delivered back to you AUTOMATICALLY as a new turn once you have "
-                + "nothing else to do THIS turn — do not sleep+check in a loop waiting for it.";
+                + "nothing else to do THIS turn (as long as you haven't already seen it via list/check) — do "
+                + "not sleep+check in a loop waiting for it.";
     }
 
     @Override

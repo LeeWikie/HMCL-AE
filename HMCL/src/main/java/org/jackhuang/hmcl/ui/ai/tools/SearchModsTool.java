@@ -61,7 +61,11 @@ public final class SearchModsTool implements Tool {
                 + "source (string, optional: \"modrinth\" or \"curseforge\"; when omitted, follows the user's "
                 + "default addon source launcher setting, falling back to Modrinth if CurseForge has no API key). "
                 + "Returns up to " + MAX_RESULTS + " results with slug, title, author and short description. "
-                + "Use the returned slug with instance(action=\"mods_install\") to install. Read-only.";
+                + "Use the returned slug with instance(action=\"mods_install\") to install. Read-only. "
+                + "Note: results are NOT individually verified against 'loader' — that parameter only hints "
+                + "the query, it does not filter out mods that don't support it. Confirm actual loader/version "
+                + "support at install time via mods_install's error (it DOES hard-filter and will report "
+                + "what's really available).";
     }
 
     @Override
