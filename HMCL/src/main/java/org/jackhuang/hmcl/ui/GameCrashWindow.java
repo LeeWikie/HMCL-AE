@@ -471,12 +471,13 @@ public class GameCrashWindow extends Stage {
 
                 // Hand the crash off to the AI assistant: jump to the AI page with the log + context
                 // and let it diagnose and propose a fix.
-                JFXButton aiButton = FXUtils.newRaisedButton("让 AI 诊断");
+                JFXButton aiButton = FXUtils.newRaisedButton(i18n("ai.crash.diagnose"));
                 aiButton.setOnAction(e -> {
                     String rawLog = logs.stream().map(Log::getLog).collect(Collectors.joining("\n"));
                     String tail = rawLog.length() > 6000 ? rawLog.substring(rawLog.length() - 6000) : rawLog;
-                    String prompt = "我的 Minecraft 崩溃了（版本 " + version.getId() + "，Java " + java + "）。"
-                            + "请根据下面的游戏日志分析崩溃原因，并给出具体、可执行的解决办法：\n```\n" + tail + "\n```";
+                    // NOTE: ai.crash.prompt is MODEL INPUT (the prompt injected into the AI chat),
+                    // not pure UI copy — it still goes through i18n for unified maintenance (BF P11).
+                    String prompt = i18n("ai.crash.prompt", version.getId(), java, tail);
                     // The crash window is a standalone Stage; if the launcher main window isn't up
                     // (e.g. it was closed after launch) there is no decorator to navigate — don't NPE.
                     if (Controllers.getDecorator() == null || Controllers.getStage() == null) {
@@ -484,7 +485,7 @@ public class GameCrashWindow extends Stage {
                         cc.putString(prompt);
                         javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
                         new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION,
-                                "启动器主窗口已关闭，无法直接打开 AI 助手。\n崩溃日志已复制到剪贴板，打开 HMCL-AE 后粘贴给 AI 助手即可。").showAndWait();
+                                i18n("ai.crash.window_closed")).showAndWait();
                         return;
                     }
                     org.jackhuang.hmcl.ui.ai.AIMainPage ai = Controllers.getAiMainPage();

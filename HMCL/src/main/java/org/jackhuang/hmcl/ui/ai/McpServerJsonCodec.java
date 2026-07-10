@@ -31,6 +31,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
+
 /// Converts an {@link AiMcpServerConfig} to and from the free-form JSON text edited in
 /// {@code AISettingsPage#editMcpServer}'s {@link org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane}.
 ///
@@ -80,33 +82,33 @@ final class McpServerJsonCodec {
         try {
             JsonElement parsed = JsonParser.parseString(text);
             if (!parsed.isJsonObject()) {
-                return "顶层必须是一个 JSON 对象（用 { } 包裹）";
+                return i18n("ai.settings.mcp.validate.top_level");
             }
             obj = parsed.getAsJsonObject();
         } catch (JsonParseException e) {
-            return "JSON 语法错误：" + e.getMessage();
+            return i18n("ai.settings.mcp.validate.syntax", e.getMessage());
         }
 
         for (String key : obj.keySet()) {
             if (!FIELDS.contains(key)) {
-                return "未知字段 \"" + key + "\"，可用字段：" + String.join(", ", FIELDS);
+                return i18n("ai.settings.mcp.validate.unknown_field", key, String.join(", ", FIELDS));
             }
         }
 
         if (present(obj, "displayName") && !isJsonString(obj.get("displayName"))) {
-            return "displayName 必须是字符串";
+            return i18n("ai.settings.mcp.validate.string_field", "displayName");
         }
         if (present(obj, "transport")) {
             JsonElement t = obj.get("transport");
             if (!isJsonString(t) || !(t.getAsString().equals("stdio") || t.getAsString().equals("http"))) {
-                return "transport 只能是 \"stdio\" 或 \"http\"";
+                return i18n("ai.settings.mcp.validate.transport");
             }
         }
         if (present(obj, "command") && !isJsonString(obj.get("command"))) {
-            return "command 必须是字符串或 null";
+            return i18n("ai.settings.mcp.validate.string_or_null", "command");
         }
         if (present(obj, "url") && !isJsonString(obj.get("url"))) {
-            return "url 必须是字符串或 null";
+            return i18n("ai.settings.mcp.validate.string_or_null", "url");
         }
         String argsError = validateStringArray(obj, "args");
         if (argsError != null) return argsError;
@@ -114,14 +116,14 @@ final class McpServerJsonCodec {
         if (allowedToolsError != null) return allowedToolsError;
         if (present(obj, "env")) {
             JsonElement envEl = obj.get("env");
-            if (!envEl.isJsonObject()) return "env 必须是一个对象（字符串到字符串）";
+            if (!envEl.isJsonObject()) return i18n("ai.settings.mcp.validate.env_object");
             for (Map.Entry<String, JsonElement> e : envEl.getAsJsonObject().entrySet()) {
-                if (!isJsonString(e.getValue())) return "env 的每个值都必须是字符串（键 \"" + e.getKey() + "\"）";
+                if (!isJsonString(e.getValue())) return i18n("ai.settings.mcp.validate.env_value", e.getKey());
             }
         }
         for (String boolField : new String[]{"enabled", "autoConnect", "exposeResourcesAsTools"}) {
             if (present(obj, boolField) && !isJsonBoolean(obj.get(boolField))) {
-                return boolField + " 必须是布尔值（true/false）";
+                return i18n("ai.settings.mcp.validate.bool_field", boolField);
             }
         }
         return null;
@@ -159,9 +161,9 @@ final class McpServerJsonCodec {
     private static String validateStringArray(JsonObject obj, String field) {
         if (!present(obj, field)) return null;
         JsonElement el = obj.get(field);
-        if (!el.isJsonArray()) return field + " 必须是字符串数组";
+        if (!el.isJsonArray()) return i18n("ai.settings.mcp.validate.string_array", field);
         for (JsonElement e : el.getAsJsonArray()) {
-            if (!isJsonString(e)) return field + " 数组里的每一项都必须是字符串";
+            if (!isJsonString(e)) return i18n("ai.settings.mcp.validate.string_array_item", field);
         }
         return null;
     }

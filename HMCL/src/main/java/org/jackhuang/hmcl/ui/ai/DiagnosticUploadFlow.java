@@ -26,6 +26,8 @@ import org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
+
 /// The one-tap diagnostic-upload trigger: packages the current session's trace (already
 /// redacted at write time) and POSTs it to the feedback endpoint, returning a short reference id.
 ///
@@ -46,21 +48,21 @@ final class DiagnosticUploadFlow {
         switch (DiagnosticUploadGate.check(AIMainPage.hasPrivacyConsent(), aiSettings.isTraceEnabled())) {
             case NEEDS_CONSENT:
                 Controllers.confirm(
-                        "上传诊断信息前需要先确认「AI 隐私与数据说明」。是否现在查看并确认？",
-                        "需要先确认隐私说明", MessageType.QUESTION,
+                        i18n("ai.diag.need_consent"),
+                        i18n("ai.diag.need_consent.title"), MessageType.QUESTION,
                         () -> AIMainPage.requestPrivacyConsent(() -> trigger(aiSettings)),
                         null);
                 return;
             case NO_TRACE:
-                Controllers.dialog("尚未开启「记录诊断 Trace」，没有可上传的记录。请先开启该选项，复现问题后再上传。",
-                        "无诊断记录", MessageType.INFO);
+                Controllers.dialog(i18n("ai.diag.no_trace"),
+                        i18n("ai.diag.no_trace.title"), MessageType.INFO);
                 return;
             case OK:
                 break;
         }
         Controllers.confirm(
-                "将把当前会话的完整消息、工具调用与结果打包上传（已自动脱敏 API Key 等敏感信息），仅用于排查你反馈的问题。确定上传吗？",
-                "上传诊断信息", MessageType.QUESTION,
+                i18n("ai.diag.confirm"),
+                i18n("ai.settings.data.upload_diag"), MessageType.QUESTION,
                 () -> upload(aiSettings), () -> {});
     }
 
@@ -74,7 +76,7 @@ final class DiagnosticUploadFlow {
                 Path trace = sessionId == null ? null
                         : org.jackhuang.hmcl.ai.trace.TraceRecorder.traceFile(sessionId);
                 if (trace == null || !Files.exists(trace)) {
-                    Platform.runLater(() -> Controllers.showToast("当前会话还没有 Trace 记录，无法上传"));
+                    Platform.runLater(() -> Controllers.showToast(i18n("ai.diag.session_no_trace")));
                     return;
                 }
                 // Same session the trace file was resolved for, above — so the accompanying
@@ -90,15 +92,15 @@ final class DiagnosticUploadFlow {
                                 aiSettings.getModel(), null, uiMessages);
                 Platform.runLater(() -> {
                     if (result.ok()) {
-                        Controllers.dialog("上传成功，反馈编号：" + result.id() + "\n如需继续沟通可向开发者提供此编号。",
-                                "上传成功", MessageType.SUCCESS);
+                        Controllers.dialog(i18n("ai.diag.upload_ok", result.id()),
+                                i18n("ai.diag.upload_ok.title"), MessageType.SUCCESS);
                     } else {
-                        Controllers.dialog(result.error() != null ? result.error() : "未知错误",
-                                "上传失败", MessageType.ERROR);
+                        Controllers.dialog(result.error() != null ? result.error() : i18n("ai.diag.unknown_error"),
+                                i18n("ai.diag.upload_failed.title"), MessageType.ERROR);
                     }
                 });
             } catch (Exception ex) {
-                Platform.runLater(() -> Controllers.showToast("上传失败：" + ex.getMessage()));
+                Platform.runLater(() -> Controllers.showToast(i18n("ai.diag.upload_failed", ex.getMessage())));
             }
         }, "ai-diagnostic-upload");
         worker.setDaemon(true);

@@ -28,6 +28,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
+
 /// A live-updating inline badge for the {@code {{job_progress:<id>[,<id>...]}}} chat-message
 /// syntax (see {@link MarkdownMessageView}), rendered as a small highlighted pill instead of
 /// literal text.
@@ -57,9 +59,9 @@ import java.util.List;
 /// historical message.
 final class JobProgressBadge extends Label {
 
-    static final String NOT_FOUND_TEXT = "[任务未找到]";
-    private static final String RUNNING_TEXT = "运行中";
-    private static final String SINGLE_DONE_TEXT = "完成";
+    static final String NOT_FOUND_TEXT = i18n("ai.jobs.badge.not_found");
+    private static final String RUNNING_TEXT = i18n("ai.jobs.badge.running");
+    private static final String SINGLE_DONE_TEXT = i18n("ai.jobs.badge.done");
     private static final Duration POLL_INTERVAL = Duration.millis(500);
 
     private final Timeline timeline = new Timeline();
@@ -152,7 +154,7 @@ final class JobProgressBadge extends Label {
             settle(NOT_FOUND_TEXT);
             return;
         }
-        setText(done + "/" + total + " 已完成");
+        setText(i18n("ai.jobs.badge.completed", done, total));
         if (done == total) {
             markSettled();
         }

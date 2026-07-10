@@ -279,7 +279,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final Label headerSubtitle = new Label();
     private final Label approvalBadge = new Label();
     /// Header badge shown while plan mode (read-only-until-approved) is active.
-    private final Label planBadge = new Label("计划模式");
+    private final Label planBadge = new Label(i18n("ai.chat.plan_badge"));
 
     /// When true, write/install/delete/launch/shell tools are gated off for the next
     /// response so the agent only investigates and proposes a plan. Toggled by /plan.
@@ -426,7 +426,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 text.append(initial);
                 content.setText(initial);
             }
-            header = new CollapseHeader("思考过程"); // TODO(i18n)
+            header = new CollapseHeader(i18n("ai.reasoning.title"));
             content.visibleProperty().bind(header.expandedProperty());
             content.managedProperty().bind(header.expandedProperty());
             getChildren().addAll(header, content);
@@ -630,9 +630,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             org.jackhuang.hmcl.util.logging.Logger.LOG.warning(
                     "[AI] session store was corrupt; preserved at " + corruptSessionStore);
             final String preservedAt = corruptSessionStore.toString();
-            Platform.runLater(() -> addSystemMessage(
-                    "会话记录文件损坏，未能加载历史对话。原文件已保留为：" + preservedAt
-                            + "（不会被覆盖，如需找回可以把它发给 AI 修复）。"));
+            Platform.runLater(() -> addSystemMessage(i18n("ai.session.corrupted", preservedAt)));
         }
 
         // Saves are asynchronous now (see persistStore() → AiSessionStore.saveAsync); flush one
@@ -703,14 +701,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         showAiRiskNotice(AIMainPage::maybeShowPrivacyConsent);
     }
 
-    private static final String PRIVACY_TEXT =
-            "使用 AI 助手时，你的对话内容会通过网络发送给你所配置的 AI 服务提供商，用于生成回复。\n\n"
-            + "根据你启用的功能，发送的内容可能包含：你输入的问题；所选实例 / 模组 / 世界等游戏信息；"
-            + "你主动让 AI 读取的文件或日志；剪贴板文本；以及截图（仅当你使用相关功能时）。\n\n"
-            + "这些数据由第三方 AI 提供商按其各自的隐私政策处理。此外，HMCL-AE 本身默认会在本机记录一份完整的"
-            + "对话与工具调用记录（trace，用于故障排查，可在 AI 设置里关闭），只保存在本地；"
-            + "你也可以在需要反馈问题时手动一键将其发送给开发者用于诊断，这是唯一的额外上传途径，不会自动上传。\n\n"
-            + "点击「确定」表示你已阅读并同意上述数据处理方式；若不同意，请勿使用 AI 助手。";
+    private static final String PRIVACY_TEXT = i18n("ai.chat.privacy.text");
 
     private static java.nio.file.Path privacyConsentFile() {
         return SettingsManager.localConfigDirectory().resolve("ai-privacy-consent");
@@ -735,7 +726,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// the diagnostic-upload trigger in {@code AISettingsPage}) uses to let the user grant consent
     /// on the spot and immediately retry, instead of the marker being a dead end once it's missing.
     static void requestPrivacyConsent(Runnable onAccepted) {
-        Controllers.dialog(PRIVACY_TEXT, "AI 隐私与数据说明",
+        Controllers.dialog(PRIVACY_TEXT, i18n("ai.chat.privacy.title"),
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO, () -> {
                     try {
                         java.nio.file.Files.writeString(privacyConsentFile(),
@@ -749,7 +740,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     /// Re-viewable privacy notice (does not change the consent marker), for the settings entry.
     static void showPrivacyNotice() {
-        Controllers.dialog(PRIVACY_TEXT, "AI 隐私与数据说明",
+        Controllers.dialog(PRIVACY_TEXT, i18n("ai.chat.privacy.title"),
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO);
     }
 
@@ -1040,7 +1031,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         AdvancedListItem item = new AdvancedListItem();
         item.setTitle(labelText);
         boolean streamingHere = currentResponse != null && session.getId().equals(streamSessionId);
-        item.setSubtitle(streamingHere ? "正在生成…" : relativeTime(session.getUpdatedAt()));
+        item.setSubtitle(streamingHere ? i18n("ai.session.generating") : relativeTime(session.getUpdatedAt()));
         if (streamingHere) {
             // Swap the chat icon for a small JFoenix spinner while this session streams (keeps the
             // "⋯" row menu intact, unlike overriding the right graphic).
@@ -1087,7 +1078,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 ? i18n("ai.session.untitled") : session.getTitle();
 
         menu.getContent().setAll(
-                new IconedMenuItem(SVG.EDIT, "重命名", () -> Controllers.prompt("重命名会话", (result, handler) -> { // TODO(i18n)
+                new IconedMenuItem(SVG.EDIT, i18n("ai.session.rename"), () -> Controllers.prompt(i18n("ai.session.rename.title"), (result, handler) -> {
                     String name = result == null ? "" : result.trim();
                     if (!name.isEmpty()) {
                         session.setTitle(name);
@@ -1100,14 +1091,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     }
                     handler.resolve();
                 }, session.getTitle() == null ? "" : session.getTitle()), popup),
-                new IconedMenuItem(SVG.KEEP, session.isPinned() ? "取消置顶" : "置顶", () -> { // TODO(i18n)
+                new IconedMenuItem(SVG.KEEP, session.isPinned() ? i18n("ai.session.unpin") : i18n("ai.session.pin"), () -> {
                     session.setPinned(!session.isPinned());
                     persistStore();
                     refreshSessionList();
                 }, popup),
                 new MenuSeparator(),
-                new IconedMenuItem(SVG.DELETE, "删除", () -> Controllers.confirm( // TODO(i18n)
-                        "删除会话「" + title + "」？此操作不可恢复。", // TODO(i18n)
+                new IconedMenuItem(SVG.DELETE, i18n("ai.session.delete"), () -> Controllers.confirm(
+                        i18n("ai.session.delete.confirm", title),
                         i18n("button.remove"),
                         () -> deleteSession(session.getId()),
                         null), popup));
@@ -1127,12 +1118,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
         }
         if (date.equals(today.minusDays(1))) {
-            return "昨天";
+            return i18n("ai.session.time.yesterday");
         }
         if (date.getYear() == today.getYear()) {
-            return date.format(java.time.format.DateTimeFormatter.ofPattern("M月d日"));
+            return date.format(java.time.format.DateTimeFormatter.ofPattern(i18n("ai.session.time.pattern.same_year")));
         }
-        return date.format(java.time.format.DateTimeFormatter.ofPattern("yyyy年M月d日"));
+        return date.format(java.time.format.DateTimeFormatter.ofPattern(i18n("ai.session.time.pattern.other_year")));
     }
 
     private void deleteSession(String sessionId) {
@@ -1268,7 +1259,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         SVGContainer aiIcon = SVG.AI.createIcon(48);
         aiIcon.setOpacity(0.3);
 
-        Label emptyTitle = new Label("有什么可以帮忙？"); // TODO(i18n)
+        Label emptyTitle = new Label(i18n("ai.chat.empty.title"));
         emptyTitle.getStyleClass().add("title-label");
 
         Label emptyText = new Label(i18n("ai.input_placeholder"));
@@ -1313,8 +1304,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // show an actionable hint + CTA into the settings page instead (mutually exclusive with
         // the chips; see updateEmptyState).
         HintPane noProviderHint = new HintPane(org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO);
-        noProviderHint.setText("尚未配置模型服务，完成配置后即可开始对话。"); // TODO(i18n)
-        JFXButton configureBtn = FXUtils.newRaisedButton("配置模型服务"); // TODO(i18n)
+        noProviderHint.setText(i18n("ai.chat.empty.no_provider"));
+        JFXButton configureBtn = FXUtils.newRaisedButton(i18n("ai.chat.empty.go_settings"));
         configureBtn.setOnAction(e -> openSettingsPage());
         noProviderBox = new VBox(8, noProviderHint, configureBtn);
         noProviderBox.setAlignment(Pos.CENTER);
@@ -1379,11 +1370,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         setupModelSelector();
 
         JFXButton searchBtn = FXUtils.newToggleButton4(SVG.SEARCH, 16);
-        FXUtils.installFastTooltip(searchBtn, "搜索会话"); // TODO(i18n)
+        FXUtils.installFastTooltip(searchBtn, i18n("ai.session.search"));
         searchBtn.setOnAction(e -> openSearchDialog());
 
         JFXButton chatSettingsBtn = FXUtils.newToggleButton4(SVG.TUNE, 16);
-        FXUtils.installFastTooltip(chatSettingsBtn, "聊天设置"); // TODO(i18n)
+        FXUtils.installFastTooltip(chatSettingsBtn, i18n("ai.chat.settings"));
         chatSettingsBtn.setOnAction(e -> showChatSettingsDrawer());
 
         HBox toolbarControls = new HBox(6, modelSelector, searchBtn, chatSettingsBtn);
@@ -1497,13 +1488,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// with AISettingsPage's "默认推理强度" row (package-private on purpose).
     static String reasoningEffortLabel(String level) {
         if (level == null) return "";
-        return switch (level) { // TODO(i18n): ai.reasoning.effort.* keys, stage C
-            case "", "none" -> "不思考";
-            case "low" -> "快速";
-            case "medium" -> "平衡";
-            case "high" -> "深入";
-            case "xhigh" -> "更深入";
-            case "max" -> "极限";
+        return switch (level) {
+            case "", "none" -> i18n("ai.reasoning.effort.none");
+            case "low" -> i18n("ai.reasoning.effort.low");
+            case "medium" -> i18n("ai.reasoning.effort.medium");
+            case "high" -> i18n("ai.reasoning.effort.high");
+            case "xhigh" -> i18n("ai.reasoning.effort.xhigh");
+            case "max" -> i18n("ai.reasoning.effort.max");
             default -> level;
         };
     }
@@ -1664,7 +1655,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         AiSession current = sessionStore.getCurrentSession();
         if (current == null) return;
         if (current.getMessages().isEmpty()) {
-            addSystemMessage("当前对话为空，无需压缩。");
+            addSystemMessage(i18n("ai.chat.compact.empty"));
             return;
         }
         ChatAgent agent = getOrCreateChatAgent();
@@ -1673,7 +1664,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         final AiSession target = current;
-        setStatus("正在压缩上下文…");
+        setStatus(i18n("ai.chat.compact.working"));
         agent.compact().whenComplete((summary, err) -> Platform.runLater(() -> {
             setStatus(null);
             if (err != null) {
@@ -1681,7 +1672,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 while (cause.getCause() != null && cause.getCause() != cause) {
                     cause = cause.getCause();
                 }
-                addSystemMessage("压缩失败：" + (cause.getMessage() != null
+                addSystemMessage(i18n("ai.chat.compact.failed", cause.getMessage() != null
                         ? cause.getMessage() : cause.getClass().getSimpleName()));
                 return;
             }
@@ -1761,7 +1752,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // Stop only the response of the session on screen; if another session is the one
                 // streaming, don't kill it from here — tell the user where to stop it.
                 if (isStreamingCurrentSession()) stopResponse();
-                else Controllers.showToast("另一个会话正在生成回复，切回那个会话可以停止它");
+                else Controllers.showToast(i18n("ai.chat.busy_other"));
                 return;
             }
             sendMessage();
@@ -1801,7 +1792,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         jobsToggleIcon = SVG.KEYBOARD_ARROW_UP.createIcon(16);
         jobsToggleIcon.setMouseTransparent(true);
-        Label jobsTitle = new Label("后台任务");
+        Label jobsTitle = new Label(i18n("ai.jobs.title"));
         jobsTitle.getStyleClass().add("ai-caption");
         Region jobsSpacer = new Region();
         HBox.setHgrow(jobsSpacer, Priority.ALWAYS);
@@ -1841,7 +1832,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         thinkBtn = FXUtils.newToggleButton4(SVG.LIGHTBULB, 16);
 
         String currentThink = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
-        FXUtils.installFastTooltip(thinkBtn, "思考强度：" + reasoningEffortLabel(currentThink)); // TODO(i18n)
+        FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(currentThink)));
         thinkBtn.setOnAction(e -> {
             // Toggle: if the popup is already open, close it instead of stacking another.
             if (thinkingPopup != null && thinkingPopup.isShowing()) {
@@ -1862,7 +1853,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     // AiSettings has no auto-save — without this the picked level silently
                     // reverted on restart (P6/C-17).
                     persistAiSettings();
-                    FXUtils.installFastTooltip(thinkBtn, "思考强度：" + reasoningEffortLabel(level)); // TODO(i18n)
+                    FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(level)));
                 }, popup).addTooltip("reasoning_effort: " + level));
             }
             thinkingPopup = popup;
@@ -2014,7 +2005,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 int remain = ATTACHMENT_MAX_CHARS - sb.length();
                 if (n >= remain) {
                     sb.append(buf, 0, remain);
-                    sb.append("\n…（文件过大，已截断）");
+                    sb.append("\n").append(i18n("ai.composer.attachment.truncated"));
                     break;
                 }
                 sb.append(buf, 0, n);
@@ -2032,11 +2023,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         StringBuilder sb = new StringBuilder(text);
         for (Path p : files) {
-            sb.append("\n\n[附件: ").append(p.getFileName()).append("]\n");
+            sb.append("\n\n").append(i18n("ai.composer.attachment.label", p.getFileName())).append("\n");
             try {
                 sb.append(readAttachmentHead(p));
             } catch (IOException ex) {
-                sb.append("（读取失败：").append(ex.getMessage()).append("）");
+                sb.append(i18n("ai.composer.attachment.read_failed", ex.getMessage()));
             }
         }
         return sb.toString();
@@ -2087,7 +2078,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 }
             }
             if (!success) {
-                Controllers.showToast("仅支持文本类文件（.log/.txt/.json 等）"); // TODO(i18n)
+                Controllers.showToast(i18n("ai.composer.attachment.text_only"));
             }
         }
         event.setDropCompleted(success);
@@ -2223,22 +2214,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         });
 
-        SLASH_COMMANDS.put("/new", "新建一个会话");
-        SLASH_COMMANDS.put("/clear", "清空当前对话上下文");
-        SLASH_COMMANDS.put("/compact", "把当前对话压缩成摘要以节省 token");
-        SLASH_COMMANDS.put("/sessions", "搜索并切换历史会话");
-        SLASH_COMMANDS.put("/import", "从导出的 JSON 导入会话（不覆盖现有）");
-        SLASH_COMMANDS.put("/skills", "列出已启用的技能");
-        SLASH_COMMANDS.put("/plan", "切换计划模式（只读分析，批准前不改动）");
-        SLASH_COMMANDS.put("/model", "显示当前模型");
-        SLASH_COMMANDS.put("/crash", "分析最新的崩溃报告");
-        SLASH_COMMANDS.put("/log", "读取并分析最新的游戏日志");
-        SLASH_COMMANDS.put("/help", "显示命令帮助");
+        SLASH_COMMANDS.put("/new", i18n("ai.composer.command.new"));
+        SLASH_COMMANDS.put("/clear", i18n("ai.composer.command.clear"));
+        SLASH_COMMANDS.put("/compact", i18n("ai.composer.command.compact"));
+        SLASH_COMMANDS.put("/sessions", i18n("ai.composer.command.sessions"));
+        SLASH_COMMANDS.put("/import", i18n("ai.composer.command.import"));
+        SLASH_COMMANDS.put("/skills", i18n("ai.composer.command.skills"));
+        SLASH_COMMANDS.put("/plan", i18n("ai.composer.command.plan"));
+        SLASH_COMMANDS.put("/model", i18n("ai.composer.command.model"));
+        SLASH_COMMANDS.put("/crash", i18n("ai.composer.command.crash"));
+        SLASH_COMMANDS.put("/log", i18n("ai.composer.command.log"));
+        SLASH_COMMANDS.put("/help", i18n("ai.composer.command.help"));
     }
 
     /// Builds the /help text from {@link #SLASH_COMMANDS}.
     private static String buildSlashHelpText() {
-        StringBuilder sb = new StringBuilder("可用命令：");
+        StringBuilder sb = new StringBuilder(i18n("ai.composer.command.available"));
         for (java.util.Map.Entry<String, String> e : SLASH_COMMANDS.entrySet()) {
             sb.append('\n').append(e.getKey()).append(" — ").append(e.getValue());
         }
@@ -2448,9 +2439,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// skippable via a remembered preference, see {@link #showConfirmDialog}.
     private boolean confirmCriticalOperation(String toolName, String summary) {
         // Severity is carried by the dialog's native red ERROR icon, not "⛔" characters.
-        return showConfirmDialog(toolName, null, "高危操作 · 二次确认", // TODO(i18n)
-                "高危操作，可能不可恢复！请仔细确认：\n\n" + summary // TODO(i18n)
-                        + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
+        return showConfirmDialog(toolName, null, i18n("ai.confirm.critical.title"),
+                i18n("ai.confirm.critical.text", summary),
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.ERROR,
                 180, false);
     }
@@ -2874,7 +2864,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// dropped resend). Block them until the user stops the current response.
     private boolean blockedWhileStreaming() {
         if (isStreaming()) {
-            Controllers.showToast("请先停止当前回复，再编辑/重发/删除消息");
+            Controllers.showToast(i18n("ai.msg.stop_first"));
             return true;
         }
         return false;
@@ -2884,7 +2874,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (blockedWhileStreaming()) return;
         AiSession cur = sessionStore.getCurrentSession();
         if (cur == null) return;
-        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + "（分支）");
+        AiSession branch = sessionStore.createBranch(cur, index, cur.getTitle() + i18n("ai.session.branch_suffix"));
         persistStore();
         refreshSessionList();
         loadSessionMessages(branch);
@@ -2911,7 +2901,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (prompt.isEmpty()) {
             // No preceding user message (e.g. the lone summary left by /compact): there is
             // nothing to regenerate FROM — truncating here silently wiped the whole session.
-            Controllers.showToast("这条消息没有对应的提问，无法重新生成");
+            Controllers.showToast(i18n("ai.msg.no_question_to_regenerate"));
             return;
         }
         cur.truncateFrom(index);
@@ -2961,9 +2951,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         editor.setPrefRowCount(Math.min(10, Math.max(2, lines)));
         editor.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
 
-        JFXButton cancel = new JFXButton("取消");
+        JFXButton cancel = new JFXButton(i18n("button.cancel"));
         cancel.getStyleClass().add("dialog-cancel"); // native dialog-button styling
-        JFXButton confirm = new JFXButton("确定");
+        JFXButton confirm = new JFXButton(i18n("button.ok"));
         confirm.getStyleClass().add("dialog-accept");
         HBox btnRow = new HBox(8, cancel, confirm);
         btnRow.setAlignment(Pos.CENTER_RIGHT);
@@ -3019,8 +3009,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// only new ones are added. Wired to the `/import` slash command.
     private void importSessions() {
         javafx.stage.FileChooser fc = new javafx.stage.FileChooser();
-        fc.setTitle("导入会话");
-        fc.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter("会话 JSON (*.json)", "*.json"));
+        fc.setTitle(i18n("ai.session.import.title"));
+        fc.getExtensionFilters().add(new javafx.stage.FileChooser.ExtensionFilter(i18n("ai.session.import.filter"), "*.json"));
         java.io.File chosen = fc.showOpenDialog(Controllers.getStage());
         if (chosen == null) return;
         try {
@@ -3029,10 +3019,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             persistStore();
             refreshSessionList();
             Controllers.showToast(added > 0
-                    ? "已导入 " + added + " 个会话"
-                    : "没有可导入的新会话（可能都已存在，或文件不含会话）");
+                    ? i18n("ai.session.import.done", added)
+                    : i18n("ai.session.import.none"));
         } catch (Exception ex) {
-            Controllers.showToast("导入失败：" + (ex.getMessage() != null ? ex.getMessage() : "文件格式不正确"));
+            Controllers.showToast(i18n("ai.session.import.failed",
+                    ex.getMessage() != null ? ex.getMessage() : i18n("ai.session.import.bad_format")));
         }
     }
 
@@ -3045,8 +3036,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // of mind (e.g. while an `ask` panel is waiting for them) instead of clicking Stop;
             // say so and leave their typed text in the box so nothing is lost.
             Controllers.showToast(isStreamingCurrentSession()
-                    ? "AI 正在处理上一条消息，暂时无法发送 — 如果上面有问题在等你回答，请先在那里作答；要打断的话点一下发送按钮（此时是“停止”）"
-                    : "另一个会话正在生成回复，切回那个会话可以停止它，或稍候再发");
+                    ? i18n("ai.chat.busy_current")
+                    : i18n("ai.chat.busy_other_wait"));
             return;
         }
         String text = inputField.getText().trim();
@@ -3079,7 +3070,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 inputField.clear();
                 String summary = skillRegistry.summarizeEnabled();
                 addSystemMessage(summary.startsWith("(no")
-                        ? "当前没有已启用的技能。" : "已启用的技能：\n" + summary);
+                        ? i18n("ai.chat.skills.none") : i18n("ai.chat.skills.enabled", summary));
                 return;
             }
             case "/compact" -> {
@@ -3092,8 +3083,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 planMode = !planMode;
                 updatePlanBadge();
                 addSystemMessage(planMode
-                        ? "已开启计划模式：我会只读分析并先给出分步计划，批准前不做任何改动（写入/安装/删除/启动等工具已暂时禁用）。再次输入 /plan 退出。"
-                        : "已关闭计划模式，现在可以正常执行操作。");
+                        ? i18n("ai.chat.plan.on")
+                        : i18n("ai.chat.plan.off"));
                 return;
             }
             case "/help" -> {
@@ -3138,9 +3129,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Single toast for "daily AI spend cap reached" — the copy previously lived duplicated in
     /// two call sites and had already started to drift (bug 8.2).
     private void warnSpendLimitReached() {
-        Controllers.showToast("已达今日 AI 花费上限（约 $"
-                + String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())
-                + "）。可在 AI 设置里调高上限，或明天再用。"); // TODO(i18n)
+        Controllers.showToast(i18n("ai.spend.over_limit",
+                String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())));
     }
 
     /// Core send path shared by the composer ({@link #sendMessage}) and external/synthetic
@@ -3154,7 +3144,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // Callers that pre-check isStreaming (the composer) never reach this; the ones that
             // don't (resend/regenerate/inline-edit, the async attachment-read hand-off) used to
             // drop the message with zero feedback.
-            Controllers.showToast("上一条回复仍在进行，本条消息未发送"); // TODO(i18n)
+            Controllers.showToast(i18n("ai.chat.busy_not_sent"));
             return;
         }
         if (text == null || text.isBlank()) return;
@@ -3532,8 +3522,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         if (autoContinueDepth >= AUTO_CONTINUE_LIMIT) {
-            addSystemMessage("后台任务「" + batch.get(0).getLabel() + "」等 " + batch.size()
-                    + " 项已结束，但连续自动继续已达上限，已暂停以免空转。发送任意消息让我接着处理。");
+            addSystemMessage(i18n("ai.jobs.auto_continue_capped", batch.get(0).getLabel(), batch.size()));
             return;
         }
         autoContinueDepth++;
@@ -3545,28 +3534,30 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// ONE reply instead of acknowledging each individually.
     private static String buildCompletionPrompt(
             java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.Job> batch) {
+        // NOTE: the ai.jobs.receipt.* keys are MODEL INPUT (an auto-continue prompt injected into
+        // the conversation), not pure UI copy — they still go through i18n for unified maintenance,
+        // same policy as ai.crash.prompt (BF P11).
         if (batch.size() == 1) {
             org.jackhuang.hmcl.ai.tools.AiJobManager.Job job = batch.get(0);
             String status = job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED
-                    ? "已完成" : "失败";
+                    ? i18n("ai.jobs.receipt.done") : i18n("ai.jobs.receipt.failed");
             String detail = jobDetail(job, 2000);
-            return "（后台任务 #" + job.getId() + "「" + job.getLabel() + "」" + status + "）"
-                    + (detail.isEmpty() ? "" : "结果：\n" + detail)
-                    + "\n请据此继续。";
+            return i18n("ai.jobs.receipt.single", job.getId(), job.getLabel(), status)
+                    + (detail.isEmpty() ? "" : i18n("ai.jobs.receipt.result") + detail)
+                    + "\n" + i18n("ai.jobs.receipt.continue");
         }
-        StringBuilder sb = new StringBuilder("（").append(batch.size()).append(" 个后台任务已结束）\n");
+        StringBuilder sb = new StringBuilder(i18n("ai.jobs.receipt.batch_header", batch.size()));
         for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job : batch) {
             String status = job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED
-                    ? "已完成" : "失败";
-            sb.append("#").append(job.getId()).append("「").append(job.getLabel()).append("」")
-                    .append(status);
+                    ? i18n("ai.jobs.receipt.done") : i18n("ai.jobs.receipt.failed");
+            sb.append(i18n("ai.jobs.receipt.batch_item", job.getId(), job.getLabel(), status));
             String detail = jobDetail(job, 400);
             if (!detail.isEmpty()) {
                 sb.append("：").append(detail.replace('\n', ' '));
             }
             sb.append('\n');
         }
-        sb.append("请据此一次性继续，不要逐个复述。");
+        sb.append(i18n("ai.jobs.receipt.batch_continue"));
         return sb.toString();
     }
 
@@ -3616,9 +3607,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             HBox.setHgrow(name, Priority.ALWAYS);
             // Append a suffix so "2/10" reads as "2 of 10 running", not a countdown — mirrors
             // JobProgressBadge's "done/total 已完成" pattern for the same run/total ambiguity.
-            Label count = new Label(run + "/" + total + " 运行中");
+            Label count = new Label(i18n("ai.jobs.running_fraction", run, total));
             count.getStyleClass().add("ai-caption");
-            JFXButton cancelBtn = new JFXButton("取消");
+            JFXButton cancelBtn = new JFXButton(i18n("button.cancel"));
             cancelBtn.getStyleClass().add("dialog-error"); // native error-text button tier (VS §3.5)
             java.util.List<String> ids = runningIds.getOrDefault(e.getKey(), java.util.Collections.emptyList());
             cancelBtn.setOnAction(ev -> ids.forEach(id -> org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().cancel(id)));
@@ -3631,7 +3622,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         boolean any = totalRunning > 0;
         jobsPane.setVisible(any);
         jobsPane.setManaged(any);
-        jobsCountLabel.setText(totalRunning + " 运行中");
+        jobsCountLabel.setText(i18n("ai.jobs.running_count", totalRunning));
         if (!any) {
             // Nothing running → collapse and reset so the next busy spell starts compact.
             jobsExpanded = false;
@@ -3713,7 +3704,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // Queue instead of silently dropping (bug 7.6): exitStreamingState() delivers the
                 // next queued prompt once the in-flight turn ends.
                 pendingExternalPrompts.addLast(text);
-                Controllers.showToast("AI 正在回复，你的诊断请求已排队，完成后自动发送"); // TODO(i18n)
+                Controllers.showToast(i18n("ai.diag.queued"));
                 return;
             }
             sendText(text, LlmMessage.KIND_EVENT);
@@ -3729,11 +3720,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             next.run();
             return;
         }
-        String text = "HMCL-AE 的 AI 助手目前处于测试阶段。\n\n"
-                + "它可以代你执行下载、安装、修改与删除文件、编辑甚至删除存档等操作。"
-                + "请务必对重要数据（尤其是存档）先做好备份，并在每次确认弹窗里看清要执行的操作再放行。\n\n"
-                + "测试阶段可能出现错误或意外结果，请自行评估并承担风险。";
-        Controllers.confirmWithCountdown(text, "AI 助手 · 测试阶段须知", 5,
+        String text = i18n("ai.chat.beta_notice.text");
+        Controllers.confirmWithCountdown(text, i18n("ai.chat.beta_notice.title"), 5,
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.WARNING,
                 () -> {
                     aiSettings.setAiRiskNoticeAccepted(true);
@@ -3841,7 +3829,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 AiSession askOwner = sessionStore.getSession(streamSessionId);
                 String ownerTitle = (askOwner != null && askOwner.getTitle() != null && !askOwner.getTitle().isBlank())
                         ? askOwner.getTitle() : streamSessionId;
-                askSourcePrefix = "[" + ownerTitle + "] "; // TODO(i18n)
+                askSourcePrefix = i18n("ai.ask.source_prefix", ownerTitle) + " ";
             }
             final String titlePrefix = askSourcePrefix;
 
@@ -4087,7 +4075,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 target.setVisible(false);
                 target.setManaged(false);
             }
-            Label errTitle = new Label("回复失败"); // TODO(i18n)
+            Label errTitle = new Label(i18n("ai.error.reply_failed"));
             errTitle.getStyleClass().add("ai-caption-bold");
             Label errBody = new Label(message);
             errBody.setWrapText(true);
@@ -4104,7 +4092,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // Offer a one-click retry of the failed turn (transient 429 / timeout / connection
             // drop) — a native border button in its own aligned row (2-13/7.11: it used to be a
             // bare unpositioned JFXButton behind an always-true instanceof condition).
-            JFXButton retryBtn = FXUtils.newBorderButton("重试"); // TODO(i18n)
+            JFXButton retryBtn = FXUtils.newBorderButton(i18n("button.retry"));
             retryBtn.setGraphic(SVG.REFRESH.createIcon(14));
             HBox retryRow = new HBox(retryBtn);
             retryRow.setAlignment(Pos.CENTER_LEFT);
@@ -4403,9 +4391,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (ratio >= 0.8 && ratio < 1.0) {
             if (!spendWarned80) {
                 spendWarned80 = true;
-                Controllers.showToast("今日 AI 估算花费已用约 " + Math.round(ratio * 100)
-                        + "%（上限 $" + String.format(java.util.Locale.ROOT, "%.2f",
-                        spendTracker().getDailyLimitUsd()) + "）");
+                Controllers.showToast(i18n("ai.spend.warn_80", Math.round(ratio * 100),
+                        String.format(java.util.Locale.ROOT, "%.2f", spendTracker().getDailyLimitUsd())));
             }
         } else if (ratio < 0.8) {
             spendWarned80 = false;
@@ -4504,7 +4491,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // reasoning/tool cards. The card is rebuilt on every todo_write, so the header/body
             // pair is rebuilt too — todoExpanded carries the expand state across rebuilds
             // (§B B7: the collapse capability must not regress).
-            CollapseHeader header = new CollapseHeader("任务清单 (" + done + "/" + todos.size() + ")"); // TODO(i18n)
+            CollapseHeader header = new CollapseHeader(i18n("ai.todo.title", done, todos.size()));
 
             VBox body = new VBox(4);
             body.setPadding(new Insets(4, 0, 0, 0)); // old .ai-todo-body padding, moved to code
@@ -4638,7 +4625,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // result is still persisted and visible in the ai-trace log; this only trims what
                 // the collapsible card renders.
                 if (text.length() > 4000) {
-                    text = text.substring(0, 4000) + "\n…（结果过长，已截断显示，完整内容见 ai-trace 日志）"; // TODO(i18n)
+                    text = text.substring(0, 4000) + "\n" + i18n("ai.tool.result_truncated");
                 }
                 result.setText(text);
                 hasResult.set(true);
@@ -4668,7 +4655,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             getStyleClass().add("ai-tool-card");
             setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
 
-            header = new CollapseHeader("已调用 0 个工具"); // placeholder, overwritten by the 1st add() // TODO(i18n)
+            header = new CollapseHeader(i18n("ai.tool.group.summary", 0)); // placeholder, overwritten by the 1st add()
             body.visibleProperty().bind(header.expandedProperty()); // starts collapsed (default false)
             body.managedProperty().bind(header.expandedProperty());
             getChildren().addAll(header, body);
@@ -4677,7 +4664,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         void add(ToolCard card) {
             body.getChildren().add(card);
             count++;
-            header.getTitleLabel().setText("已调用 " + count + " 个工具"); // TODO(i18n)
+            header.getTitleLabel().setText(i18n("ai.tool.group.summary", count));
         }
     }
 
@@ -4883,12 +4870,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         ComponentList display = new ComponentList();
 
         LineButton userName = new LineButton();
-        userName.setTitle("用户名");
+        userName.setTitle(i18n("ai.chat.settings.user_name"));
         userName.setSubtitle(chatSettings.userName);
         userName.setTrailingIcon(SVG.EDIT);
-        userName.setOnAction(e -> Controllers.prompt("用户名", (result, handler) -> {
+        userName.setOnAction(e -> Controllers.prompt(i18n("ai.chat.settings.user_name"), (result, handler) -> {
             String name = result.trim();
-            chatSettings.userName = name.isEmpty() ? "用户" : name;
+            chatSettings.userName = name.isEmpty() ? i18n("ai.chat.settings.user_default") : name;
             saveChatSettings();
             userName.setSubtitle(chatSettings.userName);
             refreshMessageList();
@@ -4897,9 +4884,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         display.getContent().add(userName);
 
         LineSelectButton<String> msgStyle = new LineSelectButton<>();
-        msgStyle.setTitle("消息样式");
+        msgStyle.setTitle(i18n("ai.chat.settings.message_style"));
         msgStyle.setItems(List.of("bubble", "flat"));
-        msgStyle.setNullSafeConverter(v -> "flat".equals(v) ? "平铺" : "气泡");
+        msgStyle.setNullSafeConverter(v -> "flat".equals(v)
+                ? i18n("ai.chat.settings.style_flat") : i18n("ai.chat.settings.style_bubble"));
         msgStyle.setValue("flat".equals(chatSettings.messageStyle) ? "flat" : "bubble");
         msgStyle.valueProperty().addListener((o, ov, nv) -> {
             if (nv != null) {
@@ -4911,12 +4899,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         display.getContent().add(msgStyle);
 
         LineSelectButton<String> fontSize = new LineSelectButton<>();
-        fontSize.setTitle("字号");
+        fontSize.setTitle(i18n("ai.chat.settings.font_size"));
         fontSize.setItems(List.of("small", "normal", "large"));
         fontSize.setNullSafeConverter(v -> switch (v) {
-            case "small" -> "小";
-            case "large" -> "大";
-            default -> "正常";
+            case "small" -> i18n("ai.chat.settings.font_small");
+            case "large" -> i18n("ai.chat.settings.font_large");
+            default -> i18n("ai.chat.settings.font_normal");
         });
         fontSize.setValue(chatSettings.fontSize);
         fontSize.valueProperty().addListener((o, ov, nv) -> {
@@ -4929,8 +4917,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         display.getContent().add(fontSize);
 
         LineToggleButton markdown = new LineToggleButton();
-        markdown.setTitle("Markdown 渲染");
-        markdown.setSubtitle("渲染 AI 回复中的 Markdown 格式");
+        markdown.setTitle(i18n("ai.chat.settings.markdown"));
+        markdown.setSubtitle(i18n("ai.chat.settings.markdown.desc"));
         markdown.setSelected(chatSettings.markdownRender);
         markdown.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.markdownRender = nv;
@@ -4946,8 +4934,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         display.getContent().add(toolCalls);
 
         LineToggleButton colorEmoji = new LineToggleButton();
-        colorEmoji.setTitle("彩色 Emoji（联网）");
-        colorEmoji.setSubtitle("聊天内联渲染彩色 emoji；首次使用时从 Twemoji 仓库联网下载并缓存");
+        colorEmoji.setTitle(i18n("ai.chat.settings.color_emoji"));
+        colorEmoji.setSubtitle(i18n("ai.chat.settings.color_emoji.desc"));
         colorEmoji.setSelected(chatSettings.colorEmoji);
         colorEmoji.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.colorEmoji = nv;
@@ -4961,8 +4949,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         ComponentList usage = new ComponentList();
 
         LineToggleButton showUsage = new LineToggleButton();
-        showUsage.setTitle("显示用量");
-        showUsage.setSubtitle("在 AI 回复下方显示 token 用量");
+        showUsage.setTitle(i18n("ai.chat.settings.usage"));
+        showUsage.setSubtitle(i18n("ai.chat.settings.usage.desc"));
         showUsage.setSelected(chatSettings.showUsage);
         showUsage.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.showUsage = nv;
@@ -4972,8 +4960,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         usage.getContent().add(showUsage);
 
         LineToggleButton estimate = new LineToggleButton();
-        estimate.setTitle("估算 Token");
-        estimate.setSubtitle("无服务商用量数据时按字符估算");
+        estimate.setTitle(i18n("ai.chat.settings.estimate"));
+        estimate.setSubtitle(i18n("ai.chat.settings.estimate.desc"));
         estimate.setSelected(chatSettings.estimateTokens);
         estimate.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.estimateTokens = nv;
@@ -4983,8 +4971,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         usage.getContent().add(estimate);
 
         LineToggleButton cost = new LineToggleButton();
-        cost.setTitle("显示花费");
-        cost.setSubtitle("按模型计费估算并显示花费（需在模型高级设置中填写单价）");
+        cost.setTitle(i18n("ai.chat.settings.cost"));
+        cost.setSubtitle(i18n("ai.chat.settings.cost.desc"));
         cost.setSelected(chatSettings.showCost);
         cost.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.showCost = nv;
@@ -4997,14 +4985,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         ComponentList interaction = new ComponentList();
 
         LineToggleButton stream = new LineToggleButton();
-        stream.setTitle("流式输出");
-        stream.setSubtitle("逐字显示模型回答，关闭后等待完整响应");
+        stream.setTitle(i18n("ai.chat.settings.stream"));
+        stream.setSubtitle(i18n("ai.chat.settings.stream.desc"));
         bindPersisted(stream, aiSettings.streamProperty());
         interaction.getContent().add(stream);
 
         LineToggleButton shortcut = new LineToggleButton();
-        shortcut.setTitle("显示快捷菜单");
-        shortcut.setSubtitle("输入框显示斜杠命令等快捷菜单");
+        shortcut.setTitle(i18n("ai.chat.settings.shortcut_menu"));
+        shortcut.setSubtitle(i18n("ai.chat.settings.shortcut_menu.desc"));
         shortcut.setSelected(chatSettings.showShortcutMenu);
         shortcut.selectedProperty().addListener((o, ov, nv) -> {
             chatSettings.showShortcutMenu = nv;
@@ -5013,21 +5001,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         interaction.getContent().add(shortcut);
 
         LineToggleButton enterSend = new LineToggleButton();
-        enterSend.setTitle("回车发送");
-        enterSend.setSubtitle("开：Enter 发送、Shift+Enter 换行；关：Ctrl+Enter 发送");
+        enterSend.setTitle(i18n("ai.chat.settings.enter_send"));
+        enterSend.setSubtitle(i18n("ai.chat.settings.enter_send.desc"));
         bindPersisted(enterSend, aiSettings.sendOnEnterProperty());
         interaction.getContent().add(enterSend);
 
         LineToggleButton autoScroll = new LineToggleButton();
-        autoScroll.setTitle("自动滚动到底部");
-        autoScroll.setSubtitle("有新消息时自动滚到底（手动上滑时暂停）");
+        autoScroll.setTitle(i18n("ai.chat.settings.auto_scroll"));
+        autoScroll.setSubtitle(i18n("ai.chat.settings.auto_scroll.desc"));
         bindPersisted(autoScroll, aiSettings.autoScrollEnabledProperty());
         interaction.getContent().add(autoScroll);
 
         return List.of(
-                ComponentList.createComponentListTitle("显示"), display,
-                ComponentList.createComponentListTitle("用量"), usage,
-                ComponentList.createComponentListTitle("交互"), interaction);
+                ComponentList.createComponentListTitle(i18n("ai.chat.settings.section.display")), display,
+                ComponentList.createComponentListTitle(i18n("ai.chat.settings.section.usage")), usage,
+                ComponentList.createComponentListTitle(i18n("ai.chat.settings.section.interaction")), interaction);
     }
 
     /// Shows the chat settings drawer sliding in from the right with a backdrop overlay.

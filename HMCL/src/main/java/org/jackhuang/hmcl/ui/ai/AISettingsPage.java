@@ -216,20 +216,20 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // since the underlying features are still otherwise functional; only navigation to them
         // from here was in scope for this change.
         AdvancedListBox sideBar = new AdvancedListBox()
-                .startCategory("通用")
-                .addNavigationDrawerTab(tab, generalTab, "全局设置", SVG.TUNE)
-                .addNavigationDrawerTab(tab, providerTab, "模型服务", SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
-                .startCategory("服务")
-                .addNavigationDrawerTab(tab, skillsTab, "技能", SVG.SCRIPT)
-                .addNavigationDrawerTab(tab, mcpTab, "MCP服务器", SVG.SCHEMA, SVG.SCHEMA_FILL)
-                .addNavigationDrawerTab(tab, searchTab, "网络搜索", SVG.SEARCH)
-                .startCategory("数据")
-                .addNavigationDrawerTab(tab, dataTab, "数据设置", SVG.FOLDER_OPEN)
-                .startCategory("高级")
-                .addNavigationDrawerTab(tab, advancedTab, "高级设置", SVG.SETTINGS, SVG.SETTINGS_FILL)
+                .startCategory(i18n("ai.settings.nav.general"))
+                .addNavigationDrawerTab(tab, generalTab, i18n("ai.settings.nav.global"), SVG.TUNE)
+                .addNavigationDrawerTab(tab, providerTab, i18n("ai.settings.nav.providers"), SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
+                .startCategory(i18n("ai.settings.nav.services"))
+                .addNavigationDrawerTab(tab, skillsTab, i18n("ai.settings.nav.skills"), SVG.SCRIPT)
+                .addNavigationDrawerTab(tab, mcpTab, i18n("ai.settings.nav.mcp"), SVG.SCHEMA, SVG.SCHEMA_FILL)
+                .addNavigationDrawerTab(tab, searchTab, i18n("ai.settings.nav.search"), SVG.SEARCH)
+                .startCategory(i18n("ai.settings.nav.data"))
+                .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN)
+                .startCategory(i18n("ai.settings.nav.advanced"))
+                .addNavigationDrawerTab(tab, advancedTab, i18n("ai.settings.nav.advanced_settings"), SVG.SETTINGS, SVG.SETTINGS_FILL)
                 .startCategory(i18n("help").toUpperCase(java.util.Locale.ROOT))
-                .addNavigationDrawerTab(tab, helpTab, "帮助", SVG.FEEDBACK, SVG.FEEDBACK_FILL)
-                .addNavigationDrawerTab(tab, aboutTab, "关于 HMCL-AE", SVG.INFO, SVG.INFO_FILL);
+                .addNavigationDrawerTab(tab, helpTab, i18n("ai.settings.nav.help"), SVG.FEEDBACK, SVG.FEEDBACK_FILL)
+                .addNavigationDrawerTab(tab, aboutTab, i18n("ai.settings.nav.about"), SVG.INFO, SVG.INFO_FILL);
         FXUtils.setLimitWidth(sideBar, 200);
         setLeft(sideBar);
         setCenter(transitionPane);
@@ -295,7 +295,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         providerSublist = new ComponentSublist();
         providerSublist.setHasSubtitle(true);
         LineButton addProviderButton = new LineButton();
-        addProviderButton.setTitle("添加配置");
+        addProviderButton.setTitle(i18n("ai.settings.add_profile"));
         addProviderButton.setLeading(SVG.ADD, 20);
         addProviderButton.setOnAction(e -> createProfile());
         providerSublist.getContent().setAll(providerChoices, addProviderButton);
@@ -304,11 +304,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         modelSublist = new ComponentSublist();
         modelSublist.setHasSubtitle(true);
         LineButton loadModelButton = new LineButton();
-        loadModelButton.setTitle("获取模型列表");
+        loadModelButton.setTitle(i18n("ai.settings.load_models"));
         loadModelButton.setLeading(SVG.REFRESH, 20);
         loadModelButton.setOnAction(e -> showLoadModelsDialog());
         LineButton addModelButton = new LineButton();
-        addModelButton.setTitle("添加模型");
+        addModelButton.setTitle(i18n("ai.settings.add_model"));
         addModelButton.setLeading(SVG.ADD, 20);
         addModelButton.setOnAction(e -> addModel());
         modelSublist.getContent().setAll(modelChoices, loadModelButton, addModelButton);
@@ -324,7 +324,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         modelCard.getContent().add(modelSublist);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("服务商配置"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.profiles")),
                 providerCard,
                 buildModelSectionTitle(),
                 modelCard,
@@ -336,12 +336,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Builds the "模型配置" category-title row with the connectivity-test (🧪) button on the
     /// right. (Loading models lives as a row inside the model card, above 添加模型.)
     private Node buildModelSectionTitle() {
-        Node title = ComponentList.createComponentListTitle("模型配置");
+        Node title = ComponentList.createComponentListTitle(i18n("ai.settings.model_config"));
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
 
         JFXButton testButton = FXUtils.newToggleButton4(SVG.ROCKET_LAUNCH, 16);
-        FXUtils.installFastTooltip(testButton, "测试连通性");
+        FXUtils.installFastTooltip(testButton, i18n("ai.settings.test_connectivity"));
         testButton.setOnAction(e -> showTestModelsDialog());
 
         HBox row = new HBox(8, title, spacer, testButton);
@@ -378,23 +378,25 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private void updateProviderDescription() {
         AiProviderProfile profile = aiSettings.findSelectedProfile();
-        String name = profile != null ? displayProfileName(profile) : "未配置";
+        String name = profile != null ? displayProfileName(profile) : i18n("ai.settings.not_configured");
         if (providerSublist != null) providerSublist.setDescription(name);
         if (providerFeedback != null) {
-            providerFeedback.setText(profile == null ? "尚未配置任何提供商。" : "");
+            providerFeedback.setText(profile == null ? i18n("ai.settings.no_provider_yet") : "");
         }
     }
 
     private void updateModelDescription() {
         AiProviderProfile profile = aiSettings.findSelectedProfile();
-        String model = profile != null ? Objects.toString(profile.getEffectiveModelId(), "未设置") : "未设置";
+        String model = profile != null
+                ? Objects.toString(profile.getEffectiveModelId(), i18n("ai.settings.not_set"))
+                : i18n("ai.settings.not_set");
         if (modelSublist != null) modelSublist.setDescription(model);
     }
 
     private void createProfile() {
         AiProviderProfile profile = new AiProviderProfile();
         int number = aiSettings.getProfiles().size() + 1;
-        profile.setDisplayName("模型服务 " + number);
+        profile.setDisplayName(i18n("ai.settings.new_profile_name", number));
         profile.setProtocolFamily(AiProtocolFamily.OPENAI_COMPLETIONS.getId());
         AiProviderDefinition def = AiProviderDefinition.byId(profile.getProtocolFamily());
         if (def != null) profile.setEndpoint(def.getDefaultEndpoint());
@@ -426,7 +428,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private void editProfile(AiProviderProfile profile) {
         JFXTextField nameField = new JFXTextField(profile.getDisplayName());
-        nameField.setPromptText("配置名称");
+        nameField.setPromptText(i18n("ai.settings.profile_name"));
         JFXComboBox<String> protocolBox = new JFXComboBox<>();
         protocolBox.getItems().addAll("OpenAI Completions", "OpenAI Reasoning", "Anthropic");
         protocolBox.getSelectionModel().select(protocolIndexOf(profile.getProtocolFamily()));
@@ -451,8 +453,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         JFXComboBox<String> presetBox = new JFXComboBox<>();
         presetBox.setMaxWidth(Double.MAX_VALUE);
         presetBox.setVisibleRowCount(8);
-        presetBox.getItems().add("— 选择协议 / 服务商快速填写 —");
-        presetBox.getItems().addAll("协议:OpenAI Completions", "协议:OpenAI Reasoning", "协议:Anthropic");
+        presetBox.getItems().add(i18n("ai.settings.preset.placeholder"));
+        presetBox.getItems().addAll(
+                i18n("ai.settings.preset.protocol_prefix") + "OpenAI Completions",
+                i18n("ai.settings.preset.protocol_prefix") + "OpenAI Reasoning",
+                i18n("ai.settings.preset.protocol_prefix") + "Anthropic");
         for (ProviderPreset p : PROVIDER_PRESETS) presetBox.getItems().add(p.label());
         presetBox.getSelectionModel().selectFirst();
         presetBox.getSelectionModel().selectedIndexProperty().addListener((o, ov, nv) -> {
@@ -464,19 +469,19 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 endpointField.setText(p.endpoint());
                 protocolBox.getSelectionModel().select(p.protocolIndex());
                 consoleUrl[0] = p.consoleUrl();
-                getKeyLink.setText("获取 " + p.label() + " 的 API Key →");
+                getKeyLink.setText(i18n("ai.settings.get_api_key", p.label()));
                 getKeyLink.setVisible(true);
                 getKeyLink.setManaged(true);
             }
         });
 
-        JFXCheckBox enabledBox = new JFXCheckBox("启用");
+        JFXCheckBox enabledBox = new JFXCheckBox(i18n("button.enable"));
         enabledBox.setSelected(profile.isEnabled());
 
         VBox body = new VBox(12, formGrid(
-                "快速预设", presetBox,
-                "名称", nameField,
-                "协议", protocolBox,
+                i18n("ai.settings.preset.label"), presetBox,
+                i18n("ai.settings.field.name"), nameField,
+                i18n("ai.settings.field.protocol"), protocolBox,
                 "Endpoint", endpointField,
                 "API Key", apiKeyCell), enabledBox);
         FXUtils.setLimitWidth(body, FORM_WIDTH);
@@ -507,7 +512,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 super.onAccept();
             }
         };
-        dialog.setTitle("编辑配置");
+        dialog.setTitle(i18n("ai.settings.edit_profile"));
         dialog.setBody(body);
         Controllers.dialog(dialog);
     }
@@ -521,12 +526,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private void removeProfile(AiProviderProfile profile) {
         if (aiSettings.getProfiles().size() <= 1) {
-            setProviderFeedback("至少保留一个模型服务配置。", false);
+            setProviderFeedback(i18n("ai.settings.keep_one_profile"), false);
             return;
         }
         Controllers.confirm(
-                "确定删除 " + displayProfileName(profile) + "？",
-                "删除模型服务",
+                i18n("ai.settings.delete_profile.confirm", displayProfileName(profile)),
+                i18n("ai.settings.delete_profile.title"),
                 () -> {
                     aiSettings.removeProfile(profile.getId());
                     saveAiSettings();
@@ -541,7 +546,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private void addModel() {
         AiProviderProfile profile = aiSettings.findSelectedProfile();
         if (profile == null) {
-            setProviderFeedback("请先添加提供商。", false);
+            setProviderFeedback(i18n("ai.settings.add_provider_first"), false);
             return;
         }
         editModel(profile, new AiModelEntry(""));
@@ -554,18 +559,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // Captured BEFORE the edit so a rename of the default model can move defaultModelId along.
         final String originalId = entry.getId() == null ? "" : entry.getId();
         JFXTextField idField = new JFXTextField(entry.getId());
-        idField.setPromptText("例如 gpt-4.1 / claude-sonnet-4-5 / deepseek-chat");
+        idField.setPromptText(i18n("ai.settings.model.id_hint"));
         JFXTextField aliasField = new JFXTextField(entry.getAlias());
-        aliasField.setPromptText("可选");
+        aliasField.setPromptText(i18n("ai.settings.model.optional"));
 
         JFXTextField ctxField = new JFXTextField(entry.getContextWindow() > 0 ? String.valueOf(entry.getContextWindow()) : "");
-        ctxField.setPromptText("留空=默认");
+        ctxField.setPromptText(i18n("ai.settings.model.blank_default"));
         JFXTextField maxOutField = new JFXTextField(entry.getMaxOutputTokens() > 0 ? String.valueOf(entry.getMaxOutputTokens()) : "");
-        maxOutField.setPromptText("留空=默认");
+        maxOutField.setPromptText(i18n("ai.settings.model.blank_default"));
         JFXTextField tempField = new JFXTextField(entry.hasTemperature() ? String.valueOf(entry.getTemperature()) : "");
-        tempField.setPromptText("留空=默认，0~2");
+        tempField.setPromptText(i18n("ai.settings.model.temperature_hint"));
         JFXTextField reasoningField = new JFXTextField(entry.getReasoningEffort());
-        reasoningField.setPromptText("留空 / none / low / medium / high / xhigh / max");
+        reasoningField.setPromptText(i18n("ai.settings.model.reasoning_hint"));
         GridPane advGrid = new GridPane();
         advGrid.setHgap(10);
         advGrid.setVgap(8);
@@ -576,27 +581,27 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ac2.setPercentWidth(50);
         ac2.setHgrow(javafx.scene.layout.Priority.ALWAYS);
         advGrid.getColumnConstraints().addAll(ac1, ac2);
-        advGrid.add(captionedField("上下文窗口", ctxField), 0, 0);
-        advGrid.add(captionedField("最大输出 tokens", maxOutField), 1, 0);
-        advGrid.add(captionedField("温度", tempField), 0, 1);
-        advGrid.add(captionedField("默认推理强度", reasoningField), 1, 1);
+        advGrid.add(captionedField(i18n("ai.settings.context_window"), ctxField), 0, 0);
+        advGrid.add(captionedField(i18n("ai.settings.model.max_output"), maxOutField), 1, 0);
+        advGrid.add(captionedField(i18n("ai.settings.temperature"), tempField), 0, 1);
+        advGrid.add(captionedField(i18n("ai.settings.default_reasoning_effort"), reasoningField), 1, 1);
         JFXTextField inModalField = new JFXTextField(entry.getInputModalities());
-        inModalField.setPromptText("如 text 或 text,image");
+        inModalField.setPromptText(i18n("ai.settings.model.in_modal_hint"));
         JFXTextField outModalField = new JFXTextField(entry.getOutputModalities());
-        outModalField.setPromptText("如 text");
-        advGrid.add(captionedField("输入模态", inModalField), 0, 2);
-        advGrid.add(captionedField("输出模态", outModalField), 1, 2);
-        JFXCheckBox capToolsBox = new JFXCheckBox("工具调用");
+        outModalField.setPromptText(i18n("ai.settings.model.out_modal_hint"));
+        advGrid.add(captionedField(i18n("ai.settings.model.in_modal"), inModalField), 0, 2);
+        advGrid.add(captionedField(i18n("ai.settings.model.out_modal"), outModalField), 1, 2);
+        JFXCheckBox capToolsBox = new JFXCheckBox(i18n("ai.settings.model.cap_tools"));
         capToolsBox.setSelected(entry.isSupportsTools());
-        JFXCheckBox capVisionBox = new JFXCheckBox("图像识别");
+        JFXCheckBox capVisionBox = new JFXCheckBox(i18n("ai.settings.model.cap_vision"));
         capVisionBox.setSelected(entry.isSupportsVision());
-        JFXCheckBox capReasoningBox = new JFXCheckBox("推理模式");
+        JFXCheckBox capReasoningBox = new JFXCheckBox(i18n("ai.settings.model.cap_reasoning"));
         capReasoningBox.setSelected(entry.isSupportsReasoning());
         HBox capRow = new HBox(12, capToolsBox, capVisionBox, capReasoningBox);
         capRow.setAlignment(Pos.CENTER_LEFT);
-        advGrid.add(captionedField("模型能力", capRow), 0, 3, 2, 1);
+        advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 3, 2, 1);
         ComponentSublist advPane = new ComponentSublist();
-        advPane.setTitle("高级设置");
+        advPane.setTitle(i18n("ai.settings.advanced"));
         advPane.getContent().setAll(advGrid);
 
         JFXTextField inField = new JFXTextField(fmtPrice(entry.getInputPricePerMillion()));
@@ -614,12 +619,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         pc2.setPercentWidth(50);
         pc2.setHgrow(javafx.scene.layout.Priority.ALWAYS);
         priceGrid.getColumnConstraints().addAll(pc1, pc2);
-        priceGrid.add(captionedField("输入单价", inField), 0, 0);
-        priceGrid.add(captionedField("输出单价", outField), 1, 0);
-        priceGrid.add(captionedField("缓存创建", cwField), 0, 1);
-        priceGrid.add(captionedField("缓存读取", crField), 1, 1);
+        priceGrid.add(captionedField(i18n("ai.settings.model.price_in"), inField), 0, 0);
+        priceGrid.add(captionedField(i18n("ai.settings.model.price_out"), outField), 1, 0);
+        priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_write"), cwField), 0, 1);
+        priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_read"), crField), 1, 1);
         ComponentSublist pricePane = new ComponentSublist();
-        pricePane.setTitle("定价设置（可选）");
+        pricePane.setTitle(i18n("ai.settings.model.pricing"));
         pricePane.getContent().setAll(priceGrid);
 
         // Collapsible (default-folded) 高级/定价 sections, wrapped in a ComponentList for
@@ -653,7 +658,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             });
         }
 
-        VBox bodyBox = new VBox(12, formGrid("模型 ID", idField, "显示别名", aliasField), collapsibles);
+        VBox bodyBox = new VBox(12, formGrid(i18n("ai.settings.model.id"), idField,
+                i18n("ai.settings.model.alias"), aliasField), collapsibles);
         FXUtils.setLimitWidth(bodyBox, FORM_WIDTH);
 
         DialogPane dialog = new DialogPane() {
@@ -661,7 +667,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             protected void onAccept() {
                 String id = idField.getText().trim();
                 if (id.isEmpty()) {
-                    onFailure("模型 ID 不能为空");
+                    onFailure(i18n("ai.settings.model.id_empty"));
                     return;
                 }
                 // Renaming (or adding) a model to an id that already belongs to ANOTHER model
@@ -670,7 +676,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 boolean duplicate = profile.getModels().stream()
                         .anyMatch(m -> m != entry && id.equals(m.getId()));
                 if (duplicate) {
-                    onFailure("模型 ID 已存在：" + id); // TODO(i18n)
+                    onFailure(i18n("ai.settings.model.id_duplicate", id));
                     return;
                 }
                 entry.setId(id);
@@ -707,7 +713,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 super.onAccept();
             }
         };
-        dialog.setTitle("配置模型");
+        dialog.setTitle(i18n("ai.settings.model.dialog_title"));
         dialog.setBody(bodyBox);
         Controllers.dialog(dialog);
     }
@@ -751,7 +757,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     }
 
     private void removeModelEntry(AiProviderProfile profile, AiModelEntry entry) {
-        Controllers.confirm("确定删除模型 " + entry.getDisplayName() + "？", "删除模型", () -> {
+        Controllers.confirm(i18n("ai.settings.model.delete_confirm", entry.getDisplayName()),
+                i18n("ai.settings.model.delete_title"), () -> {
             profile.removeModel(entry.getId());
             if (entry.getId().equals(profile.getDefaultModelId())) {
                 String next = profile.getEffectiveModelId();
@@ -770,16 +777,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private void showLoadModelsDialog() {
         AiProviderProfile profile = aiSettings.findSelectedProfile();
         if (profile == null) {
-            setProviderFeedback("请先选择提供商。", false);
+            setProviderFeedback(i18n("ai.settings.select_provider_first"), false);
             return;
         }
 
         List<LoadRow> rows = new ArrayList<>();
         JFXTextField search = new JFXTextField();
-        search.setPromptText("搜索模型...");
+        search.setPromptText(i18n("ai.settings.model.search_hint"));
         search.textProperty().addListener((o, ov, nv) -> applyLoadFilter(nv, rows));
 
-        Label status = new Label("加载中...");
+        Label status = new Label(i18n("ai.settings.model.loading"));
         status.getStyleClass().add("subtitle-label");
 
         ComponentList listCard = new ComponentList();
@@ -802,11 +809,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         listCard.getContent().add(row);
                         rows.add(new LoadRow(profile, id, row));
                     }
-                    status.setText("共 " + ids.size() + " 个模型，点 + 添加，或「确定」全部添加");
+                    status.setText(i18n("ai.settings.model.loaded_count", ids.size()));
                     applyLoadFilter(search.getText(), rows);
                 });
             } catch (Exception ex) {
-                Platform.runLater(() -> status.setText("加载失败：" + ex.getMessage()));
+                Platform.runLater(() -> status.setText(i18n("ai.settings.model.load_failed", ex.getMessage())));
             }
         }, "ai-load-models");
         worker.setDaemon(true);
@@ -820,11 +827,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     if (addModelId(profile, r.modelId)) added++;
                 }
                 persistModelsChange();
-                setProviderFeedback("已添加 " + added + " 个模型到 " + displayProfileName(profile) + "。", true);
+                setProviderFeedback(i18n("ai.settings.model.added_count", added, displayProfileName(profile)), true);
                 super.onAccept();
             }
         };
-        dialog.setTitle("加载模型 · " + displayProfileName(profile));
+        dialog.setTitle(i18n("ai.settings.model.load_dialog_title", displayProfileName(profile)));
         dialog.setBody(body);
         Controllers.dialog(dialog);
     }
@@ -835,11 +842,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
         HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
         JFXButton addBtn = FXUtils.newToggleButton4(SVG.ADD, 14);
-        FXUtils.installFastTooltip(addBtn, "添加此模型");
+        FXUtils.installFastTooltip(addBtn, i18n("ai.settings.model.add_this"));
         addBtn.setOnAction(e -> {
             if (addModelId(profile, modelId)) {
                 persistModelsChange();
-                setProviderFeedback("已添加模型 " + modelId + "。", true);
+                setProviderFeedback(i18n("ai.settings.model.added_one", modelId), true);
             }
         });
         HBox row = new HBox(8, idLabel, spacer, addBtn);
@@ -883,16 +890,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private void showTestModelsDialog() {
         List<AiProviderProfile> providers = aiSettings.getProfiles();
         if (providers.isEmpty()) {
-            setProviderFeedback("请先添加提供商。", false);
+            setProviderFeedback(i18n("ai.settings.add_provider_first"), false);
             return;
         }
 
         JFXDialogLayout layout = new JFXDialogLayout();
-        layout.setHeading(new Label("测试连通性"));
+        layout.setHeading(new Label(i18n("ai.settings.test_connectivity")));
 
         List<TestRow> rows = new ArrayList<>();
 
-        JFXCheckBox selectAll = new JFXCheckBox("全选");
+        JFXCheckBox selectAll = new JFXCheckBox(i18n("button.select_all"));
         selectAll.setAllowIndeterminate(true);
         selectAll.setSelected(true);
         selectAll.setOnAction(e -> {
@@ -903,7 +910,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             for (TestRow r : rows) r.checkBox.setSelected(target);
         });
         JFXTextField search = new JFXTextField();
-        search.setPromptText("搜索模型...");
+        search.setPromptText(i18n("ai.settings.model.search_hint"));
         HBox.setHgrow(search, javafx.scene.layout.Priority.ALWAYS);
         search.textProperty().addListener((o, ov, nv) -> {
             String q = nv == null ? "" : nv.trim().toLowerCase();
@@ -955,7 +962,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 });
             }
             if (profile.getModels().isEmpty()) {
-                Label none = new Label("（无模型，先用 🔄 加载）");
+                Label none = new Label(i18n("ai.settings.test.no_models"));
                 none.getStyleClass().add("subtitle-label");
                 none.setPadding(new Insets(10, 16, 10, 16));
                 folder.getContent().add(none);
@@ -974,13 +981,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         FXUtils.setLimitWidth(body, 540);
         layout.setBody(body);
 
-        JFXButton testBtn = new JFXButton("测试");
+        JFXButton testBtn = new JFXButton(i18n("ai.settings.test.run"));
         testBtn.getStyleClass().add("dialog-accept");
         testBtn.setOnAction(e -> {
             for (TestRow r : rows) {
                 if (!r.checkBox.isSelected()) continue;
                 // Reset any previous run's outcome icon/color before re-testing.
-                r.result.setText("测试中...");
+                r.result.setText(i18n("ai.settings.test.running"));
                 r.result.setGraphic(null);
                 r.result.getStyleClass().removeAll("ai-feedback-success", "ai-feedback-error");
                 AiProviderProfile p = r.profile;
@@ -1007,7 +1014,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 });
             }
         });
-        JFXButton close = new JFXButton("关闭");
+        JFXButton close = new JFXButton(i18n("ai.settings.test.close"));
         close.setOnAction(e -> layout.fireEvent(new DialogCloseEvent()));
         layout.setActions(testBtn, close);
         Controllers.dialog(layout);
@@ -1112,8 +1119,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // into the assistant's tool loop — the agent can't call them. Say so plainly instead of
         // letting users configure something that silently does nothing in chat.
         HintPane experimentalBanner = new HintPane(org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.WARNING);
-        experimentalBanner.setText("实验性:MCP 服务器目前可以连接并查看其提供的工具，"
-                + "但这些工具尚未接入 AI 对话——助手暂时无法调用它们。此页仅供预览，正式接入仍在开发中。");
+        experimentalBanner.setText(i18n("ai.settings.mcp.experimental"));
         root.getChildren().add(experimentalBanner);
 
         ComponentList list = new ComponentList();
@@ -1128,12 +1134,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
 
         LineButton addServer = new LineButton();
-        addServer.setTitle("添加 MCP 服务器");
+        addServer.setTitle(i18n("ai.settings.mcp.add"));
         addServer.setLeading(SVG.ADD, 20);
         addServer.setOnAction(e -> addMcpServer());
         list.getContent().add(addServer);
 
-        root.getChildren().addAll(ComponentList.createComponentListTitle("MCP服务器"), list);
+        root.getChildren().addAll(ComponentList.createComponentListTitle(i18n("ai.settings.nav.mcp")), list);
         return wrapScroll(root);
     }
 
@@ -1150,12 +1156,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// {@code exposeResourcesAsTools} either, since that form never asked about them at all).
     private void editMcpServer(AiMcpServerConfig server) {
         String initialJson = McpServerJsonCodec.toJson(server);
-        String hint = "编辑该 MCP 服务器的完整配置（JSON）。字段：displayName（名称）、"
-                + "transport（\"stdio\" 或 \"http\"）、command（stdio 可执行文件）、"
-                + "args（命令行参数，字符串数组）、env（环境变量，字符串到字符串）、url（http 端点）、"
-                + "enabled（是否启用）、autoConnect（是否自动连接）、allowedTools（工具白名单，留空数组表示不限制）、"
-                + "exposeResourcesAsTools（是否把资源也暴露为工具）。";
-        JsonEditorDialogPane pane = new JsonEditorDialogPane("编辑 MCP 服务器", initialJson, hint,
+        String hint = i18n("ai.settings.mcp.edit_hint");
+        JsonEditorDialogPane pane = new JsonEditorDialogPane(i18n("ai.settings.mcp.edit_title"), initialJson, hint,
                 McpServerJsonCodec::validate,
                 (text, handler) -> {
                     // Re-check here rather than trusting the accept button's enabled state alone:
@@ -1219,15 +1221,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             skillList.getContent().add(row);
         }
         if (userSkills.isEmpty()) {
-            Label empty = new Label("这里只列出自建技能，目前还没有。请在 .hmcl/ai-skills/<skill>/SKILL.md 下放置技能"
-                    + "（内置技能已随程序打包，不在这个目录里，也不会显示在此列表中）。");
+            Label empty = new Label(i18n("ai.settings.skills.empty"));
             empty.setWrapText(true);
             empty.getStyleClass().add("subtitle-label");
             skillList.getContent().add(empty);
         }
         // 重新扫描作为次要动作，放在技能列表末尾
         LineButton reload = new LineButton();
-        reload.setTitle("重新扫描技能目录");
+        reload.setTitle(i18n("ai.settings.skills.rescan"));
         reload.setSubtitle(SKILLS_DIR.toString());
         reload.setLeading(SVG.REFRESH, 20);
         reload.setOnAction(e -> {
@@ -1237,11 +1238,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         skillList.getContent().add(reload);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("工具权限"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.skills.permissions")),
                 permissionCore,
-                ComponentList.createComponentListTitle("AI 能力与行为"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.skills.ability")),
                 abilityCard,
-                ComponentList.createComponentListTitle("技能"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.nav.skills")),
                 skillList
         );
 
@@ -1250,9 +1251,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         List<AiToolCatalog.Descriptor> descriptors = buildToolDescriptors();
 
         ComponentSublist builtinSublist = new ComponentSublist();
-        builtinSublist.setTitle("系统内置工具（高级）");
+        builtinSublist.setTitle(i18n("ai.settings.skills.builtin_tools"));
         builtinSublist.setHasSubtitle(true);
-        builtinSublist.setDescription("内置工具(read/write/edit/shell 等)的权限覆盖；默认跟随上方全局设置，一般无需展开。");
+        builtinSublist.setDescription(i18n("ai.settings.skills.builtin_tools.desc"));
         boolean anyBuiltin = false;
         for (AiToolCatalog.Descriptor descriptor : descriptors) {
             ToolSource s = descriptor.source();
@@ -1267,7 +1268,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         if (anyBuiltin) {
             ComponentList builtinCard = new ComponentList();
             builtinCard.getContent().add(builtinSublist);
-            root.getChildren().addAll(ComponentList.createComponentListTitle("内置工具"), builtinCard);
+            root.getChildren().addAll(ComponentList.createComponentListTitle(i18n("ai.settings.skills.builtin_title")), builtinCard);
         }
 
         for (ToolSource source : new ToolSource[]{ToolSource.SKILL, ToolSource.MCP}) {
@@ -1281,7 +1282,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             }
             if (any) {
                 root.getChildren().addAll(
-                        ComponentList.createComponentListTitle(sourceDisplayName(source) + "工具"),
+                        ComponentList.createComponentListTitle(i18n("ai.settings.skills.source_tools", sourceDisplayName(source))),
                         group);
             }
         }
@@ -1294,15 +1295,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// crashes on its own, and any standing custom instructions it must follow.
     private ComponentSublist buildAbilitySublist() {
         LineButton customInstructions = new LineButton();
-        customInstructions.setTitle("自定义指令");
+        customInstructions.setTitle(i18n("ai.settings.skills.custom_instructions"));
         customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
-                ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+                ? i18n("ai.settings.skills.custom_instructions.unset") : i18n("ai.settings.value_set"));
         customInstructions.setTrailingIcon(SVG.EDIT);
-        customInstructions.setOnAction(e -> Controllers.prompt("自定义指令（会追加到系统提示，AI 务必遵守）", (result, handler) -> {
+        customInstructions.setOnAction(e -> Controllers.prompt(i18n("ai.settings.skills.custom_instructions.prompt"), (result, handler) -> {
             aiSettings.customInstructionsProperty().set(result.trim());
             saveAiSettings();
             customInstructions.setSubtitle(aiSettings.getCustomInstructions().isEmpty()
-                    ? "未设置（会追加到系统提示末尾，务必遵守）" : "已设置");
+                    ? i18n("ai.settings.skills.custom_instructions.unset") : i18n("ai.settings.value_set"));
             handler.resolve();
         }, aiSettings.getCustomInstructions()));
 
@@ -1315,15 +1316,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         crashAnalysis.selectedProperty().addListener((o, ov, nv) -> saveAiSettings());
 
         ComponentSublist abilitySub = new ComponentSublist();
-        abilitySub.setTitle("AI 能力与行为");
+        abilitySub.setTitle(i18n("ai.settings.skills.ability"));
         abilitySub.setHasSubtitle(true);
-        abilitySub.setDescription("让 AI 能联网、记忆、运行命令，以及主动帮你做的事");
+        abilitySub.setDescription(i18n("ai.settings.skills.ability.desc"));
         abilitySub.getContent().setAll(
-                toggleRow("启用联网工具", "关闭后停用 web_search / web_fetch（重启后生效）",
+                toggleRow(i18n("ai.settings.skills.web_access"), i18n("ai.settings.skills.web_access.desc"),
                         aiSettings.webAccessEnabledProperty()),
-                disabledToggleRow("启用全局记忆（开发中）", "让 AI 记住/调取跨会话事实 —— 该功能暂未开放，敬请期待"),
-                disabledToggleRow("自动调用记忆（开发中）", "每次对话开始时把记忆注入系统提示 —— 依赖上一项，同样暂未开放"),
-                toggleRow("技能自动匹配", "你的消息命中技能触发词时，自动把该技能手册喂给 AI 照着做（对能力较弱的模型帮助最大）",
+                disabledToggleRow(i18n("ai.settings.skills.memory"), i18n("ai.settings.skills.memory.desc")),
+                disabledToggleRow(i18n("ai.settings.skills.memory_auto"), i18n("ai.settings.skills.memory_auto.desc")),
+                toggleRow(i18n("ai.settings.skills.auto_match"), i18n("ai.settings.skills.auto_match.desc"),
                         aiSettings.autoSkillInjectionProperty()),
                 crashAnalysis,
                 customInstructions);
@@ -1332,8 +1333,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private LineToggleButton buildDangerousConfirmationRow() {
         LineToggleButton confirmation = new LineToggleButton();
-        confirmation.setTitle("危险操作二次确认");
-        confirmation.setSubtitle("即使工具被设为 yolo，危险写入仍保留额外安全闸门");
+        confirmation.setTitle(i18n("ai.settings.skills.dangerous_confirm"));
+        confirmation.setSubtitle(i18n("ai.settings.skills.dangerous_confirm.desc"));
         confirmation.selectedProperty().bindBidirectional(aiSettings.dangerousActionConfirmationEnabledProperty());
         confirmation.selectedProperty().addListener((obs, old, value) -> saveAiSettings());
         return confirmation;
@@ -1350,9 +1351,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW
         ));
         row.setNullSafeConverter(mode -> switch (mode) {
-            case FOLLOW_GLOBAL -> "跟随全局（" + aiSettings.getApprovalModeEnum().getDisplayName() + "）";
-            case ALWAYS_ASK -> "总是询问";
-            case ALWAYS_ALLOW -> "总是允许（跳过询问）";
+            case FOLLOW_GLOBAL -> i18n("ai.settings.skills.override.follow_detail", aiSettings.getApprovalModeEnum().getDisplayName());
+            case ALWAYS_ASK -> i18n("ai.settings.skills.override.ask");
+            case ALWAYS_ALLOW -> i18n("ai.settings.skills.override.allow_detail");
         });
         row.setValue(toolPermissionStore.getOverride(descriptor.name()));
         row.valueProperty().addListener((obs, old, mode) -> {
@@ -1379,8 +1380,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         List<Node> nodes = new ArrayList<>();
         for (AiToolPermissionStore.PathOverride rule : toolPermissionStore.getPathOverrides(toolName)) {
             LineButton row = new LineButton();
-            row.setTitle("路径规则：" + rule.glob());
-            row.setSubtitle("匹配路径时按 " + pathOverrideModeDisplayName(rule.mode()) + " 处理（优先于上方整体设置）");
+            row.setTitle(i18n("ai.settings.skills.path_rule", rule.glob()));
+            row.setSubtitle(i18n("ai.settings.skills.path_rule.desc", pathOverrideModeDisplayName(rule.mode())));
             row.setTrailingIcon(SVG.DELETE);
             row.setOnAction(e -> {
                 toolPermissionStore.removePathOverride(toolName, rule.glob());
@@ -1390,14 +1391,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             nodes.add(row);
         }
         LineButton addRule = new LineButton();
-        addRule.setTitle("添加路径规则");
-        addRule.setSubtitle("按路径通配符（如 mods/**，gitignore 风格）为 " + toolName + " 单独覆盖权限");
+        addRule.setTitle(i18n("ai.settings.skills.path_rule.add"));
+        addRule.setSubtitle(i18n("ai.settings.skills.path_rule.add_desc", toolName));
         addRule.setLeading(SVG.ADD, 20);
         addRule.setOnAction(e -> {
-            PromptDialogPane.Builder builder = new PromptDialogPane.Builder("添加路径规则 · " + toolName, (questions, handler) -> {
+            PromptDialogPane.Builder builder = new PromptDialogPane.Builder(i18n("ai.settings.skills.path_rule.add_title", toolName), (questions, handler) -> {
                 String glob = ((String) questions.get(0).getValue()).trim();
                 if (glob.isEmpty()) {
-                    handler.reject("路径通配符不能为空");
+                    handler.reject(i18n("ai.settings.skills.path_rule.glob_empty"));
                     return;
                 }
                 Integer modeIdx = (Integer) questions.get(1).getValue();
@@ -1410,9 +1411,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 handler.resolve();
                 invalidateTab(skillsTab);
             });
-            builder.addQuestion(new PromptDialogPane.Builder.StringQuestion("路径通配符（如 mods/**）", ""));
-            builder.addQuestion(new PromptDialogPane.Builder.CandidatesQuestion("匹配时的处理方式",
-                    "总是询问", "总是允许（跳过询问，含危险操作）"));
+            builder.addQuestion(new PromptDialogPane.Builder.StringQuestion(i18n("ai.settings.skills.path_rule.glob_question"), ""));
+            builder.addQuestion(new PromptDialogPane.Builder.CandidatesQuestion(i18n("ai.settings.skills.path_rule.mode_question"),
+                    i18n("ai.settings.skills.override.ask"), i18n("ai.settings.skills.path_rule.allow_option")));
             Controllers.prompt(builder);
         });
         nodes.add(addRule);
@@ -1421,9 +1422,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private static String pathOverrideModeDisplayName(AiToolPermissionStore.OverrideMode mode) {
         return switch (mode) {
-            case FOLLOW_GLOBAL -> "跟随全局";
-            case ALWAYS_ASK -> "总是询问";
-            case ALWAYS_ALLOW -> "总是允许";
+            case FOLLOW_GLOBAL -> i18n("ai.settings.skills.override.follow");
+            case ALWAYS_ASK -> i18n("ai.settings.skills.override.ask");
+            case ALWAYS_ALLOW -> i18n("ai.settings.skills.override.allow");
         };
     }
 
@@ -1434,8 +1435,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList core = new ComponentList();
 
         LineToggleButton enabled = new LineToggleButton();
-        enabled.setTitle("启用联网搜索");
-        enabled.setSubtitle("将联网搜索暴露为独立 Search Tool");
+        enabled.setTitle(i18n("ai.settings.search.enable"));
+        enabled.setSubtitle(i18n("ai.settings.search.enable.desc"));
         enabled.setSelected(searchConfig.isEnabled());
         enabled.selectedProperty().addListener((obs, old, val) -> {
             searchConfig.setEnabled(val);
@@ -1444,8 +1445,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         core.getContent().add(enabled);
 
         LineSelectButton<SearchProvider> provider = new LineSelectButton<>();
-        provider.setTitle("搜索服务商");
-        provider.setSubtitle("已接入 Tavily、SearXNG、博查 Bocha、智谱 Zhipu（博查/智谱国内直连，推荐；其余服务商接入中）");
+        provider.setTitle(i18n("ai.settings.search.provider"));
+        provider.setSubtitle(i18n("ai.settings.search.provider.desc"));
         provider.setItems(List.of(SearchProvider.TAVILY, SearchProvider.SEARXNG, SearchProvider.BOCHA, SearchProvider.ZHIPU));
         provider.setNullSafeConverter(SearchProvider::getDisplayName);
         SearchProvider current = SearchProvider.fromId(searchConfig.getProvider().toUpperCase());
@@ -1454,12 +1455,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         LineButton apiKey = new LineButton();
         apiKey.setTitle("API Key");
-        apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? "未设置（多数服务商必填）" : "已设置");
+        apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
         apiKey.setTrailingIcon(SVG.EDIT);
-        apiKey.setOnAction(e -> Controllers.prompt("搜索 API Key", (result, handler) -> {
+        apiKey.setOnAction(e -> Controllers.prompt(i18n("ai.settings.search.key_prompt"), (result, handler) -> {
             searchConfig.setApiKey(result.trim());
             saveSearchConfig();
-            apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? "未设置（多数服务商必填）" : "已设置");
+            apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
             handler.resolve();
         }, searchConfig.getApiKey()));
         core.getContent().add(apiKey);
@@ -1471,7 +1472,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 searchConfig.setProvider(val.name().toLowerCase());
                 if (!val.getDefaultEndpoint().isEmpty()) searchConfig.setEndpoint(val.getDefaultEndpoint());
                 saveSearchConfig();
-                apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? "未设置（多数服务商必填）" : "已设置");
+                apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
             }
         });
 
@@ -1480,8 +1481,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         // 结果个数：复用原生 MD3 风格的 JFXSlider，放入原生行的 trailing 槽，行高与列表一致
         LineButton countRow = new LineButton();
-        countRow.setTitle("搜索结果个数");
-        countRow.setSubtitle("默认返回结果数量");
+        countRow.setTitle(i18n("ai.settings.search.max_results"));
+        countRow.setSubtitle(i18n("ai.settings.search.max_results.desc"));
         JFXSlider countSlider = new JFXSlider(1, 50, searchConfig.getMaxResults());
         countSlider.setPrefWidth(160);
         countSlider.setMajorTickUnit(1);
@@ -1504,10 +1505,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         options.getContent().add(countRow);
 
         LineButton test = new LineButton();
-        test.setTitle("测试搜索");
-        test.setSubtitle("用当前服务商与 API Key 发起一次测试查询");
+        test.setTitle(i18n("ai.settings.search.test"));
+        test.setSubtitle(i18n("ai.settings.search.test.desc"));
         test.setTrailingIcon(SVG.SEARCH);
-        test.setOnAction(e -> Controllers.prompt("测试搜索关键词", (query, handler) -> {
+        test.setOnAction(e -> Controllers.prompt(i18n("ai.settings.search.test_prompt"), (query, handler) -> {
             // Run the search off the FX thread so the dialog/UI does not freeze while
             // waiting for the network response; report the outcome back on the FX thread.
             String testProvider = searchConfig.getProvider();
@@ -1522,22 +1523,22 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         case "bocha" -> new org.jackhuang.hmcl.ai.search.BochaSearchClient(testApiKey).search(query, testMaxResults);
                         case "zhipu" -> new org.jackhuang.hmcl.ai.search.ZhipuSearchClient(testApiKey).search(query, testMaxResults);
                         default -> throw new UnsupportedOperationException(
-                                "搜索服务商「" + testProvider + "」暂未接入,无法测试");
+                                i18n("ai.settings.search.provider_unavailable", testProvider));
                     };
                     Platform.runLater(() -> {
-                        Controllers.showToast("测试搜索成功：" + response.results().size() + " 条结果");
+                        Controllers.showToast(i18n("ai.settings.search.test_ok", response.results().size()));
                         handler.resolve();
                     });
                 } catch (Exception ex) {
-                    Platform.runLater(() -> handler.reject("搜索失败：" + ex.getMessage()));
+                    Platform.runLater(() -> handler.reject(i18n("ai.settings.search.test_failed", ex.getMessage())));
                 }
             });
         }, "Minecraft crash report"));
         options.getContent().add(test);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("搜索服务"), core,
-                ComponentList.createComponentListTitle("搜索选项"), options);
+                ComponentList.createComponentListTitle(i18n("ai.settings.search.section.service")), core,
+                ComponentList.createComponentListTitle(i18n("ai.settings.search.section.options")), options);
         return wrapScroll(root);
     }
 
@@ -1548,8 +1549,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList core = new ComponentList();
 
         LineToggleButton enabled = new LineToggleButton();
-        enabled.setTitle("启用图片 OCR");
-        enabled.setSubtitle("把 ocr_image 工具暴露给 AI，用于识别截图里的文字（崩溃/报错截图）");
+        enabled.setTitle(i18n("ai.settings.ocr.enable"));
+        enabled.setSubtitle(i18n("ai.settings.ocr.enable.desc"));
         enabled.setSelected(ocrConfig.isEnabled());
         enabled.selectedProperty().addListener((obs, old, val) -> {
             ocrConfig.setEnabled(val);
@@ -1558,10 +1559,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         core.getContent().add(enabled);
 
         LineSelectButton<OcrProvider> provider = new LineSelectButton<>();
-        provider.setTitle("OCR 服务商");
-        provider.setSubtitle("选择 OCR 提供商（已接入的可直接用，其余为预置）");
+        provider.setTitle(i18n("ai.settings.ocr.provider"));
+        provider.setSubtitle(i18n("ai.settings.ocr.provider.desc"));
         provider.setItems(List.of(OcrProvider.values()));
-        provider.setNullSafeConverter(p -> p.getDisplayName() + (p.isImplemented() ? "" : "（待接入）"));
+        provider.setNullSafeConverter(p -> p.getDisplayName() + (p.isImplemented() ? "" : i18n("ai.settings.ocr.pending_suffix")));
         OcrProvider currentProvider = ocrConfig.resolveProvider();
         provider.setValue(currentProvider);
         core.getContent().add(provider);
@@ -1583,21 +1584,21 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // ---- 测试 ----
         ComponentList options = new ComponentList();
         LineButton test = new LineButton();
-        test.setTitle("测试 OCR");
-        test.setSubtitle("用当前配置识别一张本地图片（在弹窗里填图片绝对路径）");
+        test.setTitle(i18n("ai.settings.ocr.test"));
+        test.setSubtitle(i18n("ai.settings.ocr.test.desc"));
         test.setTrailingIcon(SVG.LANDSCAPE);
-        test.setOnAction(e -> Controllers.prompt("要识别的图片绝对路径", (path, handler) -> {
+        test.setOnAction(e -> Controllers.prompt(i18n("ai.settings.ocr.test_prompt"), (path, handler) -> {
             String trimmed = path.trim();
             java.nio.file.Path img = java.nio.file.Path.of(trimmed);
             if (!Files.isRegularFile(img)) {
-                handler.reject("找不到图片：" + trimmed);
+                handler.reject(i18n("ai.settings.ocr.image_not_found", trimmed));
                 return;
             }
             OcrProvider p = ocrConfig.resolveProvider();
             org.jackhuang.hmcl.ui.ai.tools.ocr.OcrClient client =
                     org.jackhuang.hmcl.ui.ai.tools.ocr.OcrClientFactory.build(ocrConfig);
             if (client == null) {
-                handler.reject("该提供商（" + p.getDisplayName() + "）暂未接入：" + p.getNote());
+                handler.reject(i18n("ai.settings.ocr.provider_unavailable", p.getDisplayName(), p.getNote()));
                 return;
             }
             BATCH_TEST_POOL.submit(() -> {
@@ -1606,20 +1607,20 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     String mime = mimeOf(trimmed);
                     String text = client.recognize(data, mime);
                     Platform.runLater(() -> {
-                        Controllers.showToast("OCR 成功：识别 " + (text == null ? 0 : text.length()) + " 字");
+                        Controllers.showToast(i18n("ai.settings.ocr.test_ok", text == null ? 0 : text.length()));
                         handler.resolve();
                     });
                 } catch (Exception ex) {
-                    Platform.runLater(() -> handler.reject("OCR 失败：" + ex.getMessage()));
+                    Platform.runLater(() -> handler.reject(i18n("ai.settings.ocr.test_failed", ex.getMessage())));
                 }
             });
         }, ""));
         options.getContent().add(test);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("OCR 服务"), core,
-                ComponentList.createComponentListTitle("服务商配置"), providerFields,
-                ComponentList.createComponentListTitle("测试"), options);
+                ComponentList.createComponentListTitle(i18n("ai.settings.ocr.section.service")), core,
+                ComponentList.createComponentListTitle(i18n("ai.settings.profiles")), providerFields,
+                ComponentList.createComponentListTitle(i18n("ai.settings.ocr.section.test")), options);
         return wrapScroll(root);
     }
 
@@ -1629,19 +1630,19 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         card.getContent().clear();
 
         LineButton noteRow = new LineButton();
-        noteRow.setTitle("说明");
-        noteRow.setSubtitle((provider.isImplemented() ? "已接入" : "仅预置") + " · " + provider.getNote());
+        noteRow.setTitle(i18n("ai.settings.ocr.note"));
+        noteRow.setSubtitle((provider.isImplemented() ? i18n("ai.settings.ocr.implemented") : i18n("ai.settings.ocr.preset_only")) + " · " + provider.getNote());
         card.getContent().add(noteRow);
 
         if (provider.requiresApiKey()) {
             LineButton apiKey = new LineButton();
             apiKey.setTitle("API Key");
-            apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? "未设置" : "已设置");
+            apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? i18n("ai.settings.value_unset") : i18n("ai.settings.value_set"));
             apiKey.setTrailingIcon(SVG.EDIT);
             apiKey.setOnAction(e -> Controllers.prompt("OCR API Key", (result, handler) -> {
                 ocrConfig.setApiKey(result.trim());
                 saveOcrConfig();
-                apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? "未设置" : "已设置");
+                apiKey.setSubtitle(ocrConfig.getApiKey().isEmpty() ? i18n("ai.settings.value_unset") : i18n("ai.settings.value_set"));
                 handler.resolve();
             }, ocrConfig.getApiKey()));
             card.getContent().add(apiKey);
@@ -1650,12 +1651,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         if (provider.requiresSecret()) {
             LineButton secret = new LineButton();
             secret.setTitle("Secret Key");
-            secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? "未设置" : "已设置");
+            secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? i18n("ai.settings.value_unset") : i18n("ai.settings.value_set"));
             secret.setTrailingIcon(SVG.EDIT);
             secret.setOnAction(e -> Controllers.prompt("OCR Secret Key", (result, handler) -> {
                 ocrConfig.setSecretKey(result.trim());
                 saveOcrConfig();
-                secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? "未设置" : "已设置");
+                secret.setSubtitle(ocrConfig.getSecretKey().isEmpty() ? i18n("ai.settings.value_unset") : i18n("ai.settings.value_set"));
                 handler.resolve();
             }, ocrConfig.getSecretKey()));
             card.getContent().add(secret);
@@ -1663,13 +1664,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         if (provider.requiresModel()) {
             LineButton model = new LineButton();
-            model.setTitle("视觉模型");
-            model.setSubtitle(ocrConfig.getModel().isEmpty() ? "未设置（默认 gpt-4o-mini）" : ocrConfig.getModel());
+            model.setTitle(i18n("ai.settings.ocr.vision_model"));
+            model.setSubtitle(ocrConfig.getModel().isEmpty() ? i18n("ai.settings.ocr.vision_model.unset") : ocrConfig.getModel());
             model.setTrailingIcon(SVG.EDIT);
-            model.setOnAction(e -> Controllers.prompt("视觉模型 ID（如 gpt-4o-mini / qwen-vl-max）", (result, handler) -> {
+            model.setOnAction(e -> Controllers.prompt(i18n("ai.settings.ocr.vision_model.prompt"), (result, handler) -> {
                 ocrConfig.setModel(result.trim());
                 saveOcrConfig();
-                model.setSubtitle(ocrConfig.getModel().isEmpty() ? "未设置（默认 gpt-4o-mini）" : ocrConfig.getModel());
+                model.setSubtitle(ocrConfig.getModel().isEmpty() ? i18n("ai.settings.ocr.vision_model.unset") : ocrConfig.getModel());
                 handler.resolve();
             }, ocrConfig.getModel()));
             card.getContent().add(model);
@@ -1677,26 +1678,26 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         if (provider == OcrProvider.OCR_SPACE) {
             LineButton language = new LineButton();
-            language.setTitle("识别语言");
-            language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? "未设置（默认 eng；中文填 chs）" : ocrConfig.getLanguage());
+            language.setTitle(i18n("ai.settings.ocr.language"));
+            language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? i18n("ai.settings.ocr.language.unset") : ocrConfig.getLanguage());
             language.setTrailingIcon(SVG.EDIT);
-            language.setOnAction(e -> Controllers.prompt("OCR.space 语言代码（eng / chs / auto …）", (result, handler) -> {
+            language.setOnAction(e -> Controllers.prompt(i18n("ai.settings.ocr.language.prompt"), (result, handler) -> {
                 ocrConfig.setLanguage(result.trim());
                 saveOcrConfig();
-                language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? "未设置（默认 eng；中文填 chs）" : ocrConfig.getLanguage());
+                language.setSubtitle(ocrConfig.getLanguage().isEmpty() ? i18n("ai.settings.ocr.language.unset") : ocrConfig.getLanguage());
                 handler.resolve();
             }, ocrConfig.getLanguage()));
             card.getContent().add(language);
         }
 
         LineButton endpoint = new LineButton();
-        endpoint.setTitle("接口地址");
-        endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? "（使用默认）" : ocrConfig.getEndpoint());
+        endpoint.setTitle(i18n("ai.settings.ocr.endpoint"));
+        endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? i18n("ai.settings.ocr.endpoint.default") : ocrConfig.getEndpoint());
         endpoint.setTrailingIcon(SVG.EDIT);
-        endpoint.setOnAction(e -> Controllers.prompt("OCR 接口地址（留空用默认）", (result, handler) -> {
+        endpoint.setOnAction(e -> Controllers.prompt(i18n("ai.settings.ocr.endpoint.prompt"), (result, handler) -> {
             ocrConfig.setEndpoint(result.trim());
             saveOcrConfig();
-            endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? "（使用默认）" : ocrConfig.getEndpoint());
+            endpoint.setSubtitle(ocrConfig.getEndpoint().isEmpty() ? i18n("ai.settings.ocr.endpoint.default") : ocrConfig.getEndpoint());
             handler.resolve();
         }, ocrConfig.getEndpoint()));
         card.getContent().add(endpoint);
@@ -1725,10 +1726,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private Node buildDataTab() {
         VBox root = createSettingsRoot();
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("我的数据与安全"), buildDataSecurityList(),
-                ComponentList.createComponentListTitle("数据备份与恢复"), buildBackupSettingsList(),
-                ComponentList.createComponentListTitle("数据目录"), buildDataSettingsList(),
-                ComponentList.createComponentListTitle("清理"), buildCleanupSettingsList()
+                ComponentList.createComponentListTitle(i18n("ai.settings.data.section.security")), buildDataSecurityList(),
+                ComponentList.createComponentListTitle(i18n("ai.settings.data.section.backup")), buildBackupSettingsList(),
+                ComponentList.createComponentListTitle(i18n("ai.settings.data.section.dirs")), buildDataSettingsList(),
+                ComponentList.createComponentListTitle(i18n("ai.settings.data.section.cleanup")), buildCleanupSettingsList()
         );
         return wrapScroll(root);
     }
@@ -1739,13 +1740,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private ComponentList buildDataSecurityList() {
         ComponentList list = new ComponentList();
         list.getContent().addAll(
-                toggleRow("文件写入二次确认", "AI 写入/编辑文件前都弹窗确认",
+                toggleRow(i18n("ai.settings.data.file_write_confirm"), i18n("ai.settings.data.file_write_confirm.desc"),
                         aiSettings.fileWriteConfirmEnabledProperty()),
-                toggleRow("删除到系统回收站", "AI 删除世界等内容时移入系统回收站（可还原）而非永久删除；关闭则直接永久删除",
+                toggleRow(i18n("ai.settings.data.recycle_bin"), i18n("ai.settings.data.recycle_bin.desc"),
                         aiSettings.deleteToRecycleBinProperty()),
-                sliderRow("备份保留份数", "每个世界最多保留最近 N 个备份快照，超出自动删除最旧的（create_world_backup 使用）",
-                        aiSettings.worldBackupRetentionProperty(), 1, 50, " 份"),
-                toggleRow("NBT 编辑前自动备份", "高危 NBT 写入前自动给世界做一次备份（预留开关；现有 NBT 工具已各自备份，重启后生效）",
+                sliderRow(i18n("ai.settings.data.backup_retention"), i18n("ai.settings.data.backup_retention.desc"),
+                        aiSettings.worldBackupRetentionProperty(), 1, 50, i18n("ai.settings.data.backup_retention.unit")),
+                toggleRow(i18n("ai.settings.data.nbt_auto_backup"), i18n("ai.settings.data.nbt_auto_backup.desc"),
                         aiSettings.autoBackupBeforeNbtEditProperty()),
                 buildTraceEnabledRow(),
                 buildUploadDiagnosticRow(),
@@ -1759,20 +1760,20 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // Declared first so the 备份/导出 actions below can read its current value;
         // it is added to the list later to keep the original row order.
         LineToggleButton slimBackup = new LineToggleButton();
-        slimBackup.setTitle("精简备份");
-        slimBackup.setSubtitle("备份时跳过图片等大文件，仅保留聊天记录和设置");
+        slimBackup.setTitle(i18n("ai.settings.data.slim_backup"));
+        slimBackup.setSubtitle(i18n("ai.settings.data.slim_backup.desc"));
         slimBackup.setSelected(true);
 
         LineButton backup = new LineButton();
-        backup.setTitle("备份");
-        backup.setSubtitle("备份聊天记录、设置、技能与搜索/MCP配置到 zip");
+        backup.setTitle(i18n("ai.settings.data.backup"));
+        backup.setSubtitle(i18n("ai.settings.data.backup.desc"));
         backup.setTrailingIcon(SVG.FOLDER_OPEN);
         backup.setOnAction(e -> exportBackup(slimBackup.isSelected(), "hmcl-ae-backup.zip"));
         list.getContent().add(backup);
 
         LineButton restore = new LineButton();
-        restore.setTitle("恢复");
-        restore.setSubtitle("从备份 zip 恢复 HMCL-AE 数据（会覆盖现有数据）");
+        restore.setTitle(i18n("ai.settings.data.restore"));
+        restore.setSubtitle(i18n("ai.settings.data.restore.desc"));
         restore.setTrailingIcon(SVG.FOLDER_OPEN);
         restore.setOnAction(e -> restoreBackup());
         list.getContent().add(restore);
@@ -1780,8 +1781,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         list.getContent().add(slimBackup);
 
         LineButton sessionExport = new LineButton();
-        sessionExport.setTitle("导出全部会话");
-        sessionExport.setSubtitle("把所有对话导出为 Markdown / JSON / 纯文本（在保存对话框里选格式）");
+        sessionExport.setTitle(i18n("ai.settings.data.export_sessions"));
+        sessionExport.setSubtitle(i18n("ai.settings.data.export_sessions.desc"));
         sessionExport.setTrailingIcon(SVG.FOLDER_OPEN);
         sessionExport.setOnAction(e -> exportAllSessions());
         list.getContent().add(sessionExport);
@@ -1792,11 +1793,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Exports ALL conversations to a single file; format follows the chosen extension (.md/.json/.txt).
     private void exportAllSessions() {
         FileChooser fc = new FileChooser();
-        fc.setTitle("导出全部会话");
+        fc.setTitle(i18n("ai.settings.data.export_sessions"));
         fc.getExtensionFilters().addAll(
                 new FileChooser.ExtensionFilter("Markdown (*.md)", "*.md"),
                 new FileChooser.ExtensionFilter("JSON (*.json)", "*.json"),
-                new FileChooser.ExtensionFilter("纯文本 (*.txt)", "*.txt"));
+                new FileChooser.ExtensionFilter(i18n("ai.settings.data.filter_plain_text"), "*.txt"));
         fc.setInitialFileName("hmcl-ae-conversations.md");
         java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
         if (chosen == null) return;
@@ -1821,10 +1822,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 }
                 Files.writeString(target, content, StandardCharsets.UTF_8);
                 javafx.application.Platform.runLater(() ->
-                        Controllers.showToast("已导出 " + sessions.size() + " 个会话到 " + target));
+                        Controllers.showToast(i18n("ai.settings.data.export_done", sessions.size(), target)));
             } catch (Exception ex) {
                 javafx.application.Platform.runLater(() ->
-                        Controllers.showToast("导出失败：" + ex.getMessage()));
+                        Controllers.showToast(i18n("ai.settings.data.export_failed", ex.getMessage())));
             }
         }, "ai-session-export");
         exporter.setDaemon(true);
@@ -1835,7 +1836,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         StringBuilder sb = new StringBuilder();
         for (org.jackhuang.hmcl.ai.AiSession s : sessions) {
             if (sb.length() > 0) sb.append(markdown ? "\n\n---\n\n" : "\n\n==============================\n\n");
-            String title = s.getTitle() == null || s.getTitle().isBlank() ? "(未命名会话)" : s.getTitle();
+            String title = s.getTitle() == null || s.getTitle().isBlank() ? i18n("ai.settings.data.untitled_session") : s.getTitle();
             sb.append(markdown ? "# " + title + "\n\n" : title + "\n\n");
             for (org.jackhuang.hmcl.ai.llm.LlmMessage m : s.getMessages()) {
                 String role = roleLabel(m.getRole());
@@ -1851,9 +1852,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     }
 
     private static String roleLabel(String role) {
-        if ("user".equals(role)) return "用户";
-        if ("assistant".equals(role)) return "助手";
-        if ("system".equals(role)) return "系统";
+        if ("user".equals(role)) return i18n("ai.settings.data.role_user");
+        if ("assistant".equals(role)) return i18n("ai.settings.data.role_assistant");
+        if ("system".equals(role)) return i18n("ai.settings.data.role_system");
         return role == null ? "" : role;
     }
 
@@ -1861,7 +1862,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// {@code slim=false} exports the full dataset including large folders.
     private void exportBackup(boolean slim, String defaultName) {
         FileChooser fc = new FileChooser();
-        fc.setTitle(slim ? "备份 HMCL-AE 数据" : "导出 HMCL-AE 数据");
+        fc.setTitle(slim ? i18n("ai.settings.data.backup_title") : i18n("ai.settings.data.export_title"));
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Zip", "*.zip"));
         fc.setInitialFileName(defaultName);
         java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
@@ -1872,9 +1873,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         Thread worker = new Thread(() -> {
             try {
                 int n = AiDataBackup.backup(target, slim);
-                Platform.runLater(() -> Controllers.showToast("已备份 " + n + " 个文件到 " + target));
+                Platform.runLater(() -> Controllers.showToast(i18n("ai.settings.data.backup_done", n, target)));
             } catch (Exception ex) {
-                Platform.runLater(() -> Controllers.showToast("备份失败：" + ex.getMessage()));
+                Platform.runLater(() -> Controllers.showToast(i18n("ai.settings.data.backup_failed", ex.getMessage())));
             }
         }, "ai-data-backup");
         worker.setDaemon(true);
@@ -1884,23 +1885,23 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Prompts for a backup zip and restores it after a confirmation (item 2 恢复).
     private void restoreBackup() {
         FileChooser fc = new FileChooser();
-        fc.setTitle("恢复 HMCL-AE 数据");
+        fc.setTitle(i18n("ai.settings.data.restore_title"));
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Zip", "*.zip"));
         java.io.File chosen = fc.showOpenDialog(Controllers.getStage());
         if (chosen == null) return;
         Path source = chosen.toPath();
         Controllers.confirm(
-                "恢复将覆盖当前的聊天记录、设置、技能与记忆等数据，确定继续？",
-                "恢复数据",
+                i18n("ai.settings.data.restore_confirm"),
+                i18n("ai.settings.data.restore_confirm_title"),
                 () -> {
                     // Unzip OFF the FX thread; catch Exception (not just IOException) — a corrupt
                     // zip throws unchecked exceptions too (same lesson as exportAllSessions).
                     Thread worker = new Thread(() -> {
                         try {
                             int n = AiDataBackup.restore(source);
-                            Platform.runLater(() -> Controllers.showToast("已恢复 " + n + " 个文件，重启 HMCL 后生效"));
+                            Platform.runLater(() -> Controllers.showToast(i18n("ai.settings.data.restore_done", n)));
                         } catch (Exception ex) {
-                            Platform.runLater(() -> Controllers.showToast("恢复失败：" + ex.getMessage()));
+                            Platform.runLater(() -> Controllers.showToast(i18n("ai.settings.data.restore_failed", ex.getMessage())));
                         }
                     }, "ai-data-restore");
                     worker.setDaemon(true);
@@ -1913,22 +1914,22 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList list = new ComponentList();
 
         LineButton appDataDir = new LineButton();
-        appDataDir.setTitle("应用数据");
+        appDataDir.setTitle(i18n("ai.settings.data.app_data"));
         appDataDir.setSubtitle(SettingsManager.localConfigDirectory().toString());
         appDataDir.setTrailingIcon(SVG.FOLDER_OPEN);
         appDataDir.setOnAction(e -> FXUtils.openFolder(SettingsManager.localConfigDirectory()));
         list.getContent().add(appDataDir);
 
         LineButton logDir = new LineButton();
-        logDir.setTitle("应用日志");
+        logDir.setTitle(i18n("ai.settings.data.app_logs"));
         logDir.setSubtitle(SettingsManager.localConfigDirectory().resolve("logs").toString());
         logDir.setTrailingIcon(SVG.FOLDER_OPEN);
         logDir.setOnAction(e -> FXUtils.openFolder(SettingsManager.localConfigDirectory().resolve("logs")));
         list.getContent().add(logDir);
 
         LineButton skillsDir = new LineButton();
-        skillsDir.setTitle("技能目录");
-        skillsDir.setSubtitle(SKILLS_DIR + "（仅存放自建技能；内置技能已随程序打包为只读资源，不在此目录中，也不会被本目录的操作影响）");
+        skillsDir.setTitle(i18n("ai.settings.data.skills_dir"));
+        skillsDir.setSubtitle(SKILLS_DIR + i18n("ai.settings.data.skills_dir.note"));
         skillsDir.setTrailingIcon(SVG.FOLDER_OPEN);
         skillsDir.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
         list.getContent().add(skillsDir);
@@ -1940,8 +1941,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList list = new ComponentList();
 
         LineButton clearCache = new LineButton();
-        clearCache.setTitle("清除缓存");
-        clearCache.setSubtitle("清除表情图片缓存与临时缓存目录（不影响聊天记录、设置、技能与记忆）");
+        clearCache.setTitle(i18n("ai.settings.data.clear_cache"));
+        clearCache.setSubtitle(i18n("ai.settings.data.clear_cache.desc"));
         clearCache.setTrailingIcon(SVG.DELETE);
         clearCache.setOnAction(e -> clearCaches());
         list.getContent().add(clearCache);
@@ -1964,16 +1965,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
         long[] stat = scanCache(dirs);
         if (stat[0] == 0) {
-            Controllers.showToast("无缓存可清理");
+            Controllers.showToast(i18n("ai.settings.data.no_cache"));
             return;
         }
         Controllers.confirm(
-                "将清理约 " + stat[0] + " 个缓存文件（" + humanSize(stat[1])
-                        + "），不影响聊天记录、设置、技能与记忆。确定继续？",
-                "清除缓存",
+                i18n("ai.settings.data.clear_cache.confirm", stat[0], humanSize(stat[1])),
+                i18n("ai.settings.data.clear_cache"),
                 () -> {
                     long[] removed = deleteCache(dirs);
-                    Controllers.showToast("已清除 " + removed[0] + " 个缓存文件（" + humanSize(removed[1]) + "）");
+                    Controllers.showToast(i18n("ai.settings.data.clear_cache.done", removed[0], humanSize(removed[1])));
                 },
                 null);
     }
@@ -2054,8 +2054,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         // 默认推理强度
         LineSelectButton<String> reasoning = new LineSelectButton<>();
-        reasoning.setTitle("默认推理强度");
-        reasoning.setSubtitle("仅对支持 reasoning 的模型生效");
+        reasoning.setTitle(i18n("ai.settings.default_reasoning_effort"));
+        reasoning.setSubtitle(i18n("ai.settings.default_reasoning_effort.desc"));
         reasoning.setItems(List.of("none", "low", "medium", "high", "xhigh", "max"));
         reasoning.setNullSafeConverter(AIMainPage::reasoningEffortLabel); // A12: human-readable names, raw ids stored
         String currentEffort = aiSettings.getReasoningEffort();
@@ -2069,12 +2069,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         chatList.getContent().add(reasoning);
 
         // 自动命名会话
-        chatList.getContent().add(toggleRow("自动命名会话",
-                "首轮对话后让模型生成简短标题（替代截取首句）", aiSettings.autoTitleEnabledProperty()));
+        chatList.getContent().add(toggleRow(i18n("ai.settings.auto_title"),
+                i18n("ai.settings.auto_title.desc"), aiSettings.autoTitleEnabledProperty()));
         // 流式输出 / 自动滚动 / 回车发送 等聊天行为已移至「聊天设置」抽屉的「交互」区，不在全局重复。
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("对话与模型"), chatList);
+                ComponentList.createComponentListTitle(i18n("ai.settings.section.chat_model")), chatList);
         return wrapScroll(root);
     }
 
@@ -2092,28 +2092,28 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 // "危险操作二次确认" itself (the orange, non-critical toggle) lives in the 技能 tab's
                 // "工具权限" card (see buildSkillsTab/buildDangerousConfirmationRow) — it's a single
                 // copy, not a duplicate, so it stays where it already was rather than moving here too.
-                toggleRow("高危操作红色二次确认", "删存档/改NBT/删备份等极危操作执行前再弹红色确认（强烈建议开启，重启后生效）",
+                toggleRow(i18n("ai.settings.advanced.critical_confirm"), i18n("ai.settings.advanced.critical_confirm.desc"),
                         aiSettings.criticalConfirmEnabledProperty()),
-                toggleRow("启用存档 NBT 编辑工具", "默认关闭：高危，让 AI 直接读写存档/玩家 NBT 数据（nbt 工具域）。仅在需要精细改存档时手动开启，重启后生效",
+                toggleRow(i18n("ai.settings.advanced.nbt_tools"), i18n("ai.settings.advanced.nbt_tools.desc"),
                         aiSettings.nbtToolsEnabledProperty()),
-                toggleRow("上下文接近上限自动压缩", "对话接近模型上下文窗口 90% 时自动压缩历史，防止溢出报错",
+                toggleRow(i18n("ai.settings.advanced.auto_compact"), i18n("ai.settings.advanced.auto_compact.desc"),
                         aiSettings.autoCompactEnabledProperty()),
-                sliderRow("工具调用轮数上限", "单次回复内最多连续调用工具的次数（防失控）",
+                sliderRow(i18n("ai.settings.advanced.max_tool_cycles"), i18n("ai.settings.advanced.max_tool_cycles.desc"),
                         aiSettings.maxToolCyclesProperty(), 1, 50, ""),
-                sliderRow("上下文消息条数上限", "只把最近 N 条发给模型，0=不限（始终保留系统提示）",
+                sliderRow(i18n("ai.settings.advanced.max_context_messages"), i18n("ai.settings.advanced.max_context_messages.desc"),
                         aiSettings.maxContextMessagesProperty(), 0, 100, ""),
-                sliderRow("工具结果长度上限", "单个工具结果回传模型的最大字符数，0=不限（默认 2 万字，防单次超大读取撑爆上下文）",
-                        aiSettings.toolResultMaxCharsProperty(), 0, 20000, " 字"),
-                sliderRow("请求超时", "等待模型/工具响应的秒数（安装等长任务建议调大）",
-                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, " 秒"),
+                sliderRow(i18n("ai.settings.advanced.tool_result_max"), i18n("ai.settings.advanced.tool_result_max.desc"),
+                        aiSettings.toolResultMaxCharsProperty(), 0, 20000, i18n("ai.settings.advanced.unit_chars")),
+                sliderRow(i18n("ai.settings.advanced.request_timeout"), i18n("ai.settings.advanced.request_timeout.desc"),
+                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, i18n("ai.settings.advanced.unit_seconds")),
                 buildSpendLimitRow(),
                 buildShellToolRow(),
                 buildDangerouslySkipRow(),
-                toggleRow("工具调用日志", "把每次工具调用与结果写入 .hmcl 日志（排障用）",
+                toggleRow(i18n("ai.settings.advanced.tool_call_log"), i18n("ai.settings.advanced.tool_call_log.desc"),
                         aiSettings.toolCallLoggingEnabledProperty()));
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("高级与开发者"), list);
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section")), list);
         return wrapScroll(root);
     }
 
@@ -2124,18 +2124,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// used to live in this tab AND in the 技能与工具 tab's "工具权限" card are now this single row.
     private LineButton buildAutoModeInfoRow() {
         LineButton row = new LineButton();
-        row.setTitle("审批模式：Auto");
-        row.setSubtitle("只读/联网/常规写入自动放行；危险操作视情况询问确认，若当前任务可能无人值守则直接拦下，不会静默放行");
+        row.setTitle(i18n("ai.settings.advanced.approval_mode"));
+        row.setSubtitle(i18n("ai.settings.advanced.approval_mode.desc"));
         row.setTrailingIcon(SVG.INFO);
         row.setOnAction(e -> Controllers.dialog(
-                "只读、联网、常规写入类操作会自动放行，无需确认。\n\n"
-                        + "危险操作（如破坏性 shell 命令、删除实例等）在你实际值守时会弹窗询问"
-                        + "（可通过“技能”tab 里的“危险操作二次确认”关闭，关闭后这类操作也会自动放行）。\n\n"
-                        + "但如果当前任务可能处于无人值守状态（例如：后台任务完成后 AI 自动续接对话），"
-                        + "危险操作会被直接拦下、绝不静默执行——这一条不受上面开关影响，也没有办法通过"
-                        + "切换到某个“更宽松”的模式绕开，因为现在只有 Auto 这一种模式了。\n\n"
-                        + "极危操作（删存档/改 NBT/删备份等）另有独立的红色二次确认，同样遵循以上规则。",
-                "审批模式说明", MessageType.INFO));
+                i18n("ai.settings.advanced.approval_mode.detail"),
+                i18n("ai.settings.advanced.approval_mode.title"), MessageType.INFO));
         return row;
     }
 
@@ -2146,15 +2140,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// cancelling reverts the toggle to off.
     private LineToggleButton buildShellToolRow() {
         LineToggleButton t = new LineToggleButton();
-        t.setTitle("启用 Shell 工具");
-        t.setSubtitle("默认关闭：常规操作均有专属工具覆盖，仅边缘场景建议手动开启（重启后生效）");
+        t.setTitle(i18n("ai.settings.advanced.shell"));
+        t.setSubtitle(i18n("ai.settings.advanced.shell.desc"));
         t.setSelected(aiSettings.isShellToolEnabled());
         t.selectedProperty().addListener((obs, oldV, newV) -> {
             if (newV) {
                 Controllers.confirm(
-                        "Shell 工具能执行任意系统命令。装Mod/改内存/管理存档/切换Java等常规操作都已有专属工具更安全地完成，"
-                                + "只建议在这些工具覆盖不到的边缘场景手动开启。确定开启?",
-                        "启用 Shell 工具",
+                        i18n("ai.settings.advanced.shell.confirm"),
+                        i18n("ai.settings.advanced.shell"),
                         MessageType.WARNING,
                         () -> {
                             aiSettings.shellToolEnabledProperty().set(true);
@@ -2173,14 +2166,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// strong red warning; cancelling reverts the toggle to off.
     private LineToggleButton buildDangerouslySkipRow() {
         LineToggleButton t = new LineToggleButton();
-        t.setTitle("危险：跳过所有权限确认（--dangerously-skip）");
-        t.setSubtitle("开启后所有工具调用都不再弹任何确认（含删存档/删实例的红色确认）。仅供开发者测试，重启后生效");
+        t.setTitle(i18n("ai.settings.advanced.skip_permissions"));
+        t.setSubtitle(i18n("ai.settings.advanced.skip_permissions.desc"));
         t.setSelected(aiSettings.isDangerouslySkipPermissions());
         t.selectedProperty().addListener((obs, oldV, newV) -> {
             if (newV) {
                 Controllers.confirm(
-                        "这将跳过所有确认,包括删存档/删实例等灾难操作的红色确认。仅供开发者测试。确定开启?",
-                        "危险：跳过所有权限确认",
+                        i18n("ai.settings.advanced.skip_permissions.confirm"),
+                        i18n("ai.settings.advanced.skip_permissions.title"),
                         MessageType.ERROR,
                         () -> {
                             aiSettings.dangerouslySkipPermissionsProperty().set(true);
@@ -2227,8 +2220,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// A re-viewable "隐私与数据说明" entry (the same notice shown once on first AI use).
     private LineButton buildPrivacyNoticeRow() {
         LineButton row = new LineButton();
-        row.setTitle("隐私与数据说明");
-        row.setSubtitle("查看使用 AI 时会向服务提供商发送哪些数据");
+        row.setTitle(i18n("ai.settings.data.privacy"));
+        row.setSubtitle(i18n("ai.settings.data.privacy.desc"));
         row.setOnAction(e -> AIMainPage.showPrivacyNotice());
         return row;
     }
@@ -2238,8 +2231,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// live (no restart needed) in addition to persisting the setting.
     private LineToggleButton buildTraceEnabledRow() {
         LineToggleButton t = new LineToggleButton();
-        t.setTitle("记录诊断 Trace");
-        t.setSubtitle("完整记录对话与工具调用轨迹（已自动脱敏 API Key），用于问题排查；出问题时可在下方一键上传给开发者");
+        t.setTitle(i18n("ai.settings.data.trace"));
+        t.setSubtitle(i18n("ai.settings.data.trace.desc"));
         t.selectedProperty().bindBidirectional(aiSettings.traceEnabledProperty());
         t.selectedProperty().addListener((o, ov, nv) -> {
             org.jackhuang.hmcl.ai.trace.TraceRecorder.setEnabled(nv);
@@ -2254,8 +2247,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// sidebar entry can trigger the identical path without navigating into this page first.
     private LineButton buildUploadDiagnosticRow() {
         LineButton row = new LineButton();
-        row.setTitle("上传诊断信息");
-        row.setSubtitle("把当前会话的完整 Trace（已自动脱敏）发给开发者排查问题");
+        row.setTitle(i18n("ai.settings.data.upload_diag"));
+        row.setSubtitle(i18n("ai.settings.data.upload_diag.desc"));
         row.setTrailingIcon(SVG.FEEDBACK);
         row.setOnAction(e -> DiagnosticUploadFlow.trigger(aiSettings));
         return row;
@@ -2266,8 +2259,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         IntegerProperty prop = new javafx.beans.property.SimpleIntegerProperty(
                 (int) Math.round(tracker.getDailyLimitUsd()));
         prop.addListener((obs, old, val) -> tracker.setDailyLimitUsd(val.doubleValue()));
-        return sliderRow("每日花费上限", "AI 单日估算花费达到此金额后暂停发送，0=不限（美元，按模型定价估算）",
-                prop, 0, 50, " 美元");
+        return sliderRow(i18n("ai.settings.advanced.spend_limit"), i18n("ai.settings.advanced.spend_limit.desc"),
+                prop, 0, 50, i18n("ai.settings.advanced.unit_usd"));
     }
 
     private LineButton sliderRow(String title, String subtitle, IntegerProperty prop,
@@ -2315,27 +2308,27 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         LineButton head = new LineButton();
         head.setLargeTitle(true);
         head.setLeading(SVG.PACKAGE, 32);
-        head.setTitle("全局记忆");
-        head.setSubtitle("AI 跨会话记住的事实，以 markdown 文件保存（共 " + entries.size() + " 条）");
+        head.setTitle(i18n("ai.settings.memory.title"));
+        head.setSubtitle(i18n("ai.settings.memory.title.desc", entries.size()));
         intro.getContent().add(head);
 
         ComponentList actions = new ComponentList();
         LineButton openDir = new LineButton();
-        openDir.setTitle("打开记忆目录");
+        openDir.setTitle(i18n("ai.settings.memory.open_dir"));
         openDir.setSubtitle(memDir.toString());
         openDir.setTrailingIcon(SVG.FOLDER_OPEN);
         openDir.setOnAction(e -> FXUtils.openFolder(memDir));
         actions.getContent().add(openDir);
         LineButton reload = new LineButton();
-        reload.setTitle("刷新");
-        reload.setSubtitle("重新扫描记忆目录");
+        reload.setTitle(i18n("button.refresh"));
+        reload.setSubtitle(i18n("ai.settings.memory.rescan"));
         reload.setLeading(SVG.REFRESH, 20);
         reload.setOnAction(e -> invalidateTab(memoryTab));
         actions.getContent().add(reload);
 
         ComponentList listCard = new ComponentList();
         if (entries.isEmpty()) {
-            Label empty = new Label("暂无记忆条目。当 AI 使用「记忆」工具时会在此出现。");
+            Label empty = new Label(i18n("ai.settings.memory.empty"));
             empty.setWrapText(true);
             empty.getStyleClass().add("subtitle-label");
             listCard.getContent().add(empty);
@@ -2346,7 +2339,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 LineButton row = new LineButton();
                 row.setTitle(title != null && !title.isBlank()
                         ? title
-                        : (file != null ? file.getFileName().toString() : "(无标题)"));
+                        : (file != null ? file.getFileName().toString() : i18n("ai.settings.memory.untitled")));
                 StringBuilder sb = new StringBuilder();
                 List<String> tags = entry.getTags();
                 if (tags != null && !tags.isEmpty()) sb.append(String.join(", ", tags));
@@ -2367,14 +2360,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     // Native icon-button idiom (toggle-icon4) instead of the ghost class
                     // "ai-memory-delete-btn" that never had a CSS rule.
                     com.jfoenix.controls.JFXButton deleteBtn = FXUtils.newToggleButton4(SVG.DELETE);
-                    FXUtils.installFastTooltip(deleteBtn, "删除这条记忆");
+                    FXUtils.installFastTooltip(deleteBtn, i18n("ai.settings.memory.delete"));
                     deleteBtn.setOnAction(e -> Controllers.confirm(
-                            "确定删除这条记忆？此操作不可撤销。", "删除记忆", () -> {
+                            i18n("ai.settings.memory.delete_confirm"), i18n("ai.settings.memory.delete_title"), () -> {
                                 try {
                                     String stem = entryFile.getFileName().toString().replaceAll("\\.md$", "");
                                     new RememberStore(memDir).forget(stem);
                                 } catch (Exception ex) {
-                                    Controllers.showToast("删除失败：" + ex.getMessage());
+                                    Controllers.showToast(i18n("ai.settings.memory.delete_failed", ex.getMessage()));
                                 }
                                 invalidateTab(memoryTab);
                             }, () -> {
@@ -2388,9 +2381,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("全局记忆"), intro,
-                ComponentList.createComponentListTitle("操作"), actions,
-                ComponentList.createComponentListTitle("记忆条目"), listCard);
+                ComponentList.createComponentListTitle(i18n("ai.settings.memory.title")), intro,
+                ComponentList.createComponentListTitle(i18n("ai.settings.memory.section.actions")), actions,
+                ComponentList.createComponentListTitle(i18n("ai.settings.memory.section.entries")), listCard);
         return wrapScroll(root);
     }
 
@@ -2401,23 +2394,23 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         LineButton head = new LineButton();
         head.setLargeTitle(true);
         head.setLeading(SVG.FEEDBACK, 32);
-        head.setTitle("AI 助手帮助");
-        head.setSubtitle("为 HMCL 集成 AI Agent：对话、日志/崩溃分析、模型服务、工具链、MCP、Skills 与搜索。");
+        head.setTitle(i18n("ai.settings.help.title"));
+        head.setSubtitle(i18n("ai.settings.help.title.desc"));
         intro.getContent().add(head);
 
         ComponentList notes = new ComponentList();
         LineButton visual = new LineButton();
-        visual.setTitle("视觉原则");
-        visual.setSubtitle("外部客户端只作功能参考，视觉一律通过 HMCL 原生组件表达。");
+        visual.setTitle(i18n("ai.settings.help.visual"));
+        visual.setSubtitle(i18n("ai.settings.help.visual.desc"));
         LineButton safety = new LineButton();
-        safety.setTitle("安全策略");
-        safety.setSubtitle("文件系统与危险工具遵循保守安全策略。");
+        safety.setTitle(i18n("ai.settings.help.safety"));
+        safety.setSubtitle(i18n("ai.settings.help.safety.desc"));
         notes.getContent().setAll(visual, safety);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("帮助"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.nav.help")),
                 intro,
-                ComponentList.createComponentListTitle("说明"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.help.section.notes")),
                 notes);
         return wrapScroll(root);
     }
@@ -2430,30 +2423,30 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         title.setLargeTitle(true);
         title.setLeading(SVG.INFO, 32);
         title.setTitle("HMCL-AE");
-        title.setSubtitle("Agent Experience · 面向 HMCL 的 AI 助手增强");
+        title.setSubtitle(i18n("ai.settings.about.tagline"));
         about.getContent().add(title);
 
         ComponentList info = new ComponentList();
         LineButton impl = new LineButton();
-        impl.setTitle("原生实现");
-        impl.setSubtitle("基于 HMCL JavaFX 原生 UI 构建。");
+        impl.setTitle(i18n("ai.settings.about.impl"));
+        impl.setSubtitle(i18n("ai.settings.about.impl.desc"));
         info.getContent().setAll(impl);
 
         ComponentList legal = new ComponentList();
         LineButton license = new LineButton();
-        license.setTitle("版权");
-        license.setSubtitle("HMCL 版权所有 © huangyuhui 及贡献者，基于 GPLv3 分发。");
+        license.setTitle(i18n("ai.settings.about.license"));
+        license.setSubtitle(i18n("ai.settings.about.license.desc"));
         LineButton openSource = LineButton.createExternalLinkButton("https://github.com/HMCL-dev/HMCL");
-        openSource.setTitle("开源仓库");
+        openSource.setTitle(i18n("ai.settings.about.repo"));
         openSource.setSubtitle("github.com/HMCL-dev/HMCL");
         legal.getContent().setAll(license, openSource);
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle("关于"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.about.section")),
                 about,
-                ComponentList.createComponentListTitle("实现"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.about.section.impl")),
                 info,
-                ComponentList.createComponentListTitle("法律"),
+                ComponentList.createComponentListTitle(i18n("ai.settings.about.section.legal")),
                 legal);
         return wrapScroll(root);
     }
@@ -2579,36 +2572,36 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private static String sourceDisplayName(ToolSource source) {
         return switch (source) {
-            case LOCAL -> "本地";
-            case FILESYSTEM -> "文件系统";
+            case LOCAL -> i18n("ai.settings.tool_source.local");
+            case FILESYSTEM -> i18n("ai.settings.tool_source.filesystem");
             case MCP -> "MCP";
-            case SEARCH -> "搜索";
-            case SKILL -> "技能";
+            case SEARCH -> i18n("ai.settings.tool_source.search");
+            case SKILL -> i18n("ai.settings.tool_source.skill");
         };
     }
 
     private static String permissionDisplayName(ToolPermission permission) {
         return switch (permission) {
-            case READ_ONLY -> "只读";
-            case CONTROLLED_WRITE -> "受控写入";
-            case DANGEROUS_WRITE -> "危险写入";
-            case EXTERNAL_NETWORK -> "外部网络";
+            case READ_ONLY -> i18n("ai.settings.tool_permission.read_only");
+            case CONTROLLED_WRITE -> i18n("ai.settings.tool_permission.controlled_write");
+            case DANGEROUS_WRITE -> i18n("ai.settings.tool_permission.dangerous_write");
+            case EXTERNAL_NETWORK -> i18n("ai.settings.tool_permission.external_network");
         };
     }
 
     private static String capabilityStatusDisplayName(AiToolCatalog.CapabilityStatus status) {
         return switch (status) {
-            case AVAILABLE -> "可用";
-            case REQUIRES_CONTEXT -> "需要上下文";
-            case PLANNED -> "计划中";
+            case AVAILABLE -> i18n("ai.settings.tool_status.available");
+            case REQUIRES_CONTEXT -> i18n("ai.settings.tool_status.requires_context");
+            case PLANNED -> i18n("ai.settings.tool_status.planned");
         };
     }
 
     private final class ProviderChoice extends RadioChoiceList.Choice<AiProviderProfile> {
         private ProviderChoice(AiProviderProfile profile) {
             super(displayProfileName(profile), profile);
-            setSubtitle((profile.isEnabled() ? "启用" : "禁用") + " · " + profile.getProtocolFamily()
-                    + " · 模型：" + Objects.toString(profile.getEffectiveModelId(), "手动填写")
+            setSubtitle((profile.isEnabled() ? i18n("button.enable") : i18n("button.disable")) + " · " + profile.getProtocolFamily()
+                    + " · " + i18n("ai.settings.profile.model_prefix") + Objects.toString(profile.getEffectiveModelId(), i18n("ai.settings.profile.model_manual"))
                     + endpointSuffix(profile));
         }
 
@@ -2619,7 +2612,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 editProfile(getValue());
                 event.consume();
             });
-            FXUtils.installFastTooltip(editButton, "编辑配置");
+            FXUtils.installFastTooltip(editButton, i18n("ai.settings.edit_profile"));
 
             JFXButton removeButton = FXUtils.newToggleButton4(SVG.DELETE_FOREVER, 14);
             removeButton.disableProperty().bind(Bindings.createBooleanBinding(
@@ -2629,7 +2622,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 removeProfile(getValue());
                 event.consume();
             });
-            FXUtils.installFastTooltip(removeButton, "删除");
+            FXUtils.installFastTooltip(removeButton, i18n("button.remove"));
 
             HBox buttons = new HBox(8, editButton, removeButton);
             buttons.setAlignment(Pos.CENTER_RIGHT);
@@ -2688,14 +2681,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 editModel(profile, getValue());
                 event.consume();
             });
-            FXUtils.installFastTooltip(editButton, "编辑模型");
+            FXUtils.installFastTooltip(editButton, i18n("ai.settings.model.edit"));
 
             JFXButton removeButton = FXUtils.newToggleButton4(SVG.DELETE_FOREVER, 14);
             removeButton.setOnAction(event -> {
                 removeModelEntry(profile, getValue());
                 event.consume();
             });
-            FXUtils.installFastTooltip(removeButton, "删除");
+            FXUtils.installFastTooltip(removeButton, i18n("button.remove"));
 
             HBox buttons = new HBox(8, editButton, removeButton);
             buttons.setAlignment(Pos.CENTER_RIGHT);

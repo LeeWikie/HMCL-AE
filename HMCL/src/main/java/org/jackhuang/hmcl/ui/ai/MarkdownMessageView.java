@@ -64,6 +64,8 @@ import org.jackhuang.hmcl.ai.markdown.MarkdownRenderer;
 import org.jackhuang.hmcl.ui.FXUtils;
 import org.jetbrains.annotations.Nullable;
 
+import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
+
 import java.util.Arrays;
 
 /// Renders Markdown as native JavaFX nodes by walking the commonmark AST.
@@ -269,7 +271,7 @@ public final class MarkdownMessageView extends VBox {
                     }
                     cell.setAccessibleRole(AccessibleRole.TABLE_CELL);
                     if (header) {
-                        cell.setAccessibleRoleDescription("表头");
+                        cell.setAccessibleRoleDescription(i18n("ai.markdown.table_header"));
                         cell.setAccessibleText(plainText);
                     } else {
                         String headerText = col < headerTexts.size() ? headerTexts.get(col) : null;
@@ -512,19 +514,19 @@ public final class MarkdownMessageView extends VBox {
     private javafx.scene.Node codeBlock(String code, @Nullable String lang) {
         String body = code == null ? "" : (code.endsWith("\n") ? code.substring(0, code.length() - 1) : code);
 
-        Label langLabel = new Label(lang != null && !lang.isBlank() ? lang.trim() : "代码");
+        Label langLabel = new Label(lang != null && !lang.isBlank() ? lang.trim() : i18n("ai.markdown.code"));
         langLabel.getStyleClass().add("md-code-lang");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        JFXButton copyBtn = new JFXButton("复制");
+        JFXButton copyBtn = new JFXButton(i18n("ai.markdown.copy"));
         copyBtn.getStyleClass().add("md-code-copy");
         copyBtn.setOnAction(e -> {
             ClipboardContent cc = new ClipboardContent();
             cc.putString(body);
             Clipboard.getSystemClipboard().setContent(cc);
-            copyBtn.setText("已复制");
+            copyBtn.setText(i18n("ai.markdown.copied"));
             PauseTransition revert = new PauseTransition(Duration.seconds(1.5));
-            revert.setOnFinished(ev -> copyBtn.setText("复制"));
+            revert.setOnFinished(ev -> copyBtn.setText(i18n("ai.markdown.copy")));
             revert.play();
         });
         HBox header = new HBox(6, langLabel, spacer, copyBtn);
