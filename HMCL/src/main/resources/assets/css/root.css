@@ -2009,31 +2009,27 @@
  *                                                                             *
  ******************************************************************************/
 
+/* Bubbles carry no border — container-vs-surface fill contrast alone separates them (VS §3.1/3.2). */
 .ai-bubble {
     -fx-padding: 10 14 10 14;
-    -fx-font-size: 14px;
+    -fx-font-size: 13px;
     -fx-wrap-text: true;
     -fx-line-spacing: 2px;
     -fx-background-radius: 12;
-    -fx-border-radius: 12;
-    -fx-border-width: 1;
 }
 
 .ai-bubble-user {
     -fx-background-color: -monet-secondary-container;
-    -fx-border-color: -monet-secondary-container;
     -fx-text-fill: -monet-on-secondary-container;
 }
 
 .ai-bubble-ai {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-border-color: -monet-outline-variant;
+    -fx-background-color: -monet-surface-container;
     -fx-text-fill: -monet-on-surface;
 }
 
 .ai-bubble-error {
     -fx-background-color: -monet-error-container;
-    -fx-border-color: -monet-error-container;
     -fx-text-fill: -monet-on-error-container;
 }
 
@@ -2050,7 +2046,6 @@
 
 .ai-bubble-system {
     -fx-background-color: transparent;
-    -fx-border-color: transparent;
     -fx-text-fill: -monet-on-surface-variant;
     -fx-font-size: 11px;
     -fx-padding: 4 14 6 14;
@@ -2069,14 +2064,19 @@
    "AI inline cards" section below) — one rule keeps the three inline subordinate cards'
    box model byte-identical by construction. */
 
-.ai-bubble-wrapper {
-    -fx-padding: 4 16 4 16;
+/* No `.ai-bubble-wrapper` rule: its padding moved into wrapBubble (VS §4.3-1 dual-write fix);
+   the class itself stays in code as the setWrapperCache marker. */
+
+/* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble. The bubble
+   wrapper + its bar are fused into one `.ai-msg-block` (BF A2 / C-04) so the bar can fade in on
+   hover with plain CSS. Only -fx-opacity is animated-by-state — managed/visible stay true, so
+   the layout never shifts and the buttons remain keyboard-reachable. */
+.ai-bubble-actions {
+    -fx-opacity: 0;
 }
 
-/* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble.
-   Padding is set in code so user/AI bars can align to their respective sides. */
-.ai-bubble-actions {
-    -fx-alignment: center-left;
+.ai-msg-block:hover .ai-bubble-actions {
+    -fx-opacity: 1;
 }
 
 /* Markdown native rendering (commonmark AST -> JavaFX nodes). Text nodes use -fx-fill
@@ -2388,17 +2388,18 @@
 
 .ai-input-field {
     -fx-font-size: 13px;
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 8;
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-background-radius: 6;
     -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
-    -fx-border-width: 0.5;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
     -fx-padding: 6 10 6 10;
 }
 
+/* Focus feedback is colour-only: the border width must NOT change, or the content area would
+   shift by a pixel on every focus change (VS §3.6). */
 .ai-input-field:focused {
     -fx-border-color: -monet-primary;
-    -fx-border-width: 1.5;
 }
 
 /* The composer is now a TextArea: strip the inner ScrollPane/content chrome so only the

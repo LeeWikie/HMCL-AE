@@ -306,7 +306,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private boolean modelSelectorUpdating = false;
     // ---- Messages ----
 
-    private final VBox messageList = new VBox(12);
+    // Spacing 4 keeps same-turn nodes (subordinate cards + answer bubble) visually grouped; turn
+    // separation comes from the user bubble's extra 8px top margin (VS §1.4: 4 + 8 = 12 net).
+    private final VBox messageList = new VBox(4);
     private final ScrollPane scrollPane = new ScrollPane(messageList);
     private final Label statusLabel = new Label();
     /// Single-line strip above the conversation echoing the most recent legacy tool message —
@@ -654,7 +656,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         typingTimeline.setCycleCount(Timeline.INDEFINITE);
-        getStyleClass().add("gray-background");
+        // no getStyleClass().add("gray-background") here — DecoratorAnimatedPage already adds it
 
         buildSidebar();
         buildChatView();
@@ -1194,8 +1196,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     // ---- Chat view ----
 
     private void buildChatView() {
-        chatView.setSpacing(12);
-        chatView.setPadding(new Insets(12));
+        chatView.setSpacing(10);
+        chatView.setPadding(new Insets(10)); // native card-list rhythm (VS §1.4)
 
         scrollPane.setFitToWidth(true);
         scrollPane.getStyleClass().addAll("edge-to-edge", "ai-messages-scroll");
@@ -1397,7 +1399,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         HBox headerBox = new HBox(titleArea, toolbarControls);
         headerBox.setAlignment(Pos.CENTER_LEFT);
-        headerBox.setPadding(new Insets(9, 14, 9, 14));
+        headerBox.setPadding(new Insets(8, 16, 8, 16)); // 8-point grid (VS §1.4)
         headerBox.getStyleClass().add("ai-main-header");
         HBox.setHgrow(titleArea, Priority.ALWAYS);
         // Never let the header be squeezed away when the window gets short — only the
@@ -1727,8 +1729,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputField.setPrefHeight(34);
         inputField.setMaxHeight(180);
         javafx.scene.text.Text inputHeightMeasurer = new javafx.scene.text.Text();
+        // The wrapping width subtracts the TextArea's REAL insets (CSS border + padding) instead
+        // of a -24 magic number, so a border/padding change in .ai-input-field can never desync
+        // the measurement (bug-hunt 4.2). Insets resolve only after the first CSS pass, hence the
+        // insetsProperty dependency below.
         inputHeightMeasurer.wrappingWidthProperty().bind(javafx.beans.binding.Bindings.createDoubleBinding(
-                () -> Math.max(50, inputField.getWidth() - 24), inputField.widthProperty()));
+                () -> {
+                    Insets insets = inputField.getInsets();
+                    return Math.max(50, inputField.getWidth() - insets.getLeft() - insets.getRight());
+                }, inputField.widthProperty(), inputField.insetsProperty()));
         Runnable recomputeInputHeight = () -> {
             inputHeightMeasurer.setFont(inputField.getFont()); // real, CSS-resolved font — not a guess
             String t = inputField.getText();
@@ -1738,6 +1747,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         };
         inputField.textProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
         inputField.widthProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
+        inputField.insetsProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
         // Track IME composition so the Enter that commits pinyin never sends a half-typed message.
         inputField.addEventFilter(javafx.scene.input.InputMethodEvent.INPUT_METHOD_TEXT_CHANGED,
                 e -> imeComposing = e.getComposed() != null && !e.getComposed().isEmpty());
@@ -1906,7 +1916,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             ObservableList<Node> children = messageList.getChildren();
             for (int i = 0; i < children.size(); i++) {
                 Node node = children.get(i);
-                if (node instanceof HBox wrapper) {
+                // Bubble wrappers/card rows are HBoxes, but a bubble with an action bar lives in
+                // a VBox `.ai-msg-block` since BF A2 — match any pane so those still highlight.
+                if (node instanceof javafx.scene.layout.Pane wrapper) {
                     if (nodeContainsText(wrapper, matchingText)) {
                         // Scroll so this node is visible
                         double targetV = (double) i / Math.max(1, children.size());
@@ -2827,7 +2839,24 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // the bubble's horizontal extent — the left edge of the AI bubble starts at 16px, the
         // right edge of the user bubble ends at 16px from the message-list edge.
         row.setPadding(new Insets(0, 16, 6, 16));
-        messageList.getChildren().add(row);
+
+        // BF A2 / C-04: the bubble wrapper and its action row are fused into one `.ai-msg-block`
+        // so the row can hover-reveal purely in CSS (JavaFX has no sibling selector; the rules
+        // touch only -fx-opacity, so layout never shifts and the buttons stay Tab-reachable).
+        // Red line A1 (§0-1): the block holds EXACTLY this bubble wrapper and its action row —
+        // reasoning/tool/group cards remain flat siblings of messageList, never pulled in here.
+        children.remove(children.size() - 1);
+        VBox block = new VBox(bubble, row);
+        block.getStyleClass().add("ai-msg-block");
+        // A user bubble carries the per-turn 8px top margin (VS §1.4); once the wrapper moves
+        // inside the block the margin must move to the messageList child — the block — or it
+        // would only open a gap INSIDE the block instead of separating it from the previous turn.
+        Insets turnMargin = VBox.getMargin(bubble);
+        if (turnMargin != null) {
+            VBox.setMargin(bubble, null);
+            VBox.setMargin(block, turnMargin);
+        }
+        children.add(block);
     }
 
     private static JFXButton smallIcon(SVG icon, String tooltip, Runnable action) {
@@ -2912,7 +2941,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         var children = messageList.getChildren();
-        int pos = children.indexOf(bubble);
+        // Since BF A2 the bubble wrapper lives inside an `.ai-msg-block` (bubble + action row),
+        // so the direct child of messageList to swap out is the enclosing block, not the wrapper
+        // itself — climb from the wrapper to whichever ancestor is the messageList child.
+        Node host = bubble;
+        while (host != null && host.getParent() != messageList) {
+            host = host.getParent();
+        }
+        int pos = host == null ? -1 : children.indexOf(host);
         if (pos < 0) {
             return;
         }
@@ -2938,12 +2974,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         wrapper.setAlignment(Pos.CENTER_RIGHT);
         wrapper.setPadding(new Insets(2, 16, 2, 16));
 
-        // Hide this message's action bar (the row right after the bubble) while editing.
-        Node actionRow = (pos + 1 < children.size()) ? children.get(pos + 1) : null;
-        if (actionRow != null) {
-            actionRow.setVisible(false);
-            actionRow.setManaged(false);
-        }
+        // Replacing the whole `.ai-msg-block` swaps out the bubble AND its action bar in one go —
+        // the bar must not stay interactable while editing (取消/确定 rebuild the list anyway).
         children.set(pos, wrapper);
         editor.requestFocus();
         editor.positionCaret(editor.getText().length());
@@ -4178,10 +4210,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Wraps bubble content in a horizontally-aligned row with consistent padding.
+    /// The padding lives HERE, not in CSS: the old `.ai-bubble-wrapper { -fx-padding: 4 16 4 16 }`
+    /// rule silently overrode whatever the code set (author CSS beats code setters) — the rule is
+    /// gone and this is now the single source of the wrapper padding (VS §4.3-1).
     private static HBox wrapBubble(Node content, Pos align) {
         HBox wrapper = new HBox(content);
         wrapper.setAlignment(align);
-        wrapper.setPadding(new Insets(2, 0, 2, 0));
+        wrapper.setPadding(new Insets(4, 16, 4, 16));
         wrapper.getStyleClass().add("ai-bubble-wrapper");
         // Rasterise each finished bubble so scrolling a long conversation reuses the cached
         // bitmap (a pure translate) instead of repainting every TextFlow — the default cache
@@ -4195,8 +4230,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// subordination to the adjacent AI answer (VS §3.3): the card grows to fill the column
     /// width (up to its own 704px max, so all three card types render equally wide instead of
     /// shrinking to content), and the left inset is 16px deeper than the bubble column.
-    /// Deliberately NO `.ai-bubble-wrapper` style class — that rule's `-fx-padding` would
-    /// override these insets (author CSS beats code setters).
+    /// Deliberately NO `.ai-bubble-wrapper` style class — that class is the marker
+    /// {@link #setWrapperCache} climbs for, and card wrappers manage their own cache here.
     private static HBox wrapCard(Region card) {
         HBox wrapper = new HBox(card);
         wrapper.setAlignment(Pos.CENTER_LEFT);
@@ -4230,7 +4265,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         bubbleBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
         bubbleBox.setAlignment(Pos.CENTER_RIGHT);
 
-        messageList.getChildren().add(wrapBubble(bubbleBox, Pos.CENTER_RIGHT));
+        HBox wrapper = wrapBubble(bubbleBox, Pos.CENTER_RIGHT);
+        // A user bubble opens a new turn: an extra 8px top margin over the 4px list spacing
+        // yields the 12px turn separation of the VS §1.4 rhythm. attachMessageActions transfers
+        // this margin onto the `.ai-msg-block` when it fuses the wrapper with its action row.
+        VBox.setMargin(wrapper, new Insets(8, 0, 0, 0));
+        messageList.getChildren().add(wrapper);
         if (!quiet) {
             updateEmptyState();
             scrollToBottom();
