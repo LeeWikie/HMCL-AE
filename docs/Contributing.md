@@ -51,24 +51,27 @@ OpenJDK 64-Bit Server VM (build 25+37-LTS, mixed mode, sharing)
 
 </details>
 
-### Get HMCL Source Code
+### Get HMCL-AE Source Code
 
 - You can get the latest source code via [Git](https://git-scm.com/downloads):
   ```shell
-  git clone https://github.com/HMCL-dev/HMCL.git
-  cd HMCL
+  git clone https://github.com/LeeWikie/HMCL-AE.git
+  cd HMCL-AE
   ```
-- You can manually download a specific version of the source code from the [GitHub Release page](https://github.com/HMCL-dev/HMCL/releases).
+  (This fork lives on the `ai-feature` branch. The upstream HMCL project this fork is based on is at [HMCL-dev/HMCL](https://github.com/HMCL-dev/HMCL); its own [GitHub Release page](https://github.com/HMCL-dev/HMCL/releases) has source for vanilla HMCL, without the AI agent.)
+- You can manually download a specific version of the source code from the [HMCL-AE GitHub Release page](https://github.com/LeeWikie/HMCL-AE/releases).
 
-### Build HMCL
+### Build HMCL-AE
 
-To build HMCL, switch to the root directory of the HMCL project and run the following command:
+HMCL-AE is a multi-module Gradle project: **HMCLAI** (the AI agent core — agent loop, tools, search, skills), **HMCL** (the launcher, its AI UI, and Minecraft-operation tools), **HMCLCore** (game repository / download / crash analysis), and **HMCLBoot** (bootstrap).
+
+To build it, switch to the root directory of the project and run:
 
 ```shell
-./gradlew clean makeExecutables
+./gradlew :HMCL:makeExecutables
 ```
 
-The built HMCL program files are located in the `HMCL/build/libs` subdirectory under the project root.
+The built HMCL-AE program files are located in the `HMCL/build/libs` subdirectory under the project root.
 
 ## Debug Options
 

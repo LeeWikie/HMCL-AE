@@ -50,24 +50,27 @@ OpenJDK 64-Bit Server VM (build 25+37-LTS, mixed mode, sharing)
 
 </details>
 
-### 獲取 HMCL 原始碼
+### 獲取 HMCL-AE 原始碼
 
 - 透過 [Git](https://git-scm.com/downloads) 可以獲取最新原始碼:
   ```shell
-  git clone https://github.com/HMCL-dev/HMCL.git
-  cd HMCL
+  git clone https://github.com/LeeWikie/HMCL-AE.git
+  cd HMCL-AE
   ```
-- 從 [GitHub Release 頁面](https://github.com/HMCL-dev/HMCL/releases)可以手動下載特定版本的原始碼。
+  (本 fork 開發在 `ai-feature` 分支上。本 fork 所基於的上游專案是 [HMCL-dev/HMCL](https://github.com/HMCL-dev/HMCL);其 [GitHub Release 頁面](https://github.com/HMCL-dev/HMCL/releases) 提供的是不含 AI agent 的原版 HMCL 原始碼。)
+- 從 [HMCL-AE 的 GitHub Release 頁面](https://github.com/LeeWikie/HMCL-AE/releases)可以手動下載特定版本的原始碼。
 
-### 構建 HMCL
+### 構建 HMCL-AE
 
-想要構建 HMCL，請切換到 HMCL 專案的根目錄下，並執行以下指令:
+HMCL-AE 是一個多模組 Gradle 專案:**HMCLAI**(AI 核心——agent 迴圈、工具、搜尋、技能)、**HMCL**(啟動器本體 + AI 介面 + Minecraft 操作工具)、**HMCLCore**(遊戲倉庫/下載/崩潰分析)、**HMCLBoot**(引導)。
+
+想要構建它，請切換到專案根目錄下，並執行以下指令:
 
 ```shell
-./gradlew clean makeExecutables
+./gradlew :HMCL:makeExecutables
 ```
 
-構建出的 HMCL 程式檔位於根目錄下的 `HMCL/build/libs` 子目錄中。
+構建出的 HMCL-AE 程式檔位於根目錄下的 `HMCL/build/libs` 子目錄中。
 
 ## 除錯選項
 

@@ -257,16 +257,6 @@ public final class AiProviderProfile {
         list.addAll(result);
     }
 
-    /// Sets a model alias on the matching entry (creating the entry if needed).
-    public void setModelAlias(String modelId, String alias) {
-        AiModelEntry entry = getModel(modelId);
-        if (entry == null) {
-            entry = new AiModelEntry(modelId);
-            models().add(entry);
-        }
-        entry.setAlias(alias);
-    }
-
     /// Returns the alias for a model, or the model id if no alias is set.
     public String getModelAliasOrId(String modelId) {
         AiModelEntry entry = getModel(modelId);

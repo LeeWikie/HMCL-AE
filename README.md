@@ -9,7 +9,7 @@
 
   [下载](https://github.com/LeeWikie/HMCL-AE/releases/latest) · [反馈](https://github.com/LeeWikie/HMCL-AE/issues) · [上游 HMCL](https://github.com/HMCL-dev/HMCL)
 
-  <sub>GPLv3 · Java 8+ · Windows / Linux / macOS / FreeBSD · v0.1.0-beta</sub>
+  <sub>GPLv3 · Java 17+ · Windows / Linux / macOS / FreeBSD · v0.1.0-alpha</sub>
 </div>
 
 ---
@@ -41,7 +41,7 @@
 ## 上手
 
 1. **下载**　到 [Releases](https://github.com/LeeWikie/HMCL-AE/releases/latest) 拿对应平台的文件。
-2. **运行**　Windows 双击 `.exe`；Linux / macOS 用 `java -jar HMCL-AE-xxx.jar`（需 Java 8+）。
+2. **运行**　Windows 双击 `.exe`；Linux / macOS 用 `java -jar HMCL-AE-xxx.jar`（需 Java 17+）。
 3. **配模型**　侧栏「AI 助手 → AI 设置 → 模型服务」添加：填端点、API Key、模型名。
 4. **开聊**　直接说你想干什么。中文体验更好。
 

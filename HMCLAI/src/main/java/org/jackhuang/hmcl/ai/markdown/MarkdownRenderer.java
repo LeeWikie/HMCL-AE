@@ -1,79 +1,37 @@
+/*
+ * Hello Minecraft! Launcher
+ * Copyright (C) 2026 huangyuhui <huanghongxun2008@126.com> and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package org.jackhuang.hmcl.ai.markdown;
 
-import org.commonmark.Extension;
-import org.commonmark.ext.autolink.AutolinkExtension;
-import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension;
-import org.commonmark.ext.gfm.tables.TablesExtension;
-import org.commonmark.node.Node;
-import org.commonmark.parser.Parser;
-import org.commonmark.renderer.html.HtmlRenderer;
 import org.jetbrains.annotations.NotNullByDefault;
 
-import java.util.Arrays;
-import java.util.List;
-
-/// Renders Markdown text to styled HTML suitable for embedding in a JavaFX WebView.
+/// Markdown-syntax detection heuristic used to decide whether an AI chat message should be
+/// rendered through {@code MarkdownMessageView}'s native JavaFX AST walker (see the `ui/ai`
+/// module) or shown as a plain-text {@code Label}.
 ///
-/// Uses the commonmark-java library with GFM extensions (tables, autolink, strikethrough).
-/// The returned HTML is wrapped in a full document with inline CSS that adapts to
-/// HMCL's theme colours.
+/// This class previously also rendered Markdown to an HTML string (via commonmark-java) for
+/// display in a JavaFX WebView; that approach was replaced by {@code MarkdownMessageView}
+/// walking the commonmark AST directly into native JavaFX nodes (no WebView dependency), so the
+/// HTML-rendering methods were removed as dead code — only the syntax-detection heuristic below
+/// is still used.
 @NotNullByDefault
 public final class MarkdownRenderer {
 
-    private static final Parser PARSER;
-    private static final HtmlRenderer RENDERER;
-
-    static {
-        List<Extension> extensions = Arrays.asList(
-                TablesExtension.create(),
-                AutolinkExtension.create(),
-                StrikethroughExtension.create()
-        );
-        PARSER = Parser.builder().extensions(extensions).build();
-        RENDERER = HtmlRenderer.builder().extensions(extensions).build();
-    }
-
     private MarkdownRenderer() {}
-
-    /// Parses markdown text and returns an HTML body string.
-    public static String renderToHtml(String markdown) {
-        Node document = PARSER.parse(markdown != null ? markdown : "");
-        return RENDERER.render(document);
-    }
-
-    /// Wraps HTML body content in a full HTML document with inline CSS that adapts to
-    /// HMCL's theme. When {@code darkMode} is true, dark-theme colours are used.
-    public static String wrapHtmlDocument(String bodyHtml, boolean darkMode) {
-        String bg = darkMode ? "#1e1e2e" : "#ffffff";
-        String fg = darkMode ? "#cdd6f4" : "#1e1e2e";
-        String codeBg = darkMode ? "#313244" : "#f4f4f5";
-        String border = darkMode ? "#45475a" : "#e0e0e0";
-        String muted = darkMode ? "#a6adc8" : "#6c7086";
-
-        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
-                + "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/"
-                + (darkMode ? "github-dark.min.css" : "github.min.css") + "\">"
-                + "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js\"><\\/script>"
-                + "<script>document.addEventListener('DOMContentLoaded',function(){hljs.highlightAll();});<\\/script>"
-                + "<style>"
-                + "html,body{margin:0;padding:8px 12px;background:" + bg + ";color:" + fg
-                + ";font-size:13px;line-height:1.65;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;}"
-                + "pre,code{font-family:'JetBrains Mono','Fira Code','Cascadia Code',Consolas,monospace;font-size:12px;}"
-                + "pre{background:" + codeBg + ";border:1px solid " + border + ";border-radius:8px;padding:12px 14px;overflow-x:auto;}"
-                + "code{background:" + codeBg + ";border-radius:4px;padding:1px 4px;}"
-                + "pre code{background:transparent;padding:0;}"
-                + "table{border-collapse:collapse;width:100%;margin:8px 0;}"
-                + "th,td{border:1px solid " + border + ";padding:6px 10px;text-align:left;}"
-                + "th{background:" + codeBg + ";}"
-                + "blockquote{border-left:3px solid #2196f3;margin:8px 0;padding:4px 12px;color:" + muted + ";}"
-                + "a{color:#2196f3;}"
-                + "ul,ol{padding-left:20px;}"
-                + "img{max-width:100%;}"
-                + "h1,h2,h3,h4{line-height:1.3;margin:12px 0 4px;}"
-                + "h1{font-size:18px;}h2{font-size:16px;}h3{font-size:14px;}"
-                + "p{margin:4px 0;}"
-                + "</style></head><body>" + bodyHtml + "</body></html>";
-    }
 
     /// Matches a GFM table delimiter row (`|---|---|`, `|:--|:--|`, `|:-:|:-:|`, ...) regardless of
     /// colon-alignment placement/spacing — a plain `.contains("|---")`/`.contains("| ---")` check

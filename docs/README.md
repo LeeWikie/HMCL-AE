@@ -52,7 +52,7 @@ The AI is an **agent with real tools** — it calls tools, gets results, and dec
 ## Requirements
 
 - An **AI provider API key** (OpenAI, DeepSeek, Anthropic, or any OpenAI-compatible endpoint). The AI features do **not** work without one — there are no built-in free models.
-- Java 8+ (Java 17+ recommended for best performance).
+- Java 17+ required (Java 21+ recommended for best performance).
 - The launcher itself is free and open source; API usage is billed by the provider you configure.
 
 ## Quick Start
@@ -78,7 +78,7 @@ This is a beta release. Download links:
 
 ## Known Issues
 
-See the included `HMCL-AE 测试版说明与已知问题.md` for an up-to-date, honest list of known issues (in Chinese).
+See the [wiki's 已知问题 (Known Issues) page](https://github.com/LeeWikie/HMCL-AE/wiki/已知问题) for an up-to-date, honest list of known issues (in Chinese).
 
 ## Contributing
 
