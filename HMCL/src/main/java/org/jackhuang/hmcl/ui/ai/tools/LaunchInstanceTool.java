@@ -27,6 +27,7 @@ import org.jackhuang.hmcl.ui.versions.Versions;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.IntSupplier;
 
@@ -121,6 +122,13 @@ public final class LaunchInstanceTool implements Tool {
         WorldBackupManager.PendingBackupResult pendingBackups =
                 WorldBackupManager.consumePendingFirstLaunchBackups(id, worldBackupRetention.getAsInt());
 
+        // Safety net 2: an interrupted restore_world_backup (crash/kill between its two directory
+        // renames) can leave a world missing from saves/ with its data stranded in hidden
+        // .{world}.replaced / .{world}.restoring folders. Surface any such leftovers before the
+        // user plays, instead of letting the world silently look "vanished". Best-effort scan.
+        List<WorldBackupManager.InterruptedRestoreLeftover> restoreLeftovers =
+                WorldBackupManager.scanInterruptedRestores(id);
+
         try {
             Platform.runLater(() -> Versions.launch(profile, id));
         } catch (Throwable e) {
@@ -139,7 +147,27 @@ public final class LaunchInstanceTool implements Tool {
                     .append(String.join(", ", pendingBackups.failedWorlds()))
                     .append(" — consider running instance(action=\"worlds_backup_create\") for them manually.");
         }
+        if (!restoreLeftovers.isEmpty()) {
+            message.append("\nWARNING: found leftover data from an interrupted world-backup restore under saves/:");
+            for (WorldBackupManager.InterruptedRestoreLeftover leftover : restoreLeftovers) {
+                message.append("\n  - ").append(leftover.path().getFileName())
+                        .append(" (world '").append(leftover.world()).append("', ")
+                        .append(describeLeftoverKind(leftover.kind())).append(')');
+            }
+            message.append("\nInform the user: if a world is missing or looks wrong, its pre-restore data is "
+                    + "preserved in the hidden '.<world>.replaced' folder — renaming it back to '<world>' recovers "
+                    + "it. Once the user confirms their worlds are fine, these leftover files/folders can be deleted.");
+        }
         return ToolResult.success(message.toString());
+    }
+
+    private static String describeLeftoverKind(String kind) {
+        return switch (kind) {
+            case "replaced" -> "the world's complete pre-restore data, set aside by the restore";
+            case "restoring" -> "a staged snapshot copy that was never swapped in";
+            case "restore-in-progress" -> "a marker showing the restore died mid-swap";
+            default -> kind;
+        };
     }
 
     @Nullable
