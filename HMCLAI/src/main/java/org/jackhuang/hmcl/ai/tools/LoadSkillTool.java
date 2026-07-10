@@ -30,10 +30,9 @@ import java.util.Map;
 ///   can be combined; the result is their union, `name` first, in call order, with exact-duplicate
 ///   skill names skipped.
 /// - neither present: lists every enabled skill (name + description + level) instead of loading
-///   one. This is the ONLY way a model can discover an operation-level skill's name when neither a
-///   scenario's `requires:` expansion nor a BM25 match surfaced it — {@link SkillRegistry#summarizeEnabled()}
-///   (injected into every system prompt) deliberately lists scenario-level skills only, to keep that
-///   always-present block small.
+///   one. Mostly redundant now that the system prompt's skill tree (see
+///   {@code AiPromptBuilder#skillTreeBlock}) already lists BOTH levels with one-line briefs, but
+///   kept as the on-demand full-description fallback (the tree's briefs are first-sentence only).
 ///
 /// Permission level: READ_ONLY. It only reads SKILL.md files already shipped with/authored for
 /// the app; it changes no state (use the settings page to enable/disable a skill).
@@ -60,14 +59,13 @@ public final class LoadSkillTool implements ToolSpec {
     @Override
     public String getDescription() {
         return "Loads one or more skills' full playbooks by name (scenario-level or operation-level — see the "
-                + "skill index in this prompt for available names). Use this INSTEAD OF the read tool to pull in "
-                + "a skill that wasn't auto-loaded for the current message. Loading a scenario-level skill also "
-                + "loads every operation-level skill its playbook requires, in the same call. Parameters: name "
-                + "(a single exact skill name) and/or names (an array of exact skill names to batch-load in ONE "
-                + "call instead of one call per skill — use this whenever you already know you need several "
-                + "skills). Omit both name and names to list every enabled skill's name + description instead, "
-                + "which is how you discover an operation-level skill's exact name when it wasn't already surfaced "
-                + "by an active playbook. Read-only.";
+                + "skill tree in this prompt for available names). Playbook text is NEVER preloaded: this tool is "
+                + "how you read a skill before following it, and the dedicated replacement for reading SKILL files "
+                + "with the read tool. Loading a scenario-level skill also loads every operation-level skill its "
+                + "playbook requires, in the same call. Parameters: name (a single exact skill name) and/or names "
+                + "(an array of exact skill names to batch-load in ONE call instead of one call per skill — use "
+                + "this whenever you already know you need several skills). Omit both name and names to list every "
+                + "enabled skill with its full description (the tree shows only a one-line brief). Read-only.";
     }
 
     @Override

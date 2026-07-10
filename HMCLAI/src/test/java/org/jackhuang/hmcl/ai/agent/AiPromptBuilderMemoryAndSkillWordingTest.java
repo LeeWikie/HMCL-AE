@@ -43,15 +43,18 @@ public final class AiPromptBuilderMemoryAndSkillWordingTest {
         AiSettings settings = new AiSettings(dir.resolve("settings"));
         AiPromptBuilder pb = new AiPromptBuilder(settings, new ToolRegistry(), registry, new AiSearchConfig());
 
-        // This skill has NO triggers at all — it can only ever be "active" here via a caller
-        // explicitly naming it (standing in for a Layer-2/requires:-pulled activation), so the
-        // preamble must not claim a trigger-phrase match for it.
+        // This skill has NO triggers at all — it can only ever be hinted here via a caller
+        // explicitly naming it (standing in for a Layer-2/requires:-pulled match), so the nudge
+        // must not claim a trigger-phrase match for it. (Since the adaptive-matching rework the
+        // nudge is also all a match ever injects — the body itself must NOT be inlined.)
         String prompt = pb.build(Set.of("wording-test-skill"));
-        assertTrue(prompt.contains("STEP-MARKER"), "the skill body must still be inlined");
+        assertTrue(prompt.contains("- wording-test-skill"), "the nudge must name the hinted skill");
+        assertFalse(prompt.contains("STEP-MARKER"),
+                "matching must not inline the body any more — the model loads it via load_skill");
         assertFalse(prompt.contains("matched their triggers"),
                 "must not claim a trigger-phrase match — Layer-2/requires:-pulled skills never had one");
-        assertTrue(prompt.contains("Active skill playbooks (auto-loaded as relevant to your request)"),
-                "the softened, always-true wording must be present instead");
+        assertTrue(prompt.contains("looks related to these skill playbooks"),
+                "the softened, always-true nudge wording must be present instead");
     }
 
     @Test

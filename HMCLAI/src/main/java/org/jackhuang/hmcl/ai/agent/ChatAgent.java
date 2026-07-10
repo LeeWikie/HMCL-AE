@@ -67,15 +67,15 @@ public final class ChatAgent {
     private final AiSettings settings;
     private final AiPromptBuilder promptBuilder;
 
-    /// Skills whose trigger phrases matched a user message in this conversation. Sticky for the
-    /// session (a mid-task "继续" must not drop the playbook) and size-capped: the oldest match
-    /// is evicted so a long wandering chat can't accrete every playbook into the prompt.
-    /// Only touched on the agent's single-thread executor.
-    private final java.util.LinkedHashSet<String> activeSkills = new java.util.LinkedHashSet<>();
-    /// Raised from 3 (scenario-skill era) alongside the shift to smaller operation-level skills —
-    /// 12 × the new ~1000-char body cap is still less prompt weight than the old 3 × 6000, while
-    /// covering far more concrete operations per turn. See AiPromptBuilder#SKILL_BODY_MAX_CHARS.
-    private static final int MAX_ACTIVE_SKILLS = 12;
+    /// Skill names whose triggers/BM25 matched THIS turn's user message — rendered by
+    /// {@link AiPromptBuilder#buildVolatileSuffix} as the current turn's short
+    /// {@code <runtime-guard type="skill_hint">} nudge. Deliberately NOT sticky across turns any
+    /// more (the sticky set + eviction cap died with the "hit → inject full playbook, keep it for
+    /// the session" design it existed for): a nudge is advice about ONE message, and any playbook
+    /// the model chose to load via {@code load_skill} lives on in the conversation itself for as
+    /// long as the tool result stays in context — re-loading is one cheap read-only call.
+    /// Overwritten at the start of every turn; only touched on the agent's single-thread executor.
+    private java.util.List<String> turnSkillHints = java.util.List.of();
 
     /// Provider-reported prompt (input) token count of the FIRST model call of the most recent
     /// streaming turn — i.e. the size of the persisted context (system + history + user) before
@@ -295,7 +295,7 @@ public final class ChatAgent {
         // stays accurate even if buildMessages()'s split placement changes — e.g. the volatile
         // suffix living in the wire-only copy of the last message, not the system prompt.
         int chars = promptBuilder != null
-                ? promptBuilder.buildStablePrefix().length() + promptBuilder.buildVolatileSuffix(activeSkills).length()
+                ? promptBuilder.buildStablePrefix().length() + promptBuilder.buildVolatileSuffix(turnSkillHints).length()
                 : FALLBACK_SYSTEM_PROMPT.length();
         for (LlmMessage m : session.getMessages()) {
             String c = m.getContent();
@@ -320,6 +320,15 @@ public final class ChatAgent {
     /// or an empty string if the model returns nothing or the call fails — callers should keep
     /// their existing title in that case.
     public CompletableFuture<String> suggestTitle(String firstUser, @Nullable String firstAssistant) {
+        return suggestTitle(firstUser, firstAssistant, null);
+    }
+
+    /// Same as {@link #suggestTitle(String, String)} but lets the caller supply a dedicated
+    /// client for the title call ("自动命名模型" — e.g. a cheaper/faster model than the chat
+    /// one). `null` = Auto: use this agent's own chat client.
+    public CompletableFuture<String> suggestTitle(String firstUser, @Nullable String firstAssistant,
+                                                  @Nullable AiChatClient titleClient) {
+        final AiChatClient titleCallClient = titleClient != null ? titleClient : client;
         return CompletableFuture.supplyAsync(() -> {
             try {
                 StringBuilder ctx = new StringBuilder("用户：").append(firstUser.strip());
@@ -332,7 +341,7 @@ public final class ChatAgent {
                 List<LlmMessage> request = new ArrayList<>(2);
                 request.add(new LlmMessage("system", TITLE_SYSTEM_PROMPT));
                 request.add(new LlmMessage("user", ctx.toString()));
-                String title = client.sendMessage(Collections.unmodifiableList(request)).join();
+                String title = titleCallClient.sendMessage(Collections.unmodifiableList(request)).join();
                 if (title == null) {
                     return "";
                 }
@@ -387,26 +396,22 @@ public final class ChatAgent {
         }, executor);
     }
 
-    /// Matches {@code userInput} against skill triggers and folds the hits into the sticky
-    /// per-conversation set (evicting the oldest beyond {@link #MAX_ACTIVE_SKILLS}).
-    /// Runs on the agent executor before each turn's request is built.
-    private void updateActiveSkills(String userInput) {
+    /// Matches {@code userInput} against skill triggers/BM25 and records the hits as THIS turn's
+    /// nudge candidates ({@link #turnSkillHints}), replacing whatever the previous turn matched —
+    /// the nudge is per-turn advice, not conversation state (see the field's doc for why the old
+    /// sticky set is gone). Runs on the agent executor before each turn's request is built.
+    private void updateTurnSkillHints(String userInput) {
         if (promptBuilder == null) {
             return;
         }
-        activeSkills.addAll(promptBuilder.matchSkills(userInput));
-        while (activeSkills.size() > MAX_ACTIVE_SKILLS) {
-            java.util.Iterator<String> it = activeSkills.iterator();
-            it.next();
-            it.remove();
-        }
+        turnSkillHints = promptBuilder.matchSkills(userInput);
     }
 
     private String doSend(String userInput) throws LlmException {
         // Auto-compact (if near the context limit) BEFORE the new user message is added, so the
         // message just typed is never folded into the summary and lost as a distinct turn.
         maybeAutoCompact();
-        updateActiveSkills(userInput);
+        updateTurnSkillHints(userInput);
         session.addMessage(new LlmMessage("user", userInput));
         String response = client.sendMessage(buildMessages()).join();
         session.addMessage(new LlmMessage("assistant", response));
@@ -436,7 +441,7 @@ public final class ChatAgent {
                                  @Nullable java.util.function.BooleanSupplier cancelled) throws LlmException {
         // See doSend: compact before adding the user message so it isn't summarised away.
         maybeAutoCompact();
-        updateActiveSkills(userInput);
+        updateTurnSkillHints(userInput);
         // Groups this turn's messages (user input + tool records + assistant reply) for replay.
         final String turnId = java.util.UUID.randomUUID().toString();
         LlmMessage userMessage = new LlmMessage("user", userInput);
@@ -653,7 +658,7 @@ public final class ChatAgent {
 
     /// Appends {@link AiPromptBuilder#buildVolatileSuffix} to the LAST message of {@code trimmed}
     /// (the current turn's freshly-added user message) — everything that changes turn-to-turn
-    /// (runtime context, active skill playbooks, policy, language directive, …) lives here instead
+    /// (runtime context, the per-turn skill nudge, policy, language directive, …) lives here instead
     /// of the system message, so a byte changing there doesn't invalidate a provider's prefix-hash
     /// cache over {@link #buildMessages()}'s stable system prompt + the older, unchanging turns of
     /// conversation history.
@@ -670,9 +675,8 @@ public final class ChatAgent {
         LlmMessage original = trimmed.get(lastIndex);
         // Pass the CURRENT turn's raw text so buildVolatileSuffix can decide whether dev mode
         // (a literal "[Dev]" tag — see AiPromptBuilder#isDevModeTriggered) fires THIS turn only;
-        // it must never be folded into `activeSkills`, which is sticky for the rest of the
-        // conversation (see that field's doc comment) — dev mode is explicitly NOT sticky.
-        String volatileSuffix = promptBuilder.buildVolatileSuffix(activeSkills, original.getContent());
+        // like `turnSkillHints` (this turn's skill-nudge candidates), it is strictly per-turn.
+        String volatileSuffix = promptBuilder.buildVolatileSuffix(turnSkillHints, original.getContent());
         if (volatileSuffix.isBlank()) {
             return;
         }

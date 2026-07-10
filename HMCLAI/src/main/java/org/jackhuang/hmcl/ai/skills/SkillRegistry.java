@@ -134,7 +134,10 @@ public final class SkillRegistry {
         }
     }
 
-    /// Static index injected into every system prompt: SCENARIO-level skills only (one directory
+    /// Flat index of SCENARIO-level skills. No longer what the system prompt embeds (that is now
+    /// {@code AiPromptBuilder#skillTreeBlock}'s domain-grouped tree of BOTH levels, with the
+    /// per-turn skill_hint nudge replacing full-body injection) — still used by the chat page's
+    /// user-facing /skills command listing: SCENARIO-level skills only (one directory
     /// component under the skills dir). Operation-level skills (two components — the split-out
     /// playbooks a scenario orchestrates via `requires:`) are deliberately excluded here: at the
     /// ~90-skill scale, listing every one of them in a prompt block present on EVERY turn would

@@ -175,14 +175,13 @@ public final class AiPromptBuilder {
         this.rememberStore = rememberStore;
     }
 
-    /// Per-injected-skill body cap (chars). Keeps a runaway SKILL.md from flooding the prompt.
-    /// Operation-level skills are meant to be short (~1000 chars), so this shrank from the old
-    /// 6000-char scenario-skill-sized cap — 12 skills × 1000 is still less prompt weight than the
-    /// old 3 × 6000 worst case, while covering far more concrete operations per turn.
-    private static final int SKILL_BODY_MAX_CHARS = 1000;
-    /// How many skills a single user message may newly activate (Layer 1 exact-trigger hits plus
-    /// Layer 2 {@link SkillIndex} fuzzy hits together, before {@code requires:} expansion).
-    static final int SKILL_MATCH_LIMIT = 6;
+    /// How many skills a single user message may surface in the per-turn {@code skill_hint}
+    /// nudge (Layer 1 exact-trigger hits plus Layer 2 {@link SkillIndex} fuzzy hits together,
+    /// before {@code requires:} expansion). Raised from 6 when the "hit → inject the whole
+    /// playbook body" design was replaced by the adaptive nudge (2026-07-10 live-test feedback):
+    /// a nudge line is one short sentence, not a ~1000-char body, so listing a couple more
+    /// candidates costs almost nothing while improving recall for the model to choose from.
+    static final int SKILL_MATCH_LIMIT = 8;
 
     /// Literal, deterministic "[Dev]" testing/debug-collaboration tag — an established convention
     /// of the project's own tester/developer when reporting a bug while live-testing the app (e.g.
@@ -192,19 +191,19 @@ public final class AiPromptBuilder {
 
     /// Name of the built-in dev-mode skill ({@code dev-mode/SKILL.md}). Deliberately excluded from
     /// {@link #matchSkills}'s retrieval pool below — this skill must NEVER be picked up by
-    /// {@link SkillMatcher} or {@link SkillIndex}, nor folded into {@code ChatAgent}'s STICKY
-    /// per-conversation active-skill set (once matched there, a skill keeps costing tokens on
-    /// every later turn too — see {@code ChatAgent#activeSkills}). Its body is instead rendered
-    /// fresh, every turn, ONLY when {@link #isDevModeTriggered} is true for THAT turn's message
+    /// {@link SkillMatcher} or {@link SkillIndex} (it would then surface in the per-turn
+    /// {@code skill_hint} nudge like any other match). Its body is instead rendered fresh, every
+    /// turn, ONLY when {@link #isDevModeTriggered} is true for THAT turn's message
     /// (see {@link #buildVolatileSuffix(java.util.Collection, String)} / {@link #devModeBlock()}),
-    /// so it never lingers into a later turn that doesn't repeat the tag.
+    /// so it never lingers into a later turn that doesn't repeat the tag. It is also excluded
+    /// from the {@link #skillTreeBlock() skill tree}: it is not a playbook the model should ever
+    /// choose to {@code load_skill} on its own.
     static final String DEV_MODE_SKILL_NAME = "dev-mode";
 
-    /// Body cap for the dev-mode skill specifically — deliberately larger than
-    /// {@link #SKILL_BODY_MAX_CHARS}. That smaller cap exists to bound how much a handful of
-    /// SIMULTANEOUSLY-active, potentially long-lived skills can cost across an entire
-    /// conversation; dev-mode has no such multiplier — it only ever costs tokens on the rare turn
-    /// that actually contains the tag — so it can afford to be a fuller, better-written playbook.
+    /// Body cap for the dev-mode skill — the ONE remaining full-body auto-injection path (all
+    /// ordinary skills now inject only a short nudge and are read via {@code load_skill}).
+    /// Affordable because it only ever costs tokens on the rare turn whose message actually
+    /// contains the "[Dev]" tag, so it can be a fuller, better-written playbook.
     private static final int DEV_MODE_BODY_MAX_CHARS = 6000;
 
     /// Whether {@code userMessage} contains the literal {@link #DEV_MODE_TAG}, anywhere in the
@@ -222,8 +221,11 @@ public final class AiPromptBuilder {
         return userMessage != null && userMessage.contains(DEV_MODE_TAG);
     }
 
-    /// Matches {@code userInput} against the enabled skills and returns the matched skill names.
-    /// Returns nothing when auto-injection is disabled in settings.
+    /// Matches {@code userInput} against the enabled skills and returns the matched skill names —
+    /// consumed by {@link #skillHintBlock} as the CURRENT turn's nudge candidates (matching no
+    /// longer injects any playbook body). Returns nothing when the "auto skill matching" toggle is
+    /// off in settings — with it off, no nudge is ever injected and the model relies on the
+    /// always-present {@link #skillTreeBlock() skill tree} alone.
     ///
     /// Two retrieval layers, then deterministic expansion:
     /// 1. {@link SkillMatcher} — exact trigger-phrase hits; always wins a slot first.
@@ -309,7 +311,7 @@ public final class AiPromptBuilder {
     }
 
     /// The prefix-hash-cacheable part of the prompt: persona, tool guide, conventions, tool
-    /// discipline, the scenario-level skill index, and static machine facts (OS/CPU/shell/memory/
+    /// discipline, the domain-grouped skill tree, and static machine facts (OS/CPU/shell/memory/
     /// JVM heap — constant for the process's whole lifetime, memoized once). This block is
     /// IDENTICAL across every request of every session for a given app run — a prefix-hash cache
     /// (DeepSeek and most other providers) only ever pays for it once.
@@ -329,15 +331,10 @@ public final class AiPromptBuilder {
         blocks.add("");
         blocks.add(RUNTIME_GUARD_EDUCATION);
 
-        String skillSummary = skillRegistry.summarizeEnabled();
-        if (!skillSummary.startsWith("(no")) {
+        String skillTree = skillTreeBlock();
+        if (skillTree != null) {
             blocks.add("");
-            blocks.add("Domain skills — step-by-step playbooks for common tasks. When the user's request matches "
-                    + "one, its full playbook is AUTO-LOADED into this prompt (see 'Active skill playbooks' below, "
-                    + "if any) — follow it. For a multi-step task matching a skill that was NOT auto-loaded, call "
-                    + "load_skill(name) before acting — do NOT use the read tool for this, load_skill is the "
-                    + "dedicated way to pull in a playbook (a scenario skill's load also pulls in the operation "
-                    + "skills its playbook orchestrates):\n" + skillSummary);
+            blocks.add(skillTree);
         }
 
         blocks.add("");
@@ -347,8 +344,8 @@ public final class AiPromptBuilder {
     }
 
     /// Everything that can change from one request to the next: plan-mode/web-search toggles, tool
-    /// execution policy, language directive, memory recall, custom instructions, active skill
-    /// playbooks, and the volatile half of runtime context (free disk / selected instance /
+    /// execution policy, language directive, memory recall, custom instructions, the per-turn
+    /// skill nudge, and the volatile half of runtime context (free disk / selected instance /
     /// isolation state). {@code ChatAgent.buildMessages()} appends this to a WIRE-ONLY copy of the
     /// current turn's user message (never the persisted one — mutating that would leak this
     /// synthetic block into the UI and bake stale values into history forever) wrapped in a
@@ -376,15 +373,13 @@ public final class AiPromptBuilder {
         }
 
         // Mirror EXACTLY the constructor ChatAgentFactory uses for the policy that actually
-        // enforces execution (fileWriteConfirmEnabled + dangerouslySkipPermissions included) —
-        // previously this used the 2-arg constructor, which silently defaulted both of those to
-        // false regardless of the user's real settings, so the model could confidently describe
-        // its own execution policy incorrectly (e.g. claim controlled-write tools "run
-        // automatically" when the user had actually turned on confirmation for them).
+        // enforces execution (dangerouslySkipPermissions included) — previously this used the
+        // 2-arg constructor, which silently defaulted the flag to false regardless of the user's
+        // real settings, so the model could confidently describe its own execution policy
+        // incorrectly.
         AiExecutionPolicy policy = new AiExecutionPolicy(
                 settings.getApprovalModeEnum(),
                 settings.isDangerousActionConfirmationEnabled(),
-                settings.isFileWriteConfirmEnabled(),
                 settings.isDangerouslySkipPermissions());
         addBlankIfNonEmpty(blocks);
         blocks.add("Tool execution policy: " + describePolicy(policy, settings.isCriticalConfirmEnabled()));
@@ -409,12 +404,14 @@ public final class AiPromptBuilder {
             blocks.add("用户自定义指令（务必遵守）:\n" + custom);
         }
 
-        // Auto-loaded skill playbooks: sticky per conversation, so they change rarely, but they're
-        // still per-session state — they belong here, not in the process-wide stable prefix.
-        String skillBlock = activeSkillBlock(activeSkillNames);
-        if (skillBlock != null) {
+        // Per-turn skill nudge: the launcher's trigger/BM25 match no longer injects any playbook
+        // body — it injects one short <runtime-guard type="skill_hint"> notice telling the model
+        // which skills look relevant, and the model itself decides whether to load_skill them
+        // (2026-07-10 live-test feedback: adaptive lookup instead of forced full-body injection).
+        String skillHint = skillHintBlock(activeSkillNames);
+        if (skillHint != null) {
             addBlankIfNonEmpty(blocks);
-            blocks.add(skillBlock);
+            blocks.add(skillHint);
         }
 
         // Dev mode: literal, deterministic per-turn trigger — never sticky (not folded into
@@ -466,34 +463,174 @@ public final class AiPromptBuilder {
         }
     }
 
-    /// Renders the full playbook bodies of the given skills, or {@code null} when none resolve.
+    /// Renders the per-turn skill nudge for the given matched skill names, or {@code null} when
+    /// none resolve to an enabled skill. This REPLACED the old "inject the full playbook body of
+    /// every matched skill" block (product-level change to the 0.3.0 hit-injects-whole-playbook
+    /// behaviour, per the user's 2026-07-10 live-test feedback): the model now gets one short
+    /// notice naming the candidates and decides itself whether to {@code load_skill} them.
+    ///
+    /// Identity: wrapped in {@code <runtime-guard type="skill_hint">} via
+    /// {@link org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter} — the system prompt's
+    /// runtime-harness education establishes that content in this tag is the launcher speaking
+    /// (same authority as a tool error), never the user.
+    ///
+    /// Deliberately NOT phrased as "matched their triggers" — a skill can land here via Layer-2
+    /// BM25 fuzzy match or a requires:-expansion pull-in (see {@link #matchSkills}), neither of
+    /// which requires any literal trigger phrase in the user's text. The wording gives a clear
+    /// DEFAULT action (load first, then act) so weaker models don't silently skip the lookup,
+    /// while explicitly allowing a conscious decision not to load.
     @Nullable
-    private String activeSkillBlock(java.util.Collection<String> activeSkillNames) {
-        if (activeSkillNames.isEmpty()) {
+    private String skillHintBlock(java.util.Collection<String> hintSkillNames) {
+        if (hintSkillNames.isEmpty()) {
             return null;
         }
-        StringBuilder sb = new StringBuilder();
+        StringBuilder lines = new StringBuilder();
         for (SkillManifest m : skillRegistry.enabled()) {
-            if (m.getName() == null || !activeSkillNames.contains(m.getName())) {
+            if (m.getName() == null || !hintSkillNames.contains(m.getName())) {
                 continue;
             }
-            String body = SkillLoader.readBody(m, SKILL_BODY_MAX_CHARS);
-            if (body.isEmpty()) {
-                continue;
+            lines.append("- ").append(m.getName());
+            String brief = oneLineBrief(m.getDescription());
+            if (!brief.isEmpty()) {
+                lines.append(": ").append(brief);
             }
-            sb.append("### ").append(m.getName()).append('\n').append(body).append("\n\n");
+            lines.append('\n');
         }
-        if (sb.length() == 0) {
+        if (lines.length() == 0) {
             return null;
         }
-        // Deliberately NOT phrased as "matched their triggers" — a skill can land here via Layer-2
-        // BM25 fuzzy match or a requires:-expansion pull-in (see matchSkills()), neither of which
-        // requires any literal trigger phrase in the user's text, so claiming a trigger match would
-        // be false in those cases. "Relevant to your request" is true regardless of which retrieval
-        // path put it here.
-        return "Active skill playbooks (auto-loaded as relevant to your request).\n"
-                + "FOLLOW THESE STEPS for the matching part of the task — do not improvise a different procedure,\n"
-                + "and do NOT read these SKILL.md files again (the full content is already here):\n\n" + sb.toString().strip();
+        String text = "The user's message looks related to these skill playbooks (none of their full text is loaded yet):\n"
+                + lines
+                + "Decide explicitly before acting on the related part of the task: if a playbook is (or might be) "
+                + "relevant, the DEFAULT is to call load_skill first and follow it — load several at once with "
+                + "load_skill(names=[...]). Only proceed without loading when you are confident none apply, and make "
+                + "that a conscious decision, not an oversight.";
+        return org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter.wrap(SKILL_HINT_GUARD_TYPE, text);
+    }
+
+    /// {@code type=} token of the skill-nudge runtime-guard block — referenced by the stable
+    /// prefix's education text so the taught name can never drift from the injected one.
+    public static final String SKILL_HINT_GUARD_TYPE = "skill_hint";
+
+    /// Soft cap on one skill's one-line brief in the tree/nudge. First sentence of a shipped
+    /// description is well under this; the cap only guards against a runaway user-authored one.
+    private static final int SKILL_BRIEF_MAX_CHARS = 160;
+
+    /// First sentence of a skill's description, whitespace-collapsed and length-capped — the
+    /// "一句简述" shown per skill in the {@link #skillTreeBlock() tree} and the
+    /// {@link #skillHintBlock nudge}. Shipped descriptions follow "What it does. Use when …", so
+    /// the first sentence is the purpose line.
+    static String oneLineBrief(@Nullable String description) {
+        if (description == null) {
+            return "";
+        }
+        String d = description.replaceAll("\\s+", " ").strip();
+        int cut = d.length();
+        int zh = d.indexOf('。');
+        if (zh >= 0) {
+            cut = Math.min(cut, zh + 1);
+        }
+        int en = d.indexOf(". ");
+        if (en >= 0) {
+            cut = Math.min(cut, en + 1);
+        }
+        d = d.substring(0, cut).strip();
+        if (d.length() > SKILL_BRIEF_MAX_CHARS) {
+            d = d.substring(0, SKILL_BRIEF_MAX_CHARS) + "…";
+        }
+        return d;
+    }
+
+    /// The always-present skill index, tree-shaped: scenario-level playbooks at the root, then
+    /// operation-level playbooks grouped by their domain directory, ONE line (name + first-sentence
+    /// brief) per skill — full playbook text is never preloaded. Replaces the old scenario-only
+    /// flat index: with bodies no longer auto-injected, the model must be able to see EVERY
+    /// loadable skill (both levels) to decide what to {@code load_skill}, and one-line briefs keep
+    /// the whole tree cheaper than a single old full-body injection. Deterministically sorted so
+    /// the stable prefix stays byte-identical for a given registry state. {@code null} when no
+    /// skills are enabled. The dev-mode skill is excluded — it has its own dedicated injection
+    /// path and must never be self-served via load_skill (see {@link #DEV_MODE_SKILL_NAME}).
+    @Nullable
+    private String skillTreeBlock() {
+        List<SkillManifest> enabled = skillRegistry.enabled().stream()
+                .filter(m -> m.getName() != null && !DEV_MODE_SKILL_NAME.equals(m.getName()))
+                .toList();
+        if (enabled.isEmpty()) {
+            return null;
+        }
+        java.util.TreeMap<String, java.util.TreeMap<String, String>> domains = new java.util.TreeMap<>();
+        java.util.TreeMap<String, String> scenarios = new java.util.TreeMap<>();
+        Path skillsDir = skillRegistry.getSkillsDir();
+        for (SkillManifest m : enabled) {
+            String line = m.getName();
+            String brief = oneLineBrief(m.getDescription());
+            if (!brief.isEmpty()) {
+                line += ": " + brief;
+            }
+            if (SkillLoader.isScenarioLevel(skillsDir, m)) {
+                scenarios.put(m.getName(), line);
+            } else {
+                String domain = operationDomain(skillsDir, m);
+                domains.computeIfAbsent(domain != null ? domain : "misc", d -> new java.util.TreeMap<>())
+                        .put(m.getName(), line);
+            }
+        }
+        StringBuilder tree = new StringBuilder();
+        if (!scenarios.isEmpty()) {
+            tree.append("Scenario playbooks (task-level):\n");
+            for (String line : scenarios.values()) {
+                tree.append("- ").append(line).append('\n');
+            }
+        }
+        if (!domains.isEmpty()) {
+            tree.append("Operation playbooks (single concrete operations, grouped by domain — load by the bare name shown):\n");
+            for (Map.Entry<String, java.util.TreeMap<String, String>> domain : domains.entrySet()) {
+                tree.append("- ").append(domain.getKey()).append("/\n");
+                for (String line : domain.getValue().values()) {
+                    tree.append("  - ").append(line).append('\n');
+                }
+            }
+        }
+        return "Domain skills — step-by-step playbooks for Minecraft/HMCL tasks. This tree (one line per skill:\n"
+                + "name + what it covers) is the ONLY part preloaded; no playbook's full text is in context until you load it.\n"
+                + "- When part of the task falls under a skill, call load_skill(name=\"...\") FIRST and follow the returned\n"
+                + "  steps for that part — do not improvise a procedure a playbook covers, and do NOT use the read tool\n"
+                + "  for SKILL files. Load several at once with load_skill(names=[...]).\n"
+                + "- Loading a scenario-level skill automatically includes the operation-level skills it requires.\n"
+                + "- A <" + org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter.TAG + " type=\"" + SKILL_HINT_GUARD_TYPE
+                + "\"> notice in a turn flags skills whose trigger words matched that\n"
+                + "  message. Treat it as a checklist: load what is (or might be) relevant BEFORE acting — when unsure,\n"
+                + "  load it — or consciously decide none apply and continue without loading.\n"
+                + tree.toString().strip();
+    }
+
+    /// Domain directory of an operation-level skill (`<domain>/<slug>`): parsed from the bundled
+    /// classpath resource path for a built-in, or by relativizing against {@code skillsDir} for a
+    /// user-authored one. {@code null} when it cannot be determined (grouped as "misc").
+    @Nullable
+    private static String operationDomain(@Nullable Path skillsDir, SkillManifest m) {
+        String path = m.getPath();
+        if (path == null) {
+            return null;
+        }
+        if (m.isBuiltin()) {
+            // "/assets/skills/<domain>/<slug>/SKILL.json"
+            String[] parts = path.split("/");
+            return parts.length >= 4 ? parts[parts.length - 3] : null;
+        }
+        if (skillsDir == null) {
+            return null;
+        }
+        Path parent = Path.of(path).getParent();
+        if (parent == null) {
+            return null;
+        }
+        try {
+            Path relative = skillsDir.relativize(parent);
+            return relative.getNameCount() == 2 ? relative.getName(0).toString() : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /// Maps a reply-language mode to a directive, or {@code null} for `auto` / unknown.
@@ -676,7 +813,7 @@ public final class AiPromptBuilder {
         // relaxed by any setting — whenever the current turn may be running unattended (e.g. a
         // synthetic follow-up turn fired automatically once a background job finishes).
         String base = "Auto – read-only and network tools run automatically; controlled-write tools "
-                + (policy.isFileWriteConfirmEnabled() ? "ALSO require the user's confirmation (and editing/removing something that already exists always asks, regardless of this toggle); " : "run automatically too (except editing/removing something that already exists, which always asks); ")
+                + "run automatically too (except editing/removing something that already exists, which always asks); "
                 + "dangerous operations (e.g. destructive shell commands, deleting an instance) "
                 + (policy.isDangerousConfirmationEnabled() ? "require the user's confirmation" : "run automatically too")
                 + " while a user may actually be present to answer. If the current turn may be running "

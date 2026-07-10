@@ -44,7 +44,10 @@ import org.jetbrains.annotations.NotNullByDefault;
 /// user, never a new user request.
 ///
 /// Type tokens in use: `todo_silent_discard`, `todo_stale`, `loop_warning`, `no_progress`,
-/// `verify_on_stop`, `force_finish`, `terminal_denial`, `recalled_memories`. Keep tokens
+/// `verify_on_stop`, `force_finish`, `terminal_denial`, `recalled_memories`, `skill_hint`
+/// (the per-turn skill-matching nudge — see {@code AiPromptBuilder#skillHintBlock}; unlike the
+/// others it rides inside the `<turn-context>` block appended to the current user message, not
+/// as a standalone injected message, but carries the same harness identity). Keep tokens
 /// lower_snake_case so they read as machine identifiers, not prose.
 @NotNullByDefault
 public final class GuardMessageFormatter {
