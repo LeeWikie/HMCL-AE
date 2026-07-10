@@ -110,6 +110,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 
@@ -501,10 +502,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                     default -> AiProtocolFamily.OPENAI_COMPLETIONS.getId();
                 });
                 profile.setEndpoint(endpointField.getText() != null ? endpointField.getText().trim() : "");
-                // Strip ALL whitespace, not just the ends: keys copied from provider consoles
-                // often pick up an invisible newline/space mid-string, which turns into a
-                // baffling 401 the user cannot see.
-                profile.setApiKey(apiKey.getText().replaceAll("\\s+", ""));
+                // Strip ALL whitespace, not just the ends (see cleanApiKey): keys copied from
+                // provider consoles often pick up an invisible newline/space mid-string, which
+                // turns into a baffling 401 the user cannot see.
+                profile.setApiKey(cleanApiKey(apiKey.getText()));
                 profile.setEnabled(enabledBox.isSelected());
                 // Provider config no longer holds model/pricing — those live in 模型配置.
                 // Commit only now (on save), and make the just-configured profile active.
@@ -571,6 +572,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         JFXComboBox<String> idBox = new JFXComboBox<>();
         idBox.setEditable(true);
         idBox.setMaxWidth(Double.MAX_VALUE);
+        idBox.setMinHeight(MODEL_FIELD_HEIGHT);
+        idBox.setPrefHeight(MODEL_FIELD_HEIGHT);
         idBox.setVisibleRowCount(10);
         idBox.setPromptText(i18n("ai.settings.model.id_hint"));
         idBox.setValue(entry.getId());
@@ -609,27 +612,19 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         VBox idCell = new VBox(4, idCellRow, fetchStatus);
         idCell.setFillWidth(true);
 
-        JFXTextField aliasField = new JFXTextField(entry.getAlias());
+        JFXTextField aliasField = tallModelField(new JFXTextField(entry.getAlias()));
         aliasField.setPromptText(i18n("ai.settings.model.optional"));
 
-        JFXTextField ctxField = new JFXTextField(entry.getContextWindow() > 0 ? String.valueOf(entry.getContextWindow()) : "");
+        JFXTextField ctxField = tallModelField(new JFXTextField(entry.getContextWindow() > 0 ? String.valueOf(entry.getContextWindow()) : ""));
         ctxField.setPromptText(i18n("ai.settings.model.blank_default"));
-        JFXTextField maxOutField = new JFXTextField(entry.getMaxOutputTokens() > 0 ? String.valueOf(entry.getMaxOutputTokens()) : "");
+        JFXTextField maxOutField = tallModelField(new JFXTextField(entry.getMaxOutputTokens() > 0 ? String.valueOf(entry.getMaxOutputTokens()) : ""));
         maxOutField.setPromptText(i18n("ai.settings.model.blank_default"));
-        JFXTextField tempField = new JFXTextField(entry.hasTemperature() ? String.valueOf(entry.getTemperature()) : "");
+        JFXTextField tempField = tallModelField(new JFXTextField(entry.hasTemperature() ? String.valueOf(entry.getTemperature()) : ""));
         tempField.setPromptText(i18n("ai.settings.model.temperature_hint"));
-        JFXTextField reasoningField = new JFXTextField(entry.getReasoningEffort());
+        JFXTextField reasoningField = tallModelField(new JFXTextField(entry.getReasoningEffort()));
         reasoningField.setPromptText(i18n("ai.settings.model.reasoning_hint"));
-        GridPane advGrid = new GridPane();
-        advGrid.setHgap(16);
-        advGrid.setVgap(16); // 12→16：字段行更多呼吸感（2026-07-11 真机反馈：依旧挤）
-        ColumnConstraints ac1 = new ColumnConstraints();
-        ac1.setPercentWidth(50);
-        ac1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
-        ColumnConstraints ac2 = new ColumnConstraints();
-        ac2.setPercentWidth(50);
-        ac2.setHgrow(javafx.scene.layout.Priority.ALWAYS);
-        advGrid.getColumnConstraints().addAll(ac1, ac2);
+        // 2x2 param grid with mockup-approved loosened gaps/padding (spec 2026-07-11).
+        GridPane advGrid = modelParamGrid();
         advGrid.add(captionedField(i18n("ai.settings.context_window"), ctxField), 0, 0);
         advGrid.add(captionedField(i18n("ai.settings.model.max_output"), maxOutField), 1, 0);
         advGrid.add(captionedField(i18n("ai.settings.temperature"), tempField), 0, 1);
@@ -640,34 +635,23 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         capVisionBox.setSelected(entry.isSupportsVision());
         JFXCheckBox capReasoningBox = new JFXCheckBox(i18n("ai.settings.model.cap_reasoning"));
         capReasoningBox.setSelected(entry.isSupportsReasoning());
-        HBox capRow = new HBox(12, capToolsBox, capVisionBox, capReasoningBox);
-        capRow.setAlignment(Pos.CENTER_LEFT);
+        HBox capRow = modelCapabilityRow(capToolsBox, capVisionBox, capReasoningBox);
         advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 2, 2, 1);
-        advGrid.setPadding(new Insets(10, 0, 10, 0)); // 4→10：分区内上下留白（松密度）
         ComponentSublist advPane = new ComponentSublist();
         advPane.setTitle(i18n("ai.settings.advanced"));
         advPane.getContent().setAll(advGrid);
 
-        JFXTextField inField = new JFXTextField(fmtPrice(entry.getInputPricePerMillion()));
-        JFXTextField outField = new JFXTextField(fmtPrice(entry.getOutputPricePerMillion()));
-        JFXTextField cwField = new JFXTextField(fmtPrice(entry.getCacheWritePricePerMillion()));
-        JFXTextField crField = new JFXTextField(fmtPrice(entry.getCacheReadPricePerMillion()));
-        // 2x2 grid; each field carries its label as small caption text at the top-left.
-        GridPane priceGrid = new GridPane();
-        priceGrid.setHgap(16);
-        priceGrid.setVgap(16); // 12→16：与 advGrid 一致的呼吸感
-        ColumnConstraints pc1 = new ColumnConstraints();
-        pc1.setPercentWidth(50);
-        pc1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
-        ColumnConstraints pc2 = new ColumnConstraints();
-        pc2.setPercentWidth(50);
-        pc2.setHgrow(javafx.scene.layout.Priority.ALWAYS);
-        priceGrid.getColumnConstraints().addAll(pc1, pc2);
+        JFXTextField inField = tallModelField(new JFXTextField(fmtPrice(entry.getInputPricePerMillion())));
+        JFXTextField outField = tallModelField(new JFXTextField(fmtPrice(entry.getOutputPricePerMillion())));
+        JFXTextField cwField = tallModelField(new JFXTextField(fmtPrice(entry.getCacheWritePricePerMillion())));
+        JFXTextField crField = tallModelField(new JFXTextField(fmtPrice(entry.getCacheReadPricePerMillion())));
+        // 2x2 grid; each field carries its label as small caption text at the top-left. Same
+        // loosened gaps/padding as advGrid (spec 2026-07-11).
+        GridPane priceGrid = modelParamGrid();
         priceGrid.add(captionedField(i18n("ai.settings.model.price_in"), inField), 0, 0);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_out"), outField), 1, 0);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_write"), cwField), 0, 1);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_read"), crField), 1, 1);
-        priceGrid.setPadding(new Insets(10, 0, 10, 0)); // 4→10：分区内上下留白（松密度）
         ComponentSublist pricePane = new ComponentSublist();
         pricePane.setTitle(i18n("ai.settings.model.pricing"));
         pricePane.getContent().setAll(priceGrid);
@@ -707,8 +691,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
 
         // 16px 节奏：分区标题/字段块之间留足呼吸感（原 12 太挤——2026-07-10 真机反馈）。
-        VBox bodyBox = new VBox(16, formGrid(i18n("ai.settings.model.id"), idCell,
-                i18n("ai.settings.model.alias"), aliasField), collapsibles);
+        // 顶部 模型ID/别名 行距放宽到 16（spec 2026-07-11）。
+        GridPane topGrid = formGrid(i18n("ai.settings.model.id"), idCell,
+                i18n("ai.settings.model.alias"), aliasField);
+        topGrid.setVgap(MODEL_TOP_ROW_VGAP);
+        VBox bodyBox = new VBox(16, topGrid, collapsibles);
         FXUtils.setLimitWidth(bodyBox, FORM_WIDTH);
 
         DialogPane dialog = new DialogPane() {
@@ -790,9 +777,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return grid;
     }
 
+    /// Model-dialog spacing constants (2026-07-11 用户第三次"太挤"反馈 → mockup-approved values,
+    /// applied Java-side only, root.css untouched). See {@code editModel} and model-dialog-spec.md.
+    static final double MODEL_FIELD_GAP = 22;      // advGrid / priceGrid hgap+vgap
+    static final double MODEL_CAPTION_GAP = 8;     // caption → field spacing inside captionedField
+    static final double MODEL_CAP_ROW_GAP = 22;    // 模型能力 checkbox row spacing
+    static final double MODEL_TOP_ROW_VGAP = 16;   // 模型ID / 别名 top grid vgap
+    static final double MODEL_FIELD_HEIGHT = 42;   // input visual height
+    static final Insets MODEL_SECTION_PADDING = new Insets(22, 20, 20, 20); // expanded-section content padding
+
     /// Wraps a field with its label as small caption text at the top-left, for the 2x2
-    /// 高级/定价 grids in the model dialog.
-    private static VBox captionedField(String caption, javafx.scene.Node field) {
+    /// 高级/定价 grids in the model dialog. Caption→field spacing is {@link #MODEL_CAPTION_GAP}.
+    static VBox captionedField(String caption, javafx.scene.Node field) {
         Label cap = new Label(caption);
         // ai-footnote (10px + variant color) replaces the inline 10px setStyle; the CSS rule
         // lands with the root.css end-state rewrite (B7) — until then the caption renders at
@@ -801,9 +797,41 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         if (field instanceof javafx.scene.layout.Region region) {
             region.setMaxWidth(Double.MAX_VALUE);
         }
-        VBox box = new VBox(4, cap, field);
+        VBox box = new VBox(MODEL_CAPTION_GAP, cap, field);
         box.setFillWidth(true);
         return box;
+    }
+
+    /// Two-column model-param grid (高级/定价) with the loosened {@link #MODEL_FIELD_GAP} gaps and
+    /// generous {@link #MODEL_SECTION_PADDING} content padding — the single source for both grids.
+    static GridPane modelParamGrid() {
+        GridPane grid = new GridPane();
+        grid.setHgap(MODEL_FIELD_GAP);
+        grid.setVgap(MODEL_FIELD_GAP);
+        ColumnConstraints c1 = new ColumnConstraints();
+        c1.setPercentWidth(50);
+        c1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
+        ColumnConstraints c2 = new ColumnConstraints();
+        c2.setPercentWidth(50);
+        c2.setHgrow(javafx.scene.layout.Priority.ALWAYS);
+        grid.getColumnConstraints().addAll(c1, c2);
+        grid.setPadding(MODEL_SECTION_PADDING);
+        return grid;
+    }
+
+    /// 模型能力 checkbox row with the loosened {@link #MODEL_CAP_ROW_GAP} spacing.
+    static HBox modelCapabilityRow(CheckBox... boxes) {
+        HBox row = new HBox(MODEL_CAP_ROW_GAP, boxes);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    /// Gives a model-dialog text field the roomier {@link #MODEL_FIELD_HEIGHT} visual height
+    /// (mockup 42px). Local to this dialog — no global CSS change.
+    private static <T extends TextField> T tallModelField(T field) {
+        field.setMinHeight(MODEL_FIELD_HEIGHT);
+        field.setPrefHeight(MODEL_FIELD_HEIGHT);
+        return field;
     }
 
     private void removeModelEntry(AiProviderProfile profile, AiModelEntry entry) {
@@ -1133,40 +1161,98 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
     }
 
-    /// A password-masked API-key field with a reveal (eye) toggle. Default masked; click the eye to
-    /// show/hide. {@link #node} goes into the form; read the value via {@link #getText()}.
-    private static final class MaskedKeyField {
+    /// Reusable inline API-key field: a masked {@link JFXPasswordField} + eye reveal toggle, whitespace-
+    /// stripping paste cleaning, and (optional) live save. Default masked; click the eye to show/hide.
+    /// {@link #node} goes into the form. Search page and provider config both build this via
+    /// {@link #apiKeyField} so every API-key input across the app looks and behaves identically —
+    /// a single implementation for one whole class of input (2026-07-11 用户反馈：内联掩码框 + 小眼睛).
+    static final class MaskedKeyField {
         final HBox node;
-        private final JFXPasswordField masked;
+        final JFXPasswordField masked;
+        final JFXTextField shown;
+        final JFXButton eye;
+        private @Nullable Consumer<String> onCommit;
 
         MaskedKeyField(String value, String prompt) {
             masked = new JFXPasswordField();
             masked.setText(value == null ? "" : value);
             masked.setPromptText(prompt);
-            JFXTextField shown = new JFXTextField();
+            HBox.setHgrow(masked, javafx.scene.layout.Priority.ALWAYS);
+            shown = new JFXTextField();
             shown.setPromptText(prompt);
             shown.textProperty().bindBidirectional(masked.textProperty());
             shown.setManaged(false);
             shown.setVisible(false);
             javafx.scene.layout.StackPane stack = new javafx.scene.layout.StackPane(masked, shown);
-            JFXButton eye = new JFXButton();
+            eye = new JFXButton();
             eye.setGraphic(SVG.VISIBILITY.createIcon(18));
-            eye.setOnAction(e -> {
-                boolean show = !shown.isVisible();
-                shown.setVisible(show);
-                shown.setManaged(show);
-                masked.setVisible(!show);
-                masked.setManaged(!show);
-                eye.setGraphic((show ? SVG.VISIBILITY_OFF : SVG.VISIBILITY).createIcon(18));
-            });
+            FXUtils.installFastTooltip(eye, i18n("ai.settings.key.reveal"));
+            eye.setOnAction(e -> toggleReveal());
             node = new HBox(4, stack, eye);
             node.setAlignment(Pos.CENTER_LEFT);
             HBox.setHgrow(stack, javafx.scene.layout.Priority.ALWAYS);
+
+            // Commit (clean + save) whenever focus leaves either editor — 失焦即存 (spec 条目1).
+            javafx.beans.value.ChangeListener<Boolean> commitOnBlur = (o, was, focused) -> {
+                if (!focused) commit();
+            };
+            masked.focusedProperty().addListener(commitOnBlur);
+            shown.focusedProperty().addListener(commitOnBlur);
+        }
+
+        /// Flips between the masked dot view and the cleartext view (also driven by the eye button).
+        void toggleReveal() {
+            boolean show = !shown.isVisible();
+            shown.setVisible(show);
+            shown.setManaged(show);
+            masked.setVisible(!show);
+            masked.setManaged(!show);
+            eye.setGraphic((show ? SVG.VISIBILITY_OFF : SVG.VISIBILITY).createIcon(18));
+            FXUtils.installFastTooltip(eye, i18n(show ? "ai.settings.key.hide" : "ai.settings.key.reveal"));
+        }
+
+        boolean isRevealed() {
+            return shown.isVisible();
+        }
+
+        /// Registers the live-save callback fired on focus-loss with the whitespace-cleaned value.
+        void setOnCommit(@Nullable Consumer<String> onCommit) {
+            this.onCommit = onCommit;
+        }
+
+        /// Strip ALL whitespace (keys copied from provider consoles often pick up an invisible
+        /// newline/space that silently 401s), write the cleaned value back, then fire the save hook.
+        private void commit() {
+            String cleaned = cleanApiKey(getText());
+            if (!cleaned.equals(masked.getText())) masked.setText(cleaned);
+            if (onCommit != null) onCommit.accept(cleaned);
+        }
+
+        /// Re-binds the field to another stored key (搜索页切换服务商时回填对应 key). Programmatic —
+        /// does not fire the commit hook, so switching providers never re-saves into the new slot.
+        void setText(String value) {
+            masked.setText(value == null ? "" : value);
         }
 
         String getText() {
             return masked.getText() == null ? "" : masked.getText();
         }
+    }
+
+    /// Strips ALL whitespace from a pasted API key. Keys copied from provider consoles frequently
+    /// pick up an invisible newline/space mid-string, which otherwise turns into a baffling 401 the
+    /// user cannot see. Shared by the inline field's commit and the provider-editor accept path.
+    static String cleanApiKey(@Nullable String raw) {
+        return raw == null ? "" : raw.replaceAll("\\s+", "");
+    }
+
+    /// Builds a reusable inline API-key field (see {@link MaskedKeyField}) seeded from {@code initial},
+    /// saving the whitespace-cleaned value through {@code onCommit} on focus-loss. Pass {@code null}
+    /// onCommit for dialog-style fields whose value is read on accept instead.
+    private static MaskedKeyField apiKeyField(@Nullable String initial, String prompt, @Nullable Consumer<String> onCommit) {
+        MaskedKeyField field = new MaskedKeyField(initial, prompt);
+        field.setOnCommit(onCommit);
+        return field;
     }
 
     private static int parseIntSafe(String s) {
@@ -1548,26 +1634,26 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         provider.setValue(current != null ? current : SearchProvider.TAVILY);
         core.getContent().add(provider);
 
+        // Inline masked key field + eye reveal (spec 条目1): type directly in the row, 失焦即存,
+        // paste is whitespace-cleaned. Replaces the old LineButton→prompt-dialog flow.
+        MaskedKeyField searchKeyField = apiKeyField(searchConfig.getApiKey(), i18n("ai.settings.key.placeholder"), cleaned -> {
+            searchConfig.setApiKey(cleaned);
+            saveSearchConfig();
+        });
+        FXUtils.setLimitWidth(searchKeyField.node, 260);
         LineButton apiKey = new LineButton();
         apiKey.setTitle("API Key");
-        apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
-        apiKey.setTrailingIcon(SVG.EDIT);
-        apiKey.setOnAction(e -> Controllers.prompt(i18n("ai.settings.search.key_prompt"), (result, handler) -> {
-            searchConfig.setApiKey(result.trim());
-            saveSearchConfig();
-            apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
-            handler.resolve();
-        }, searchConfig.getApiKey()));
+        apiKey.setTrailingIcon(searchKeyField.node);
         core.getContent().add(apiKey);
 
         // 切换服务商时在内部同步默认 endpoint（端点不再作为独立设置项暴露）；API Key 现在按服务商分开存储
-        // （见 AiSearchConfig），所以这里还要刷新 apiKey 行的副标题，否则会显示上一个服务商的 key 状态。
+        // （见 AiSearchConfig），所以这里还要把输入框重新绑定/回填成当前服务商的 key，否则会显示上一个服务商的 key。
         provider.valueProperty().addListener((obs, old, val) -> {
             if (val != null) {
                 searchConfig.setProvider(val.name().toLowerCase());
                 if (!val.getDefaultEndpoint().isEmpty()) searchConfig.setEndpoint(val.getDefaultEndpoint());
                 saveSearchConfig();
-                apiKey.setSubtitle(searchConfig.getApiKey().isEmpty() ? i18n("ai.settings.search.key_unset") : i18n("ai.settings.value_set"));
+                searchKeyField.setText(searchConfig.getApiKey());
             }
         });
 
