@@ -98,8 +98,12 @@ public final class DeleteInstanceTool implements Tool {
         if (!repository.isLoaded()) {
             return ToolResult.failure("The game repository is not loaded yet; please try again in a moment.");
         }
+        // A named-but-missing instance now fails with the shared resolveInstance envelope listing
+        // the real instance names (T4). The instance name is resolved above (never a silent fallback
+        // to the selected instance — a destructive delete must be explicit), so only the existence
+        // check is delegated to the shared range, not the whole resolution.
         if (!repository.hasVersion(instance)) {
-            return ToolResult.failure("No such instance: '" + instance + "'.");
+            return InstanceToolSupport.instanceNotFoundFailure(repository, instance);
         }
 
         // Confirm-gate: do NOT delete unless confirm is exactly true.

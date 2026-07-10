@@ -136,6 +136,37 @@ public final class SetNbtToolTest {
         }
     }
 
+    /// T10: a path that misses reports the sibling keys of the deepest resolvable node (so the
+    /// model can fix a typo without a full-tree dump) and does NOT write or back up anything.
+    @Test
+    void missingPathEnumeratesSiblingKeysAndWritesNothing() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            Path worldDir = fx.repository().getRunDirectory("Inst").resolve("saves").resolve("MyWorld");
+            Path levelDat = writeLevelDat(worldDir, 7);
+            byte[] before = Files.readAllBytes(levelDat);
+
+            ToolResult result = tool.execute(Map.of("instance", "Inst",
+                    "world", "MyWorld", "file", "level.dat",
+                    "nbtPath", "Data.NoSuchKey", "value", "42"));
+
+            assertFalse(result.isSuccess(), "editing a non-existent path must fail");
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("Retryable: yes"), result.getError());
+            assertTrue(result.getError().contains("CompoundTag keys:"),
+                    "must enumerate the keys that exist at the deepest node: " + result.getError());
+            assertTrue(result.getError().contains("XpLevel"),
+                    "must list the real sibling key: " + result.getError());
+
+            assertArrayEquals(before, Files.readAllBytes(levelDat), "a missed path must not touch the file");
+            try (var children = Files.list(worldDir)) {
+                assertFalse(children.anyMatch(p -> p.getFileName().toString().startsWith("level.dat.bak-")),
+                        "a missed path must not create a backup");
+            }
+        }
+    }
+
     // ---------------------------------------------------------------------
     // NbtToolSupport.postWriteValidation (the NBT post-write validation leg)
     // ---------------------------------------------------------------------

@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import org.glavo.nbt.tag.Tag;
 import org.glavo.nbt.tag.ValueTag;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -70,7 +71,16 @@ public final class GetNbtTool implements Tool {
             List<NbtToolSupport.Step> steps = NbtToolSupport.parsePath(nbtPath);
             Tag target = NbtToolSupport.navigate(root, steps);
             if (target == null) {
-                return ToolResult.failure("No tag found at path '" + nbtPath + "' in " + savesDir.relativize(file) + ".");
+                // T10: hand the model the data it is looking for — the keys/indices that DO exist at
+                // the deepest node the path could reach — instead of forcing another full-tree dump.
+                Tag lastGood = NbtToolSupport.navigateBestEffort(root, steps);
+                return ToolFailures.failure(
+                        "No tag found at path '" + nbtPath + "' in " + savesDir.relativize(file)
+                                + "; " + NbtToolSupport.describeChildren(lastGood),
+                        ToolFailures.Retryable.YES,
+                        "likely a typo or wrong index in the path, not a missing file",
+                        "pick a key/index that exists at the deepest resolvable node above, or dump the "
+                                + "structure with read_nbt, then retry");
             }
 
             String value;

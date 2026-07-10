@@ -21,6 +21,7 @@ import org.glavo.nbt.tag.CompoundTag;
 import org.glavo.nbt.tag.Tag;
 import org.glavo.nbt.tag.ValueTag;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -107,8 +108,16 @@ public final class SetNbtTool implements Tool {
             List<NbtToolSupport.Step> steps = NbtToolSupport.parsePath(nbtPath);
             Tag target = NbtToolSupport.navigate(root, steps);
             if (target == null) {
-                return ToolResult.failure("No tag found at path '" + nbtPath + "'. set_nbt only edits existing values; "
-                        + "verify the path with get_nbt/read_nbt first.");
+                // T10: set_nbt only edits values that already exist. Enumerate what DOES exist at the
+                // deepest resolvable node so the model can correct a typo without a full-tree dump.
+                Tag lastGood = NbtToolSupport.navigateBestEffort(root, steps);
+                return ToolFailures.failure(
+                        "No tag found at path '" + nbtPath + "' — set_nbt only edits values that already "
+                                + "exist; " + NbtToolSupport.describeChildren(lastGood),
+                        ToolFailures.Retryable.YES,
+                        "likely a typo or wrong index; set_nbt does not create new keys",
+                        "verify the path with get_nbt/read_nbt and retry with a key/index that exists at "
+                                + "the deepest resolvable node above");
             }
 
             String before;

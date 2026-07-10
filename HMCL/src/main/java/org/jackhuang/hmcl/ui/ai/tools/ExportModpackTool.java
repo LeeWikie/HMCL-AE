@@ -81,7 +81,6 @@ public final class ExportModpackTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String instance = String.valueOf(parameters.getOrDefault("instance", "")).trim();
         String format = String.valueOf(parameters.getOrDefault("format", "modrinth")).trim().toLowerCase(Locale.ROOT);
         String targetOverride = optional(parameters, "target");
         String name = optional(parameters, "name");
@@ -99,13 +98,14 @@ public final class ExportModpackTool implements Tool {
         try {
             profile = Profiles.getSelectedProfile();
             repository = profile.getRepository();
-            target = instance.isEmpty() ? Profiles.getSelectedInstance() : instance;
-            if (target == null || target.isEmpty()) {
-                return ToolResult.failure("No instance selected. Use list_instances, or pass instance.");
+            // Shared resolveInstance range (T4): defaults to the selected instance, and a
+            // named-but-missing one fails with the unified envelope listing the real names.
+            InstanceToolSupport.ResolvedInstance resolved =
+                    InstanceToolSupport.resolveInstance(repository, parameters, false);
+            if (resolved.failure() != null) {
+                return resolved.failure();
             }
-            if (!repository.hasVersion(target)) {
-                return ToolResult.failure("No such instance '" + target + "'. Use list_instances.");
-            }
+            target = resolved.name();
         } catch (Throwable t) {
             return ToolResult.failure("Could not resolve the instance: " + t.getMessage());
         }

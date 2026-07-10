@@ -25,7 +25,6 @@ import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.ui.versions.Versions;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -98,23 +97,20 @@ public final class LaunchInstanceTool implements Tool {
             }
         }
 
-        String instance = extractString(parameters, "instance", null);
-        if (instance == null) {
-            instance = extractString(parameters, "version", null); // accept alias
+        // Shared resolveInstance range (T4): accepts the 'instance'/'version'/query alias keys,
+        // defaults to the currently selected instance, and a named-but-missing one fails with the
+        // unified envelope listing the real instance names.
+        InstanceToolSupport.ResolvedInstance resolved =
+                InstanceToolSupport.resolveInstance(repository, parameters, true);
+        if (resolved.failure() != null) {
+            return resolved.failure();
         }
-        if (instance == null) {
-            instance = Profiles.getSelectedInstance();
-        }
-        if (instance == null || instance.isBlank()) {
-            return ToolResult.failure("No instance specified and no instance is currently selected.");
-        }
+        final String id = resolved.name();
 
-        if (!repository.hasVersion(instance)) {
-            return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile. "
-                    + "Use game(action=\"list\") (or instance(action=\"list\")) to see available instances.");
-        }
-
-        final String id = instance;
+        // T17: whether HMCL already tracks a live game process for this instance. Not a refusal —
+        // launching is still allowed — but the receipt tells the model (and via it the user) that a
+        // second copy may start or the launch may be ignored, which was previously silent.
+        boolean alreadyRunning = GameResourceGuard.checkInstanceNotRunning(id) != null;
 
         // Safety net: back up any world imported into this instance since its last launch,
         // BEFORE Minecraft gets a chance to touch (and potentially corrupt) it. Best-effort —
@@ -135,9 +131,7 @@ public final class LaunchInstanceTool implements Tool {
             return ToolResult.failure("Failed to dispatch launch for '" + id + "': " + e.getMessage());
         }
 
-        StringBuilder message = new StringBuilder("Launching instance '").append(id).append("'. ")
-                .append("The launch is starting on the launcher UI; an account selection or download prompt may appear. ")
-                .append("Check the game window or logs for progress.");
+        StringBuilder message = new StringBuilder(baseLaunchReceipt(id, alreadyRunning));
         if (!pendingBackups.backedUpWorlds().isEmpty()) {
             message.append("\nAutomatic pre-launch safety backup taken for freshly-imported world(s): ")
                     .append(String.join(", ", pendingBackups.backedUpWorlds())).append('.');
@@ -161,6 +155,29 @@ public final class LaunchInstanceTool implements Tool {
         return ToolResult.success(message.toString());
     }
 
+    /// The base launch receipt (before any freshly-imported-world backup / interrupted-restore
+    /// notes are appended): the dispatch note plus the T17 advisories — the native login/account
+    /// dialog that appears when the token has expired is invisible to the AI and only the user can
+    /// complete it, and (when {@code alreadyRunning}) HMCL already tracks a live process so a second
+    /// copy may start. Package-visible and pure so the wording can be unit-tested without actually
+    /// dispatching a launch.
+    static String baseLaunchReceipt(String id, boolean alreadyRunning) {
+        StringBuilder message = new StringBuilder("Launching instance '").append(id).append("'. ")
+                .append("The launch is dispatched on the launcher UI thread and this returns immediately "
+                        + "without waiting for the game to load. ")
+                .append("If the account's login/token has EXPIRED, a native account/login dialog will pop "
+                        + "up that only the USER can complete manually — you cannot see or act on it, and "
+                        + "the game will not start until they do; a download prompt may also appear. ")
+                .append("Check the game window or logs for progress, and do not claim the game launched "
+                        + "successfully beyond 'the launch was dispatched'.");
+        if (alreadyRunning) {
+            message.append("\nNote: HMCL is already tracking a running game process for this instance; "
+                    + "launching again may start a second copy or be ignored — confirm with the user if "
+                    + "that was not intended.");
+        }
+        return message.toString();
+    }
+
     private static String describeLeftoverKind(String kind) {
         return switch (kind) {
             case "replaced" -> "the world's complete pre-restore data, set aside by the restore";
@@ -168,14 +185,5 @@ public final class LaunchInstanceTool implements Tool {
             case "restore-in-progress" -> "a marker showing the restore died mid-swap";
             default -> kind;
         };
-    }
-
-    @Nullable
-    private static String extractString(Map<String, Object> params, String key, @Nullable String fallback) {
-        Object val = params.get(key);
-        if (val instanceof String s && !s.isEmpty()) {
-            return s;
-        }
-        return fallback;
     }
 }

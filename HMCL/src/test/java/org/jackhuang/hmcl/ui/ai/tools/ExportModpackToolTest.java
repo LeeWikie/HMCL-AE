@@ -17,6 +17,7 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.junit.jupiter.api.Test;
 
@@ -65,7 +66,11 @@ public final class ExportModpackToolTest {
             ToolResult result = tool.execute(Map.of());
 
             assertFalse(result.isSuccess());
-            assertTrue(result.getError().contains("No instance selected"), "unexpected message: " + result.getError());
+            // T4: resolveInstance's unified "nothing selected" envelope.
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("No instance is selected"),
+                    "unexpected message: " + result.getError());
         }
     }
 
@@ -77,7 +82,12 @@ public final class ExportModpackToolTest {
             ToolResult result = tool.execute(Map.of("instance", "DoesNotExist"));
 
             assertFalse(result.isSuccess());
-            assertTrue(result.getError().contains("No such instance"), "unexpected message: " + result.getError());
+            // T4: shared resolveInstance envelope carrying the real instance names.
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("does not exist"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().contains("Existing"),
+                    "the failure should list the real instance names: " + result.getError());
         }
     }
 

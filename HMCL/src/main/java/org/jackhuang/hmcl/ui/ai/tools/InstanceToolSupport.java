@@ -17,6 +17,8 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
+import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
@@ -164,29 +166,52 @@ final class InstanceToolSupport {
         }
         if (name != null) {
             if (!repository.hasVersion(name)) {
-                return new ResolvedInstance(null, org.jackhuang.hmcl.ai.tools.ToolResult.failure(
-                        "Instance '" + name + "' does not exist in the selected profile. "
-                                + "Available instances: " + availableInstanceNames(repository)
-                                + ". Use the EXACT name (or omit 'instance' for the currently selected one)."));
+                return new ResolvedInstance(null, instanceNotFoundFailure(repository, name));
             }
             return new ResolvedInstance(name, null);
         }
         String selected = Profiles.getSelectedInstance();
         if (selected == null) {
-            return new ResolvedInstance(null, org.jackhuang.hmcl.ai.tools.ToolResult.failure(
-                    "No instance is selected and no 'instance' parameter was given. "
-                            + "Call instance(action=\"list\"), then pass instance=<name>."));
+            return new ResolvedInstance(null, ToolFailures.failure(
+                    "No instance is selected and no 'instance' parameter was given",
+                    ToolFailures.Retryable.YES,
+                    "the tool needs to know which instance to act on",
+                    "available instances: " + availableInstanceNames(repository)
+                            + ". Call instance(action=\"list\"), then retry with instance=<name>"));
         }
         return new ResolvedInstance(selected, null);
     }
 
+    /// The unified "named instance does not exist" failure envelope, carrying the real instance
+    /// names (the candidate list the model is looking for). Shared by [#resolveInstance] and the
+    /// tools that resolve the instance name themselves before validating it — notably the
+    /// confirm-gated delete/rename, which deliberately must NOT fall back to the selected instance
+    /// the way [#resolveInstance] does, so they cannot simply delegate the whole resolution here.
+    static ToolResult instanceNotFoundFailure(HMCLGameRepository repository, String name) {
+        return ToolFailures.failure(
+                "Instance '" + name + "' does not exist in the selected profile",
+                ToolFailures.Retryable.YES,
+                "the name is wrong, not a missing instance — use the exact id",
+                "available instances: " + availableInstanceNames(repository)
+                        + ". Use instance(action=\"list\") to refresh, or omit 'instance' for the "
+                        + "currently selected one");
+    }
+
     /// Comma-joined instance ids of the repository, capped so a huge library can't flood a
-    /// tool-error message.
-    private static String availableInstanceNames(HMCLGameRepository repository) {
-        java.util.List<String> names = repository.getDisplayVersions()
-                .map(v -> v.getId())
-                .limit(21)
-                .collect(java.util.stream.Collectors.toList());
+    /// tool-error message. Package-visible so the NBT tool suite ({@link NbtToolSupport#requireInstance})
+    /// can reuse the same candidate list in its own "no such instance" envelope.
+    static String availableInstanceNames(HMCLGameRepository repository) {
+        java.util.List<String> names;
+        try {
+            names = repository.getDisplayVersions()
+                    .map(v -> v.getId())
+                    .limit(21)
+                    .collect(java.util.stream.Collectors.toList());
+        } catch (Throwable e) {
+            // Building an error message must never itself throw — e.g. the repository has not been
+            // refreshed yet (its version map is still null). Degrade to a safe placeholder.
+            return "(unavailable — call instance(action=\"list\"))";
+        }
         if (names.isEmpty()) {
             return "(none — no instances installed)";
         }

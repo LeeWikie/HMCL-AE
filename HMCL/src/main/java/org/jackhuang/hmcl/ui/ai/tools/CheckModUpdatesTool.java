@@ -77,7 +77,6 @@ public final class CheckModUpdatesTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        String instance = String.valueOf(parameters.getOrDefault("instance", "")).trim();
         int limit = parseLimit(parameters.get("limit"));
 
         ModManager modManager;
@@ -86,13 +85,14 @@ public final class CheckModUpdatesTool implements Tool {
         try {
             Profile profile = Profiles.getSelectedProfile();
             HMCLGameRepository repo = profile.getRepository();
-            target = instance.isEmpty() ? Profiles.getSelectedInstance() : instance;
-            if (target == null || target.isEmpty()) {
-                return ToolResult.failure("No instance selected. Use list_instances, or pass instance.");
+            // Shared resolveInstance range (T4): defaults to the selected instance, and a
+            // named-but-missing one fails with the unified envelope listing the real names.
+            InstanceToolSupport.ResolvedInstance resolved =
+                    InstanceToolSupport.resolveInstance(repo, parameters, false);
+            if (resolved.failure() != null) {
+                return resolved.failure();
             }
-            if (!repo.hasVersion(target)) {
-                return ToolResult.failure("No such instance '" + target + "'. Use list_instances.");
-            }
+            target = resolved.name();
             modManager = repo.getModManager(target);
             gameVersion = repo.getGameVersion(target).orElse(null);
         } catch (Throwable t) {

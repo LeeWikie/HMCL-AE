@@ -75,7 +75,13 @@ public final class DeleteInstanceToolTest {
             ToolResult result = tool.execute(Map.of("instance", "DoesNotExist", "confirm", true));
 
             assertFalse(result.isSuccess());
-            assertTrue(result.getError().contains("No such instance"), "unexpected message: " + result.getError());
+            // T4: the missing-instance failure is now the shared resolveInstance envelope carrying
+            // the real instance names, instead of a bare "No such instance".
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("does not exist"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().contains("Existing"),
+                    "the failure should list the real instance names (candidate list): " + result.getError());
         }
     }
 

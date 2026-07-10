@@ -17,6 +17,8 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
+import org.jackhuang.hmcl.setting.Profiles;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -24,6 +26,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -91,5 +94,64 @@ public final class InstanceToolSupportTest {
         assertTrue(InstanceToolSupport.mentionsHeapSizeFlag("-XX:+UseG1GC -XMS2048M"));
         assertFalse(InstanceToolSupport.mentionsHeapSizeFlag("-XX:+UseG1GC -XX:MaxGCPauseMillis=200"));
         assertFalse(InstanceToolSupport.mentionsHeapSizeFlag(""));
+    }
+
+    // ---------------------------------------------------------------------
+    // T4/T5: resolveInstance is the shared "instance not found / not selected" range — its failure
+    // is the unified envelope carrying the real instance names.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void resolveInstanceNamedMissingReturnsCandidateEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+
+            InstanceToolSupport.ResolvedInstance r =
+                    InstanceToolSupport.resolveInstance(fx.repository(), Map.of("instance", "Nope"), false);
+
+            assertNull(r.name());
+            assertNotNull(r.failure());
+            String err = r.failure().getError();
+            assertTrue(ToolFailures.isWellFormedEnvelope(err), "not a well-formed envelope: " + err);
+            assertTrue(err.contains("does not exist"), err);
+            assertTrue(err.contains("Existing"), "must list the real instance names: " + err);
+        }
+    }
+
+    @Test
+    void resolveInstanceNoSelectionReturnsEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            InstanceToolSupport.ResolvedInstance r =
+                    InstanceToolSupport.resolveInstance(fx.repository(), Map.of(), false);
+
+            assertNull(r.name());
+            assertNotNull(r.failure());
+            String err = r.failure().getError();
+            assertTrue(ToolFailures.isWellFormedEnvelope(err), "not a well-formed envelope: " + err);
+            assertTrue(err.contains("No instance is selected"), err);
+        }
+    }
+
+    /// T20/ST-1: the default target (no `instance` parameter) is resolved LIVE from the currently
+    /// selected instance, so switching the selection mid-flight is reflected immediately — this is
+    /// exactly what stops a mod from being installed into a stale, previously-selected instance.
+    @Test
+    void resolveInstanceDefaultTargetFollowsLiveSelectedInstanceSwitch() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("A");
+            fx.createInstance("B"); // B becomes the selected instance
+
+            InstanceToolSupport.ResolvedInstance rB =
+                    InstanceToolSupport.resolveInstance(fx.repository(), Map.of(), false);
+            assertNull(rB.failure(), () -> "unexpected failure: " + rB.failure().getError());
+            assertEquals("B", rB.name());
+
+            Profiles.setSelectedInstance(fx.profile(), "A");
+
+            InstanceToolSupport.ResolvedInstance rA =
+                    InstanceToolSupport.resolveInstance(fx.repository(), Map.of(), false);
+            assertNull(rA.failure(), () -> "unexpected failure: " + rA.failure().getError());
+            assertEquals("A", rA.name(), "the default target must follow the live selection, not a cached value");
+        }
     }
 }

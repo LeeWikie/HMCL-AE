@@ -100,7 +100,6 @@ public final class InstallModTool implements Tool {
         String gameVersion = extractString(parameters, "gameVersion", null);
         String versionName = extractString(parameters, "version", null);
         String modsDirOverride = extractString(parameters, "modsDir", null);
-        String instance = extractString(parameters, "instance", null);
 
         RemoteAddonRepository repository;
         if ("curseforge".equalsIgnoreCase(source)) {
@@ -117,6 +116,36 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Unknown loader '" + loaderStr + "'. Use fabric, forge, neoforge or quilt.");
         }
 
+        // Determine the destination folder BEFORE any network call, so a bad/ambiguous target fails
+        // fast instead of after a wasted mod-resolution round trip. Priority: explicit modsDir
+        // override > the target instance resolved LIVE at call time.
+        //
+        // T20/ST-1: the default target must NOT come from the turn-start cached `gameDirectory` — if
+        // the user switched the selected instance mid-conversation, that cached path is stale and the
+        // mod would be installed into the wrong (old) instance with no error. Resolve the target fresh
+        // via the shared resolveInstance range: an explicit 'instance' wins, else the CURRENTLY
+        // selected instance (a named-but-missing one fails with the unified envelope listing the real
+        // names — T4). `gameDirectory` is only a last resort when the profile/repository system is
+        // unavailable, so a stale cache can never silently win.
+        Path modsDir;
+        if (modsDirOverride != null) {
+            modsDir = Path.of(modsDirOverride).toAbsolutePath().normalize();
+        } else {
+            try {
+                var repo = org.jackhuang.hmcl.setting.Profiles.getSelectedProfile().getRepository();
+                InstanceToolSupport.ResolvedInstance resolved =
+                        InstanceToolSupport.resolveInstance(repo, parameters, false);
+                if (resolved.failure() != null) {
+                    return resolved.failure();
+                }
+                modsDir = repo.getRunDirectory(resolved.name()).resolve("mods");
+            } catch (Throwable t) {
+                // Profile/repository unavailable (an atypical embedding): fall back to the run
+                // directory captured when this tool was last retargeted rather than failing outright.
+                modsDir = gameDirectory.resolve("mods");
+            }
+        }
+
         // Resolve the addon and pick the best matching version through the shared,
         // timeout-guarded helper (it wraps getModById + loadVersions each in a 60s
         // timeout and applies the standard game-version / version-id selection).
@@ -130,26 +159,6 @@ public final class InstallModTool implements Tool {
         RemoteAddon.File file = selected.file();
         if (file == null || file.url() == null || file.url().isBlank()) {
             return ToolResult.failure("Selected version '" + selected.name() + "' has no downloadable file.");
-        }
-
-        // Determine the destination folder. Priority: explicit modsDir override >
-        // a named target instance (isolation-aware via getRunDirectory) > the selected instance.
-        Path modsDir;
-        if (modsDirOverride != null) {
-            modsDir = Path.of(modsDirOverride).toAbsolutePath().normalize();
-        } else if (instance != null && !instance.isBlank()) {
-            try {
-                var repo = org.jackhuang.hmcl.setting.Profiles.getSelectedProfile().getRepository();
-                if (!repo.hasVersion(instance)) {
-                    return ToolResult.failure("No such instance '" + instance
-                            + "'. Use list_instances to see installed instances.");
-                }
-                modsDir = repo.getRunDirectory(instance).resolve("mods");
-            } catch (Throwable t) {
-                return ToolResult.failure("Could not resolve instance '" + instance + "': " + t);
-            }
-        } else {
-            modsDir = gameDirectory.resolve("mods");
         }
 
         Path dest = modsDir.resolve(file.filename());

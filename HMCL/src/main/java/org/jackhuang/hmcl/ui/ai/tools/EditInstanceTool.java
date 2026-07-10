@@ -90,8 +90,10 @@ public final class EditInstanceTool implements Tool {
         if (!repository.isLoaded()) {
             return ToolResult.failure("The game repository is not loaded yet; please try again in a moment.");
         }
+        // Delegate the existence check to the shared resolveInstance range so a missing instance
+        // fails with the unified envelope listing the real instance names (T4).
         if (!repository.hasVersion(instance)) {
-            return ToolResult.failure("No such instance: '" + instance + "'.");
+            return InstanceToolSupport.instanceNotFoundFailure(repository, instance);
         }
         if (newName.equals(instance)) {
             return ToolResult.success("Instance '" + instance + "' already has that name; nothing to do.");

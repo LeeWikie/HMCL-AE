@@ -32,6 +32,7 @@ import org.glavo.nbt.tag.StringTag;
 import org.glavo.nbt.tag.Tag;
 import org.glavo.nbt.tag.TagType;
 import org.glavo.nbt.tag.ValueTag;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.game.World;
 import org.jackhuang.hmcl.setting.Profile;
@@ -103,13 +104,28 @@ final class NbtToolSupport {
         } else {
             @Nullable String selected = Profiles.getSelectedInstance();
             if (selected == null) {
-                throw new NbtToolException("No instance is selected and no 'instance' parameter was given.");
+                // T5: reuse the shared candidate list so the NBT domain fails identically to the
+                // rest of the instance tools (unified envelope), not with a bare sentence.
+                throw new NbtToolException(ToolFailures.failureEnvelope(
+                        "No instance is selected and no 'instance' parameter was given",
+                        ToolFailures.Retryable.YES,
+                        "the tool needs to know which instance to act on",
+                        "available instances: " + InstanceToolSupport.availableInstanceNames(profile.getRepository())
+                                + ". Call instance(action=\"list\"), then retry with instance=<name>"));
             }
             instance = selected;
         }
         try {
             if (!profile.getRepository().hasVersion(instance)) {
-                throw new NbtToolException("Instance '" + instance + "' does not exist in the selected profile.");
+                // T5: same unified "instance not found" envelope (candidate list included) that
+                // InstanceToolSupport.resolveInstance produces for the non-NBT tools.
+                throw new NbtToolException(ToolFailures.failureEnvelope(
+                        "Instance '" + instance + "' does not exist in the selected profile",
+                        ToolFailures.Retryable.YES,
+                        "the name is wrong, not a missing instance — use the exact id",
+                        "available instances: " + InstanceToolSupport.availableInstanceNames(profile.getRepository())
+                                + ". Use instance(action=\"list\") to refresh, or omit 'instance' for the "
+                                + "currently selected one"));
             }
         } catch (NbtToolException e) {
             throw e;
@@ -548,6 +564,70 @@ final class NbtToolSupport {
             }
         }
         return current;
+    }
+
+    /// Navigates as far along {@code steps} as possible and returns the DEEPEST tag actually
+    /// reached — the last resolvable node before navigation fell off. Unlike {@link #navigate},
+    /// it never returns null for a partial path: it stops at the last node it could descend into,
+    /// so [#describeChildren] can enumerate that node's keys/indices for the model (T10). For a
+    /// fully-valid path it returns the same node as {@link #navigate}.
+    static Tag navigateBestEffort(Tag root, List<Step> steps) {
+        Tag current = root;
+        for (Step step : steps) {
+            Tag next;
+            if (step.isIndex) {
+                if (!(current instanceof ParentTag<?> parent) || step.index < 0 || step.index >= parent.size()) {
+                    return current;
+                }
+                next = parent.getTag(step.index);
+            } else {
+                if (!(current instanceof CompoundTag compound)) {
+                    return current;
+                }
+                next = compound.get(step.key);
+            }
+            if (next == null) {
+                return current;
+            }
+            current = next;
+        }
+        return current;
+    }
+
+    /// One-line, model-facing summary of a tag's immediate children — the data a caller hands the
+    /// model when an NBT path misses (T10): the sibling keys of the deepest node it could reach,
+    /// e.g. `"CompoundTag keys: XpLevel, XpTotal, foodLevel"` or `"ListTag length: 27 (valid
+    /// indices 0..26)"`. A scalar/leaf node reports that it has nothing to descend into. The key
+    /// list is capped so a huge compound can't flood the error text.
+    static String describeChildren(@Nullable Tag tag) {
+        if (tag instanceof CompoundTag compound) {
+            List<String> keys = new ArrayList<>();
+            for (Tag child : compound) {
+                keys.add(child.getName());
+            }
+            if (keys.isEmpty()) {
+                return "the deepest resolvable node is an empty CompoundTag (no keys)";
+            }
+            int shown = Math.min(keys.size(), 40);
+            String joined = String.join(", ", keys.subList(0, shown));
+            if (keys.size() > shown) {
+                joined += ", … (" + keys.size() + " keys total)";
+            }
+            return "CompoundTag keys: " + joined;
+        }
+        if (tag instanceof ListTag<?> list) {
+            return "ListTag length: " + list.size()
+                    + (list.size() > 0 ? " (valid indices 0.." + (list.size() - 1) + ")" : " (empty)");
+        }
+        if (tag instanceof ParentTag<?> parent) {
+            return parent.getType().name() + " length: " + parent.size()
+                    + (parent.size() > 0 ? " (valid indices 0.." + (parent.size() - 1) + ")" : " (empty)");
+        }
+        if (tag instanceof ValueTag<?>) {
+            return "the deepest resolvable node is a scalar " + tag.getType().name()
+                    + " (it has no child keys/indices to descend into)";
+        }
+        return "the deepest resolvable node has no enumerable children";
     }
 
     /// Mutates a scalar value tag in place, parsing the raw text into the tag's own type.
