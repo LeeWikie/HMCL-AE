@@ -68,6 +68,15 @@ public final class ToolRegistry {
         tools.put(tool.getName(), tool);
     }
 
+    /// Removes a tool from the registry entirely, so it no longer appears in {@link #list()} /
+    /// {@link #listAll()} and {@link #get} returns `null` for it — unlike {@link #disable}, the
+    /// tool is not merely hidden from the model's tool list but genuinely gone (used for the
+    /// hot web-access toggle: switching 联网工具 off must make web_search/web_fetch
+    /// undiscoverable, not "discoverable but failing"). No-op if the name is not registered.
+    public void unregister(String name) {
+        tools.remove(name);
+    }
+
     /// Looks up a tool by name.
     ///
     /// If no tool is registered under {@code name} but the name refers to a tool on an MCP server

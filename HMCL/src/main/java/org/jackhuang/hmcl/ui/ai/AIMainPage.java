@@ -803,17 +803,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (aiSettings.isShellToolEnabled()) {
             toolRegistry.register(new ShellTool());
         }
-        if (aiSettings.isWebAccessEnabled()) {
-            toolRegistry.register(new WebFetchTool());
-            toolRegistry.register(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
-        }
+        // 联网工具热生效：绑定 webAccessEnabled → 注册/注销 web_fetch + web_search。开关关闭时
+        // 这两个工具从注册表整体移除（模型的工具列表里根本没有、不可发现），开启立即恢复——
+        // 取代旧的"启动时一次性 if 注册 + 重启后生效"。见 WebAccessToolsBinder。
+        org.jackhuang.hmcl.ai.tools.WebAccessToolsBinder.bind(
+                aiSettings.webAccessEnabledProperty(), toolRegistry,
+                new WebFetchTool(),
+                new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
         toolRegistry.register(gameContextTool);
         // Local instance/mod/world/content-management domain (merged facade — see InstanceTool).
         instanceTool = new org.jackhuang.hmcl.ui.ai.tools.InstanceTool(
-                aiSettings::isDeleteToRecycleBin, aiSettings::getWorldBackupRetention, aiSettings::isNbtToolsEnabled);
+                aiSettings::isDeleteToRecycleBin, aiSettings::getWorldBackupMaxMb, aiSettings::isNbtToolsEnabled);
         toolRegistry.register(instanceTool);
         // Runtime instance state: list (+ running flag) / launch / stop.
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GameTool(aiSettings::getWorldBackupRetention));
+        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.GameTool(aiSettings::getWorldBackupMaxMb));
         // External content search (Modrinth/CurseForge/version manifest) — install/list-local
         // live on InstanceTool.
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SearchTool());
@@ -3789,7 +3792,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             else if ("assistant".equals(m.getRole()) && firstAssistant == null) firstAssistant = m.getContent();
         }
         if (firstUser == null || firstUser.isBlank()) return;
-        agent.suggestTitle(firstUser, firstAssistant).thenAccept(title -> Platform.runLater(() -> {
+        // "自动命名模型"：解析用户指定的标题命名模型（空/失效 = Auto → null → 跟随当前对话模型）。
+        org.jackhuang.hmcl.ai.AiSettings.TitleNamingSelection titleModel = aiSettings.resolveTitleNamingModel();
+        org.jackhuang.hmcl.ai.langchain4j.AiChatClient titleClient = titleModel == null ? null
+                : ChatAgentFactory.buildPlainClient(titleModel.profile(), titleModel.modelId(),
+                        aiSettings.getRequestTimeoutSeconds());
+        agent.suggestTitle(firstUser, firstAssistant, titleClient).thenAccept(title -> Platform.runLater(() -> {
             if (title == null || title.isBlank()) return;
             session.setTitle(title);
             if (sessionStore.getCurrentSession() == session) updateHeader(session);

@@ -182,8 +182,11 @@ public final class SettingsTabRefreshFxTest {
 
     // ---- tests --------------------------------------------------------------------------
 
+    /// 2026-07-10 真机反馈更新：重扫不再重建整个 tab（旧行为让刚展开的 ComponentSublist 无动画
+    /// 塌缩闪跳），而是就地刷新技能列表内容（AISettingsPage.populateSkillList）。本用例随契约
+    /// 更新：tab 节点必须保持同一实例，同时新技能仍要立即可见。
     @Test
-    public void rescanRebuildsSkillsTabAndShowsTheNewSkill() throws Exception {
+    public void rescanRefreshesSkillListInPlaceAndShowsTheNewSkill() throws Exception {
         showPage();
         // P5 contract while we have a page at hand: the settings page must hold THE injected
         // search/OCR config instances (shared with the chat page's tools), not its own copies.
@@ -214,8 +217,9 @@ public final class SettingsTabRefreshFxTest {
                     "---\nname: " + skillName + "\ndescription: FX refresh-test fixture\n---\nbody\n",
                     StandardCharsets.UTF_8);
 
-            // ...and fire the "重新扫描技能目录" row. Before the fix this re-selected the tab
-            // without rebuilding it, so the new skill stayed invisible.
+            // ...and fire the "重新扫描技能目录" row. The rescan must make the new skill visible
+            // WITHOUT rebuilding the tab node (an in-place list refresh) — rebuilding is exactly
+            // what used to collapse the user's expanded sublists with a jarring flicker.
             LineButton reload = findLineButton(before, "重新扫描技能目录");
             assertNotNull(reload, "rescan row must exist in the skills tab");
             WaitForAsyncUtils.asyncFx(() -> Event.fireEvent(reload, new ActionEvent(reload, reload)))
@@ -223,9 +227,10 @@ public final class SettingsTabRefreshFxTest {
             WaitForAsyncUtils.waitForFxEvents();
 
             Node after = skillsTab.getNode();
-            assertNotSame(before, after, "rescan must rebuild the tab's content node");
+            assertSame(before, after,
+                    "rescan must refresh the skill list in place — rebuilding the tab node collapses expanded sublists");
             assertNotNull(findLineButton(after, skillName),
-                    "the rebuilt skills tab must list the newly scanned skill");
+                    "the refreshed skills tab must list the newly scanned skill");
         } finally {
             deleteRecursively(skillDir);
         }

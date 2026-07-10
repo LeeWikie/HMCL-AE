@@ -166,9 +166,6 @@ public final class AiSettings {
         @SerializedName("webAccessEnabled")
         private boolean webAccessEnabled = DEFAULT_WEB_ACCESS_ENABLED;
 
-        @SerializedName("fileWriteConfirmEnabled")
-        private boolean fileWriteConfirmEnabled = DEFAULT_FILE_WRITE_CONFIRM_ENABLED;
-
         @SerializedName("autoScrollEnabled")
         private boolean autoScrollEnabled = DEFAULT_AUTO_SCROLL_ENABLED;
 
@@ -189,6 +186,12 @@ public final class AiSettings {
 
         @SerializedName("autoTitleEnabled")
         private boolean autoTitleEnabled = DEFAULT_AUTO_TITLE_ENABLED;
+
+        /// `"<profileId>::<modelId>"` (or a bare model id); `null`/blank = Auto
+        /// (follow the current chat model). See [AiSettings#resolveTitleNamingModel()].
+        @SerializedName("titleNamingModel")
+        @Nullable
+        private String titleNamingModel = null;
 
         @SerializedName("deleteToRecycleBin")
         private boolean deleteToRecycleBin = DEFAULT_DELETE_TO_RECYCLE_BIN;
@@ -212,11 +215,8 @@ public final class AiSettings {
         @SerializedName("traceEnabled")
         private boolean traceEnabled = DEFAULT_TRACE_ENABLED;
 
-        @SerializedName("worldBackupRetention")
-        private int worldBackupRetention = DEFAULT_WORLD_BACKUP_RETENTION;
-
-        @SerializedName("autoBackupBeforeNbtEdit")
-        private boolean autoBackupBeforeNbtEdit = DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT;
+        @SerializedName("worldBackupMaxMb")
+        private int worldBackupMaxMb = DEFAULT_WORLD_BACKUP_MAX_MB;
 
         @SerializedName("autoCompactEnabled")
         private boolean autoCompactEnabled = DEFAULT_AUTO_COMPACT_ENABLED;
@@ -260,7 +260,6 @@ public final class AiSettings {
     private final BooleanProperty toolCallLoggingEnabled;
     private final BooleanProperty shellToolEnabled;
     private final BooleanProperty webAccessEnabled;
-    private final BooleanProperty fileWriteConfirmEnabled;
     private final BooleanProperty autoScrollEnabled;
     private final BooleanProperty sendOnEnter;
     private final BooleanProperty criticalConfirmEnabled;
@@ -268,6 +267,7 @@ public final class AiSettings {
     private final BooleanProperty dangerouslySkipPermissions;
     private final BooleanProperty nbtToolsEnabled;
     private final BooleanProperty autoTitleEnabled;
+    private final StringProperty titleNamingModel;
     private final BooleanProperty deleteToRecycleBin;
     private final BooleanProperty aiRiskNoticeAccepted;
     private final StringProperty customInstructions;
@@ -277,8 +277,7 @@ public final class AiSettings {
     private final BooleanProperty traceEnabled;
 
     // World backup engine
-    private final IntegerProperty worldBackupRetention;
-    private final BooleanProperty autoBackupBeforeNbtEdit;
+    private final IntegerProperty worldBackupMaxMb;
 
     // Context management
     private final BooleanProperty autoCompactEnabled;
@@ -335,9 +334,6 @@ public final class AiSettings {
     /// Default value for the web-access (search/fetch) tools enabled flag.
     public static final boolean DEFAULT_WEB_ACCESS_ENABLED = true;
 
-    /// Default value for the file-write confirmation flag (off by default).
-    public static final boolean DEFAULT_FILE_WRITE_CONFIRM_ENABLED = false;
-
     /// Default value for the auto-scroll-to-bottom flag.
     public static final boolean DEFAULT_AUTO_SCROLL_ENABLED = true;
 
@@ -385,16 +381,10 @@ public final class AiSettings {
     /// for post-mortem debugging and one-tap diagnostic upload).
     public static final boolean DEFAULT_TRACE_ENABLED = true;
 
-    /// Default number of newest world-backup snapshots to retain (older ones are pruned).
-    public static final int DEFAULT_WORLD_BACKUP_RETENTION = 10;
-
-    /// Default for auto-backing-up a world before high-risk NBT edits.
-    ///
-    /// NOTE (current scope): this flag is honored by the world-backup engine and
-    /// is reserved for the save NBT-edit tools to call before writing. The current
-    /// NBT tools already perform their own per-file backup, so this is a global
-    /// opt-in that future NBT writes can consult; it is not a hard dependency yet.
-    public static final boolean DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT = true;
+    /// Default per-world cap (in megabytes) for the total size of retained world-backup
+    /// snapshots. Oldest snapshots are pruned once the total exceeds the cap; the newest
+    /// snapshot is always kept even when it alone exceeds it.
+    public static final int DEFAULT_WORLD_BACKUP_MAX_MB = 10;
 
     /// Default for auto-compacting the conversation as it nears the active model's context
     /// window, so long tool-heavy chats never hard-overflow (on by default; the user can opt out).
@@ -433,7 +423,6 @@ public final class AiSettings {
         this.toolCallLoggingEnabled = new SimpleBooleanProperty(this, "toolCallLoggingEnabled", DEFAULT_TOOL_CALL_LOGGING_ENABLED);
         this.shellToolEnabled = new SimpleBooleanProperty(this, "shellToolEnabled", DEFAULT_SHELL_TOOL_ENABLED);
         this.webAccessEnabled = new SimpleBooleanProperty(this, "webAccessEnabled", DEFAULT_WEB_ACCESS_ENABLED);
-        this.fileWriteConfirmEnabled = new SimpleBooleanProperty(this, "fileWriteConfirmEnabled", DEFAULT_FILE_WRITE_CONFIRM_ENABLED);
         this.autoScrollEnabled = new SimpleBooleanProperty(this, "autoScrollEnabled", DEFAULT_AUTO_SCROLL_ENABLED);
         this.sendOnEnter = new SimpleBooleanProperty(this, "sendOnEnter", DEFAULT_SEND_ON_ENTER);
         this.criticalConfirmEnabled = new SimpleBooleanProperty(this, "criticalConfirmEnabled", DEFAULT_CRITICAL_CONFIRM_ENABLED);
@@ -441,6 +430,7 @@ public final class AiSettings {
         this.dangerouslySkipPermissions = new SimpleBooleanProperty(this, "dangerouslySkipPermissions", DEFAULT_DANGEROUSLY_SKIP_PERMISSIONS);
         this.nbtToolsEnabled = new SimpleBooleanProperty(this, "nbtToolsEnabled", DEFAULT_NBT_TOOLS_ENABLED);
         this.autoTitleEnabled = new SimpleBooleanProperty(this, "autoTitleEnabled", DEFAULT_AUTO_TITLE_ENABLED);
+        this.titleNamingModel = new SimpleStringProperty(this, "titleNamingModel", "");
         this.deleteToRecycleBin = new SimpleBooleanProperty(this, "deleteToRecycleBin", DEFAULT_DELETE_TO_RECYCLE_BIN);
         this.aiRiskNoticeAccepted = new SimpleBooleanProperty(this, "aiRiskNoticeAccepted", DEFAULT_AI_RISK_NOTICE_ACCEPTED);
         this.customInstructions = new SimpleStringProperty(this, "customInstructions", "");
@@ -448,8 +438,7 @@ public final class AiSettings {
         this.autoRecallMemory = new SimpleBooleanProperty(this, "autoRecallMemory", DEFAULT_AUTO_RECALL_MEMORY);
         this.autoSkillInjection = new SimpleBooleanProperty(this, "autoSkillInjection", DEFAULT_AUTO_SKILL_INJECTION);
         this.traceEnabled = new SimpleBooleanProperty(this, "traceEnabled", DEFAULT_TRACE_ENABLED);
-        this.worldBackupRetention = new SimpleIntegerProperty(this, "worldBackupRetention", DEFAULT_WORLD_BACKUP_RETENTION);
-        this.autoBackupBeforeNbtEdit = new SimpleBooleanProperty(this, "autoBackupBeforeNbtEdit", DEFAULT_AUTO_BACKUP_BEFORE_NBT_EDIT);
+        this.worldBackupMaxMb = new SimpleIntegerProperty(this, "worldBackupMaxMb", DEFAULT_WORLD_BACKUP_MAX_MB);
         this.autoCompactEnabled = new SimpleBooleanProperty(this, "autoCompactEnabled", DEFAULT_AUTO_COMPACT_ENABLED);
     }
 
@@ -585,10 +574,6 @@ public final class AiSettings {
         return webAccessEnabled;
     }
 
-    /// Returns the file-write confirmation enabled flag property.
-    public BooleanProperty fileWriteConfirmEnabledProperty() {
-        return fileWriteConfirmEnabled;
-    }
 
     /// Returns the auto-scroll enabled flag property.
     public BooleanProperty autoScrollEnabledProperty() {
@@ -606,6 +591,63 @@ public final class AiSettings {
 
     public BooleanProperty autoTitleEnabledProperty() {
         return autoTitleEnabled;
+    }
+
+    /// Returns the title-naming model property. Value format: `"<profileId>::<modelId>"`
+    /// (preferred; unambiguous when two providers configure the same model id) or a bare
+    /// model id; blank = Auto (follow the current chat model).
+    public StringProperty titleNamingModelProperty() {
+        return titleNamingModel;
+    }
+
+    /// Returns the raw title-naming model value (blank = Auto).
+    public String getTitleNamingModel() {
+        String v = titleNamingModel.get();
+        return v == null ? "" : v;
+    }
+
+    /// A resolved title-naming selection: the provider profile plus the model id on it.
+    public record TitleNamingSelection(AiProviderProfile profile, String modelId) {
+    }
+
+    /// Resolves {@link #getTitleNamingModel()} against the configured provider profiles.
+    ///
+    /// Returns `null` for Auto — i.e. when the value is blank, or when it points at a
+    /// profile/model that no longer exists (a stale selection silently falls back to Auto
+    /// instead of failing every title call). Accepts both the `"<profileId>::<modelId>"`
+    /// form and a bare model id (first profile carrying that model wins).
+    @Nullable
+    public TitleNamingSelection resolveTitleNamingModel() {
+        String value = getTitleNamingModel().trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        String profileId = null;
+        String modelId = value;
+        int sep = value.indexOf("::");
+        if (sep >= 0) {
+            profileId = value.substring(0, sep);
+            modelId = value.substring(sep + 2);
+        }
+        if (modelId.isEmpty()) {
+            return null;
+        }
+        synchronized (profiles) {
+            if (profileId != null) {
+                for (AiProviderProfile p : profiles) {
+                    if (p.getId().equals(profileId)) {
+                        return p.getModel(modelId) != null ? new TitleNamingSelection(p, modelId) : null;
+                    }
+                }
+                return null;
+            }
+            for (AiProviderProfile p : profiles) {
+                if (p.getModel(modelId) != null) {
+                    return new TitleNamingSelection(p, modelId);
+                }
+            }
+        }
+        return null;
     }
 
     public BooleanProperty deleteToRecycleBinProperty() {
@@ -649,14 +691,9 @@ public final class AiSettings {
         return autoSkillInjection;
     }
 
-    /// Returns the world-backup retention count property (newest snapshots to keep).
-    public IntegerProperty worldBackupRetentionProperty() {
-        return worldBackupRetention;
-    }
-
-    /// Returns the auto-backup-before-NBT-edit flag property.
-    public BooleanProperty autoBackupBeforeNbtEditProperty() {
-        return autoBackupBeforeNbtEdit;
+    /// Returns the per-world backup total-size cap property (megabytes).
+    public IntegerProperty worldBackupMaxMbProperty() {
+        return worldBackupMaxMb;
     }
 
     /// Returns the auto-compact-near-context-limit flag property.
@@ -811,10 +848,6 @@ public final class AiSettings {
         return webAccessEnabled.get();
     }
 
-    /// Returns whether file-write confirmation is enabled.
-    public boolean isFileWriteConfirmEnabled() {
-        return fileWriteConfirmEnabled.get();
-    }
 
     /// Returns whether auto-scroll-to-bottom is enabled.
     public boolean isAutoScrollEnabled() {
@@ -894,14 +927,9 @@ public final class AiSettings {
         return traceEnabled.get();
     }
 
-    /// Returns the number of newest world-backup snapshots to retain.
-    public int getWorldBackupRetention() {
-        return worldBackupRetention.get();
-    }
-
-    /// Returns whether a world is auto-backed-up before high-risk NBT edits.
-    public boolean isAutoBackupBeforeNbtEdit() {
-        return autoBackupBeforeNbtEdit.get();
+    /// Returns the per-world backup total-size cap in megabytes.
+    public int getWorldBackupMaxMb() {
+        return worldBackupMaxMb.get();
     }
 
     /// Returns whether the conversation is auto-compacted as it approaches the model's
@@ -1156,7 +1184,6 @@ public final class AiSettings {
         data.toolCallLoggingEnabled = toolCallLoggingEnabled.get();
         data.shellToolEnabled = shellToolEnabled.get();
         data.webAccessEnabled = webAccessEnabled.get();
-        data.fileWriteConfirmEnabled = fileWriteConfirmEnabled.get();
         data.autoScrollEnabled = autoScrollEnabled.get();
         data.sendOnEnter = sendOnEnter.get();
         data.criticalConfirmEnabled = criticalConfirmEnabled.get();
@@ -1164,6 +1191,7 @@ public final class AiSettings {
         data.dangerouslySkipPermissions = dangerouslySkipPermissions.get();
         data.nbtToolsEnabled = nbtToolsEnabled.get();
         data.autoTitleEnabled = autoTitleEnabled.get();
+        data.titleNamingModel = getTitleNamingModel().isBlank() ? null : getTitleNamingModel();
         data.deleteToRecycleBin = deleteToRecycleBin.get();
         data.aiRiskNoticeAccepted = aiRiskNoticeAccepted.get();
         data.customInstructions = customInstructions.get();
@@ -1171,8 +1199,7 @@ public final class AiSettings {
         data.autoRecallMemory = autoRecallMemory.get();
         data.autoSkillInjection = autoSkillInjection.get();
         data.traceEnabled = traceEnabled.get();
-        data.worldBackupRetention = worldBackupRetention.get();
-        data.autoBackupBeforeNbtEdit = autoBackupBeforeNbtEdit.get();
+        data.worldBackupMaxMb = worldBackupMaxMb.get();
         data.autoCompactEnabled = autoCompactEnabled.get();
 
         synchronized (profiles) {
@@ -1340,7 +1367,6 @@ public final class AiSettings {
         toolCallLoggingEnabled.set(data.toolCallLoggingEnabled);
         shellToolEnabled.set(data.shellToolEnabled);
         webAccessEnabled.set(data.webAccessEnabled);
-        fileWriteConfirmEnabled.set(data.fileWriteConfirmEnabled);
         autoScrollEnabled.set(data.autoScrollEnabled);
         sendOnEnter.set(data.sendOnEnter);
         criticalConfirmEnabled.set(data.criticalConfirmEnabled);
@@ -1348,6 +1374,7 @@ public final class AiSettings {
         dangerouslySkipPermissions.set(data.dangerouslySkipPermissions);
         nbtToolsEnabled.set(data.nbtToolsEnabled);
         autoTitleEnabled.set(data.autoTitleEnabled);
+        titleNamingModel.set(data.titleNamingModel != null ? data.titleNamingModel : "");
         deleteToRecycleBin.set(data.deleteToRecycleBin);
         aiRiskNoticeAccepted.set(data.aiRiskNoticeAccepted);
         customInstructions.set(data.customInstructions != null ? data.customInstructions : "");
@@ -1356,8 +1383,7 @@ public final class AiSettings {
         autoRecallMemory.set(data.autoRecallMemory);
         autoSkillInjection.set(data.autoSkillInjection);
         traceEnabled.set(data.traceEnabled);
-        worldBackupRetention.set(data.worldBackupRetention > 0 ? data.worldBackupRetention : DEFAULT_WORLD_BACKUP_RETENTION);
-        autoBackupBeforeNbtEdit.set(data.autoBackupBeforeNbtEdit);
+        worldBackupMaxMb.set(data.worldBackupMaxMb > 0 ? data.worldBackupMaxMb : DEFAULT_WORLD_BACKUP_MAX_MB);
         autoCompactEnabled.set(data.autoCompactEnabled);
     }
 

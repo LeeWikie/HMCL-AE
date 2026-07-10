@@ -215,18 +215,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // cleanup. Their tabs/content-builders are left in place (unreachable rather than deleted)
         // since the underlying features are still otherwise functional; only navigation to them
         // from here was in scope for this change.
+        // 数据设置/高级设置 归入「通用」分组(用户 2026-07-10 真机反馈:单项独占分组太碎),
+        // 原 nav.data / nav.advanced 两个分组标题不再使用。
         AdvancedListBox sideBar = new AdvancedListBox()
                 .startCategory(i18n("ai.settings.nav.general"))
                 .addNavigationDrawerTab(tab, generalTab, i18n("ai.settings.nav.global"), SVG.TUNE)
                 .addNavigationDrawerTab(tab, providerTab, i18n("ai.settings.nav.providers"), SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
+                .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN)
+                .addNavigationDrawerTab(tab, advancedTab, i18n("ai.settings.nav.advanced_settings"), SVG.SETTINGS, SVG.SETTINGS_FILL)
                 .startCategory(i18n("ai.settings.nav.services"))
                 .addNavigationDrawerTab(tab, skillsTab, i18n("ai.settings.nav.skills"), SVG.SCRIPT)
                 .addNavigationDrawerTab(tab, mcpTab, i18n("ai.settings.nav.mcp"), SVG.SCHEMA, SVG.SCHEMA_FILL)
                 .addNavigationDrawerTab(tab, searchTab, i18n("ai.settings.nav.search"), SVG.SEARCH)
-                .startCategory(i18n("ai.settings.nav.data"))
-                .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN)
-                .startCategory(i18n("ai.settings.nav.advanced"))
-                .addNavigationDrawerTab(tab, advancedTab, i18n("ai.settings.nav.advanced_settings"), SVG.SETTINGS, SVG.SETTINGS_FILL)
                 .startCategory(i18n("help").toUpperCase(java.util.Locale.ROOT))
                 .addNavigationDrawerTab(tab, helpTab, i18n("ai.settings.nav.help"), SVG.FEEDBACK, SVG.FEEDBACK_FILL)
                 .addNavigationDrawerTab(tab, aboutTab, i18n("ai.settings.nav.about"), SVG.INFO, SVG.INFO_FILL);
@@ -293,6 +293,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         // ---- 服务商配置：当前提供商卡片（折叠头部显示当前提供商名）----
         providerSublist = new ComponentSublist();
+        // Without an explicit title the ComponentSublist header shows its literal default "Group".
+        providerSublist.setTitle(i18n("ai.settings.sublist.provider"));
         providerSublist.setHasSubtitle(true);
         LineButton addProviderButton = new LineButton();
         addProviderButton.setTitle(i18n("ai.settings.add_profile"));
@@ -302,6 +304,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         // ---- 模型配置：当前模型卡片（按当前提供商过滤）----
         modelSublist = new ComponentSublist();
+        // Same "Group" default-title fix as providerSublist above.
+        modelSublist.setTitle(i18n("ai.settings.sublist.default_model"));
         modelSublist.setHasSubtitle(true);
         LineButton loadModelButton = new LineButton();
         loadModelButton.setTitle(i18n("ai.settings.load_models"));
@@ -552,14 +556,59 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         editModel(profile, new AiModelEntry(""));
     }
 
-    /// Opens a custom dialog to configure a single model: id + alias up top, with
-    /// collapsible (default-folded) 高级设置 and 定价设置 sections; labels are aligned
-    /// against their fields via a two-column grid.
+    /// Opens a custom dialog to configure a single model: an editable id combo (type directly or
+    /// pick from the provider's fetched model list — 获取模型列表 lives right beside it) + alias
+    /// up top, with collapsible (default-folded) 高级设置 and 定价设置 sections; the 16px-rhythm
+    /// spacing keeps the expanded state breathable (2026-07-10 真机反馈：之前太挤).
+    ///
+    /// 输入/输出模态 text fields were removed outright (2026-07-10): nothing outside this dialog
+    /// ever consumed them — capability inference runs entirely off the three "模型能力" checkboxes
+    /// below, which are now the single source of truth. The AiModelEntry storage fields stay for
+    /// on-disk compatibility (old configs keep loading; values are simply no longer editable).
     private void editModel(AiProviderProfile profile, AiModelEntry entry) {
         // Captured BEFORE the edit so a rename of the default model can move defaultModelId along.
         final String originalId = entry.getId() == null ? "" : entry.getId();
-        JFXTextField idField = new JFXTextField(entry.getId());
-        idField.setPromptText(i18n("ai.settings.model.id_hint"));
+        JFXComboBox<String> idBox = new JFXComboBox<>();
+        idBox.setEditable(true);
+        idBox.setMaxWidth(Double.MAX_VALUE);
+        idBox.setVisibleRowCount(10);
+        idBox.setPromptText(i18n("ai.settings.model.id_hint"));
+        idBox.setValue(entry.getId());
+        idBox.getEditor().setText(entry.getId());
+
+        // 获取模型列表 entry INSIDE the dialog: fetches the provider's model ids in the
+        // background and fills the combo's dropdown candidates.
+        Label fetchStatus = new Label();
+        fetchStatus.getStyleClass().addAll("subtitle-label", "ai-footnote");
+        JFXButton fetchBtn = FXUtils.newToggleButton4(SVG.REFRESH, 16);
+        FXUtils.installFastTooltip(fetchBtn, i18n("ai.settings.load_models"));
+        fetchBtn.setOnAction(e -> {
+            fetchStatus.setText(i18n("ai.settings.model.loading"));
+            Thread worker = new Thread(() -> {
+                try {
+                    List<String> ids = discoveryService.discoverModels(profile);
+                    Platform.runLater(() -> {
+                        String typed = idBox.getEditor().getText();
+                        idBox.getItems().setAll(ids);
+                        // setAll may clobber the editor via the combo's value sync — restore what
+                        // the user had typed so fetching never destroys their input.
+                        idBox.getEditor().setText(typed == null ? "" : typed);
+                        fetchStatus.setText(i18n("ai.settings.model.loaded_count", ids.size()));
+                        if (!ids.isEmpty()) idBox.show();
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> fetchStatus.setText(i18n("ai.settings.model.load_failed", ex.getMessage())));
+                }
+            }, "ai-model-dialog-load");
+            worker.setDaemon(true);
+            worker.start();
+        });
+        HBox idCellRow = new HBox(8, idBox, fetchBtn);
+        idCellRow.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(idBox, javafx.scene.layout.Priority.ALWAYS);
+        VBox idCell = new VBox(4, idCellRow, fetchStatus);
+        idCell.setFillWidth(true);
+
         JFXTextField aliasField = new JFXTextField(entry.getAlias());
         aliasField.setPromptText(i18n("ai.settings.model.optional"));
 
@@ -572,8 +621,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         JFXTextField reasoningField = new JFXTextField(entry.getReasoningEffort());
         reasoningField.setPromptText(i18n("ai.settings.model.reasoning_hint"));
         GridPane advGrid = new GridPane();
-        advGrid.setHgap(10);
-        advGrid.setVgap(8);
+        advGrid.setHgap(16);
+        advGrid.setVgap(12);
         ColumnConstraints ac1 = new ColumnConstraints();
         ac1.setPercentWidth(50);
         ac1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
@@ -585,12 +634,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         advGrid.add(captionedField(i18n("ai.settings.model.max_output"), maxOutField), 1, 0);
         advGrid.add(captionedField(i18n("ai.settings.temperature"), tempField), 0, 1);
         advGrid.add(captionedField(i18n("ai.settings.default_reasoning_effort"), reasoningField), 1, 1);
-        JFXTextField inModalField = new JFXTextField(entry.getInputModalities());
-        inModalField.setPromptText(i18n("ai.settings.model.in_modal_hint"));
-        JFXTextField outModalField = new JFXTextField(entry.getOutputModalities());
-        outModalField.setPromptText(i18n("ai.settings.model.out_modal_hint"));
-        advGrid.add(captionedField(i18n("ai.settings.model.in_modal"), inModalField), 0, 2);
-        advGrid.add(captionedField(i18n("ai.settings.model.out_modal"), outModalField), 1, 2);
         JFXCheckBox capToolsBox = new JFXCheckBox(i18n("ai.settings.model.cap_tools"));
         capToolsBox.setSelected(entry.isSupportsTools());
         JFXCheckBox capVisionBox = new JFXCheckBox(i18n("ai.settings.model.cap_vision"));
@@ -599,7 +642,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         capReasoningBox.setSelected(entry.isSupportsReasoning());
         HBox capRow = new HBox(12, capToolsBox, capVisionBox, capReasoningBox);
         capRow.setAlignment(Pos.CENTER_LEFT);
-        advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 3, 2, 1);
+        advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 2, 2, 1);
+        advGrid.setPadding(new Insets(4, 0, 4, 0));
         ComponentSublist advPane = new ComponentSublist();
         advPane.setTitle(i18n("ai.settings.advanced"));
         advPane.getContent().setAll(advGrid);
@@ -610,8 +654,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         JFXTextField crField = new JFXTextField(fmtPrice(entry.getCacheReadPricePerMillion()));
         // 2x2 grid; each field carries its label as small caption text at the top-left.
         GridPane priceGrid = new GridPane();
-        priceGrid.setHgap(10);
-        priceGrid.setVgap(8);
+        priceGrid.setHgap(16);
+        priceGrid.setVgap(12);
         ColumnConstraints pc1 = new ColumnConstraints();
         pc1.setPercentWidth(50);
         pc1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
@@ -623,6 +667,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         priceGrid.add(captionedField(i18n("ai.settings.model.price_out"), outField), 1, 0);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_write"), cwField), 0, 1);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_read"), crField), 1, 1);
+        priceGrid.setPadding(new Insets(4, 0, 4, 0));
         ComponentSublist pricePane = new ComponentSublist();
         pricePane.setTitle(i18n("ai.settings.model.pricing"));
         pricePane.getContent().setAll(priceGrid);
@@ -632,22 +677,21 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList collapsibles = new ComponentList();
         collapsibles.getContent().addAll(advPane, pricePane);
 
-        // Auto-fill from the bundled model library: when ADDING a new model, after the user enters a
-        // known model id (focus leaves the id field), pre-fill context window / max output / modalities /
-        // capabilities / pricing so they don't have to look it up. One-shot, only for a new entry.
+        // Auto-fill from the bundled model library: when ADDING a new model, once a known model id
+        // lands in the combo (typed then focus left, or picked from the fetched dropdown), pre-fill
+        // context window / max output / capabilities / pricing so they don't have to look it up.
+        // One-shot, only for a new entry.
         if (entry.getId().isEmpty()) {
             final boolean[] filled = {false};
-            idField.focusedProperty().addListener((obs, was, focused) -> {
-                if (focused || filled[0]) return;
-                String id = idField.getText().trim();
+            Runnable autofill = () -> {
+                if (filled[0]) return;
+                String id = idBox.getEditor().getText() == null ? "" : idBox.getEditor().getText().trim();
                 if (id.isEmpty()) return;
                 org.jackhuang.hmcl.ai.ModelLibrary.ModelInfo info = org.jackhuang.hmcl.ai.ModelLibrary.find(id);
                 if (info == null) return;
                 filled[0] = true;
                 if (info.getContextWindow() > 0) ctxField.setText(String.valueOf(info.getContextWindow()));
                 if (info.getMaxOutput() > 0) maxOutField.setText(String.valueOf(info.getMaxOutput()));
-                if (info.getInputModalities() != null && !info.getInputModalities().isEmpty()) inModalField.setText(info.getInputModalities());
-                if (info.getOutputModalities() != null && !info.getOutputModalities().isEmpty()) outModalField.setText(info.getOutputModalities());
                 capToolsBox.setSelected(info.isSupportsTools());
                 capVisionBox.setSelected(info.isSupportsVision());
                 capReasoningBox.setSelected(info.isSupportsReasoning());
@@ -655,17 +699,23 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 if (info.getOutputPricePerMillion() > 0) outField.setText(fmtPrice(info.getOutputPricePerMillion()));
                 if (info.getCacheWritePricePerMillion() > 0) cwField.setText(fmtPrice(info.getCacheWritePricePerMillion()));
                 if (info.getCacheReadPricePerMillion() > 0) crField.setText(fmtPrice(info.getCacheReadPricePerMillion()));
+            };
+            idBox.getEditor().focusedProperty().addListener((obs, was, focused) -> {
+                if (!focused) autofill.run();
             });
+            idBox.valueProperty().addListener((obs, old, val) -> autofill.run());
         }
 
-        VBox bodyBox = new VBox(12, formGrid(i18n("ai.settings.model.id"), idField,
+        // 16px 节奏：分区标题/字段块之间留足呼吸感（原 12 太挤——2026-07-10 真机反馈）。
+        VBox bodyBox = new VBox(16, formGrid(i18n("ai.settings.model.id"), idCell,
                 i18n("ai.settings.model.alias"), aliasField), collapsibles);
         FXUtils.setLimitWidth(bodyBox, FORM_WIDTH);
 
         DialogPane dialog = new DialogPane() {
             @Override
             protected void onAccept() {
-                String id = idField.getText().trim();
+                String editorText = idBox.getEditor().getText();
+                String id = editorText == null ? "" : editorText.trim();
                 if (id.isEmpty()) {
                     onFailure(i18n("ai.settings.model.id_empty"));
                     return;
@@ -688,8 +738,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                         ? AiModelEntry.TEMPERATURE_UNSET
                         : parseDoubleSafe(temp, AiModelEntry.TEMPERATURE_UNSET));
                 entry.setReasoningEffort(reasoningField.getText().trim());
-                entry.setInputModalities(inModalField.getText());
-                entry.setOutputModalities(outModalField.getText());
+                // 输入/输出模态不再有 UI 入口（能力以三个"模型能力"复选框为唯一事实源）；
+                // 存量 entry 里的模态值原样保留，不在这里覆写。
                 entry.setSupportsTools(capToolsBox.isSelected());
                 entry.setSupportsVision(capVisionBox.isSelected());
                 entry.setSupportsReasoning(capReasoningBox.isSelected());
@@ -721,8 +771,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Builds a two-column (label, field) form grid so labels line up with their inputs.
     private static GridPane formGrid(Object... labelFieldPairs) {
         GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(8);
+        grid.setHgap(12);
+        grid.setVgap(12);
         ColumnConstraints labelCol = new ColumnConstraints();
         labelCol.setMinWidth(96);
         ColumnConstraints fieldCol = new ColumnConstraints();
@@ -751,7 +801,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         if (field instanceof javafx.scene.layout.Region region) {
             region.setMaxWidth(Double.MAX_VALUE);
         }
-        VBox box = new VBox(2, cap, field);
+        VBox box = new VBox(4, cap, field);
         box.setFillWidth(true);
         return box;
     }
@@ -977,13 +1027,34 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         sp.setFitToWidth(true);
         sp.getStyleClass().add("edge-to-edge");
         FXUtils.setLimitHeight(sp, 360);
-        VBox body = new VBox(10, searchRow, sp);
+        // 一行状态文案：全部选中的测试跑完后提示"测试完成"（2026-07-10 真机反馈——之前每行各自
+        // 出结果，但没有任何"整批结束了"的信号）。
+        Label runStatus = new Label();
+        runStatus.getStyleClass().add("subtitle-label");
+        VBox body = new VBox(10, searchRow, sp, runStatus);
         FXUtils.setLimitWidth(body, 540);
         layout.setBody(body);
+
+        // pending[0] = 本轮未完成数；generation[0] 区分批次，防止上一轮迟到的结果把新一轮的
+        // 计数器错误递减（用户可在跑到一半时再点"测试"）。仅在 FX 线程读写。
+        final int[] pending = {0};
+        final long[] generation = {0};
 
         JFXButton testBtn = new JFXButton(i18n("ai.settings.test.run"));
         testBtn.getStyleClass().add("dialog-accept");
         testBtn.setOnAction(e -> {
+            generation[0]++;
+            final long myGeneration = generation[0];
+            pending[0] = (int) rows.stream().filter(r -> r.checkBox.isSelected()).count();
+            runStatus.setText(pending[0] == 0 ? "" : i18n("ai.settings.test.batch_running", pending[0]));
+            // Runs on the FX thread after EVERY row's outcome (success or failure) lands; when
+            // the batch's counter reaches zero, flip the status line to "测试完成". Guarded by
+            // generation so a stale row from a superseded run never decrements the new batch.
+            Runnable markOneDone = () -> {
+                if (generation[0] != myGeneration) return;
+                pending[0]--;
+                if (pending[0] <= 0) runStatus.setText(i18n("ai.settings.test.done"));
+            };
             for (TestRow r : rows) {
                 if (!r.checkBox.isSelected()) continue;
                 // Reset any previous run's outcome icon/color before re-testing.
@@ -1003,12 +1074,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                             r.result.setText(elapsedMs + " ms");
                             r.result.setGraphic(SVG.CHECK.createIcon(14));
                             r.result.getStyleClass().add("ai-feedback-success");
+                            markOneDone.run();
                         });
                     } catch (Exception ex) {
                         Platform.runLater(() -> {
                             r.result.setText(ex.getMessage());
                             r.result.setGraphic(SVG.CLOSE.createIcon(14));
                             r.result.getStyleClass().add("ai-feedback-error");
+                            markOneDone.run();
                         });
                     }
                 });
@@ -1022,7 +1095,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     /// Updates a provider's tri-state checkbox from its model checkboxes
     /// (none → unchecked, all → checked, some → indeterminate).
-    private static void updateProviderBox(CheckBox providerBox, List<? extends CheckBox> modelBoxes) {
+    /// Package-private so the FX test can assert the indeterminate (半选) states directly.
+    static void updateProviderBox(CheckBox providerBox, List<? extends CheckBox> modelBoxes) {
         if (modelBoxes.isEmpty()) return;
         int selected = 0;
         for (CheckBox c : modelBoxes) if (c.isSelected()) selected++;
@@ -1039,7 +1113,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     /// Drives the master "全选" tri-state from the aggregate of all model rows:
     /// ✓ all selected / — some selected (indeterminate) / □ none.
-    private static void updateMasterBox(CheckBox master, List<TestRow> rows) {
+    /// Package-private so the FX test can assert the indeterminate (半选) states directly.
+    static void updateMasterBox(CheckBox master, List<TestRow> rows) {
         if (rows.isEmpty()) {
             master.setIndeterminate(false);
             master.setSelected(false);
@@ -1205,37 +1280,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // ③ 技能。内置技能（isBuiltin()）在这里要完全不可见——不是折叠，是从列表里彻底消失：它们现在
         // 直接从程序内置的 JSON 资源加载到内存，从未落地到 SKILLS_DIR，本来就没有对应的文件夹可给用户
         // 手改/查看；用户自建的技能（仍是 SKILL.md）才在这个列表里可见、可逐条启停。
-        List<SkillManifest> userSkills = skillRegistry.list().stream().filter(s -> !s.isBuiltin()).toList();
+        //
+        // 重扫/启停只就地重建这一张列表的内容（populateSkillList），绝不 invalidateTab 整个 tab——
+        // 旧实现整 tab 重建导致用户刚展开的 ComponentSublist（内置工具等折叠卡）被无动画塌缩闪跳
+        // （2026-07-10 真机反馈）。
         ComponentList skillList = new ComponentList();
-        for (SkillManifest skill : userSkills) {
-            LineButton row = new LineButton();
-            row.setTitle(skill.getName() != null ? skill.getName() : "(invalid skill)");
-            row.setSubtitle(skill.getDescription() != null ? skill.getDescription() : String.join("; ", skill.getErrors()));
-            row.setTrailingIcon(skill.getName() != null && skillRegistry.isDisabled(skill.getName()) ? SVG.CHECK : SVG.CHECK_CIRCLE);
-            row.setOnAction(e -> {
-                if (skill.getName() == null || !skill.isValid()) return;
-                if (skillRegistry.isDisabled(skill.getName())) skillRegistry.enable(skill.getName());
-                else skillRegistry.disable(skill.getName());
-                invalidateTab(skillsTab);
-            });
-            skillList.getContent().add(row);
-        }
-        if (userSkills.isEmpty()) {
-            Label empty = new Label(i18n("ai.settings.skills.empty"));
-            empty.setWrapText(true);
-            empty.getStyleClass().add("subtitle-label");
-            skillList.getContent().add(empty);
-        }
-        // 重新扫描作为次要动作，放在技能列表末尾
-        LineButton reload = new LineButton();
-        reload.setTitle(i18n("ai.settings.skills.rescan"));
-        reload.setSubtitle(SKILLS_DIR.toString());
-        reload.setLeading(SVG.REFRESH, 20);
-        reload.setOnAction(e -> {
-            refreshSkills();
-            invalidateTab(skillsTab);
-        });
-        skillList.getContent().add(reload);
+        populateSkillList(skillList, skillRegistry, this::refreshSkills);
 
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.skills.permissions")),
@@ -1289,6 +1339,46 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return wrapScroll(root);
     }
 
+    /// (Re)builds the user-skill rows IN PLACE inside {@code skillList}: one toggle row per
+    /// non-builtin skill, an empty hint when there are none, and the trailing 重新扫描 row.
+    /// Rescanning and per-skill enable/disable both re-run THIS method on the same
+    /// ComponentList instance — the surrounding tab (and every expanded ComponentSublist in it)
+    /// is never rebuilt, so nothing visibly collapses. Static + package-private so the FX test
+    /// can exercise the refresh path without constructing the whole settings page.
+    static void populateSkillList(ComponentList skillList, SkillRegistry registry, Runnable rescan) {
+        skillList.getContent().clear();
+        List<SkillManifest> userSkills = registry.list().stream().filter(s -> !s.isBuiltin()).toList();
+        for (SkillManifest skill : userSkills) {
+            LineButton row = new LineButton();
+            row.setTitle(skill.getName() != null ? skill.getName() : "(invalid skill)");
+            row.setSubtitle(skill.getDescription() != null ? skill.getDescription() : String.join("; ", skill.getErrors()));
+            row.setTrailingIcon(skill.getName() != null && registry.isDisabled(skill.getName()) ? SVG.CHECK : SVG.CHECK_CIRCLE);
+            row.setOnAction(e -> {
+                if (skill.getName() == null || !skill.isValid()) return;
+                if (registry.isDisabled(skill.getName())) registry.enable(skill.getName());
+                else registry.disable(skill.getName());
+                populateSkillList(skillList, registry, rescan);
+            });
+            skillList.getContent().add(row);
+        }
+        if (userSkills.isEmpty()) {
+            Label empty = new Label(i18n("ai.settings.skills.empty"));
+            empty.setWrapText(true);
+            empty.getStyleClass().add("subtitle-label");
+            skillList.getContent().add(empty);
+        }
+        // 重新扫描作为次要动作，放在技能列表末尾
+        LineButton reload = new LineButton();
+        reload.setTitle(i18n("ai.settings.skills.rescan"));
+        reload.setSubtitle(String.valueOf(registry.getSkillsDir()));
+        reload.setLeading(SVG.REFRESH, 20);
+        reload.setOnAction(e -> {
+            rescan.run();
+            populateSkillList(skillList, registry, rescan);
+        });
+        skillList.getContent().add(reload);
+    }
+
     /// Builds the "AI 能力与行为" card — moved here (from the old buildGeneralTab()) as part of the
     /// settings-page IA cleanup, repositioned as the permission/capability control entry point for
     /// the 技能 tab: whether the AI can reach the network, recall memory, auto-match skills, analyze
@@ -1319,9 +1409,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         abilitySub.setTitle(i18n("ai.settings.skills.ability"));
         abilitySub.setHasSubtitle(true);
         abilitySub.setDescription(i18n("ai.settings.skills.ability.desc"));
+        // "启用联网工具" moved to the 网络搜索 tab (top row, hot-effective) — 2026-07-10 feedback.
         abilitySub.getContent().setAll(
-                toggleRow(i18n("ai.settings.skills.web_access"), i18n("ai.settings.skills.web_access.desc"),
-                        aiSettings.webAccessEnabledProperty()),
                 disabledToggleRow(i18n("ai.settings.skills.memory"), i18n("ai.settings.skills.memory.desc")),
                 disabledToggleRow(i18n("ai.settings.skills.memory_auto"), i18n("ai.settings.skills.memory_auto.desc")),
                 toggleRow(i18n("ai.settings.skills.auto_match"), i18n("ai.settings.skills.auto_match.desc"),
@@ -1433,6 +1522,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         // ---- 搜索服务（核心 / 必填项排在最前）----
         ComponentList core = new ComponentList();
+
+        // 启用联网工具（从技能 tab 的"AI 能力与行为"卡移入，语义相同）。热生效：AIMainPage 在
+        // 构造时通过 WebAccessToolsBinder 监听同一个 webAccessEnabledProperty，开关即时向
+        // ToolRegistry 注册/注销 web_search 与 web_fetch —— 不再"重启后生效"。
+        core.getContent().add(toggleRow(i18n("ai.settings.search.web_access"),
+                i18n("ai.settings.search.web_access.desc"), aiSettings.webAccessEnabledProperty()));
 
         LineToggleButton enabled = new LineToggleButton();
         enabled.setTitle(i18n("ai.settings.search.enable"));
@@ -1740,14 +1835,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private ComponentList buildDataSecurityList() {
         ComponentList list = new ComponentList();
         list.getContent().addAll(
-                toggleRow(i18n("ai.settings.data.file_write_confirm"), i18n("ai.settings.data.file_write_confirm.desc"),
-                        aiSettings.fileWriteConfirmEnabledProperty()),
                 toggleRow(i18n("ai.settings.data.recycle_bin"), i18n("ai.settings.data.recycle_bin.desc"),
                         aiSettings.deleteToRecycleBinProperty()),
                 sliderRow(i18n("ai.settings.data.backup_retention"), i18n("ai.settings.data.backup_retention.desc"),
-                        aiSettings.worldBackupRetentionProperty(), 1, 50, i18n("ai.settings.data.backup_retention.unit")),
-                toggleRow(i18n("ai.settings.data.nbt_auto_backup"), i18n("ai.settings.data.nbt_auto_backup.desc"),
-                        aiSettings.autoBackupBeforeNbtEditProperty()),
+                        aiSettings.worldBackupMaxMbProperty(), 1, 100, i18n("ai.settings.data.backup_retention.unit")),
                 buildTraceEnabledRow(),
                 buildUploadDiagnosticRow(),
                 buildPrivacyNoticeRow());
@@ -2071,11 +2162,58 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // 自动命名会话
         chatList.getContent().add(toggleRow(i18n("ai.settings.auto_title"),
                 i18n("ai.settings.auto_title.desc"), aiSettings.autoTitleEnabledProperty()));
+        // 自动命名模型：勾选"自动命名会话"后才显示（visible+managed 都绑到开关），选项 = Auto
+        // （跟随当前对话模型）+ 全部已配置模型，存储格式 "<profileId>::<modelId>"（空 = Auto）。
+        chatList.getContent().add(buildTitleNamingModelRow());
         // 流式输出 / 自动滚动 / 回车发送 等聊天行为已移至「聊天设置」抽屉的「交互」区，不在全局重复。
 
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.section.chat_model")), chatList);
         return wrapScroll(root);
+    }
+
+    /// Builds the "自动命名模型" selector shown under 自动命名会话: Auto (= follow the current
+    /// chat model, stored as "") plus every configured model across all providers (stored as
+    /// "profileId::modelId" — see {@link AiSettings#resolveTitleNamingModel()}). The row is
+    /// visible+managed only while auto-titling is on.
+    private LineSelectButton<String> buildTitleNamingModelRow() {
+        List<String> items = new ArrayList<>();
+        items.add(""); // Auto
+        for (AiProviderProfile profile : aiSettings.getProfiles()) {
+            for (AiModelEntry entry : profile.getModels()) {
+                items.add(profile.getId() + "::" + entry.getId());
+            }
+        }
+
+        LineSelectButton<String> row = new LineSelectButton<>();
+        row.setTitle(i18n("ai.settings.auto_title.model"));
+        row.setSubtitle(i18n("ai.settings.auto_title.model.desc"));
+        row.setItems(items);
+        row.setNullSafeConverter(value -> {
+            if (value.isEmpty()) return i18n("ai.settings.auto_title.model.auto");
+            int sep = value.indexOf("::");
+            String profileId = sep >= 0 ? value.substring(0, sep) : "";
+            String modelId = sep >= 0 ? value.substring(sep + 2) : value;
+            for (AiProviderProfile profile : aiSettings.getProfiles()) {
+                if (profile.getId().equals(profileId)) {
+                    AiModelEntry entry = profile.getModel(modelId);
+                    return displayProfileName(profile) + " · "
+                            + (entry != null ? entry.getDisplayName() : modelId);
+                }
+            }
+            return modelId;
+        });
+        String current = aiSettings.getTitleNamingModel();
+        row.setValue(items.contains(current) ? current : ""); // stale/unknown persisted value → Auto
+        row.valueProperty().addListener((obs, old, value) -> {
+            if (value != null) {
+                aiSettings.titleNamingModelProperty().set(value);
+                saveAiSettings();
+            }
+        });
+        row.visibleProperty().bind(aiSettings.autoTitleEnabledProperty());
+        row.managedProperty().bind(aiSettings.autoTitleEnabledProperty());
+        return row;
     }
 
     /// Advanced/developer settings tab: execution limits, dangerous developer-only toggles, and the
@@ -2086,34 +2224,58 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private Node buildAdvancedTab() {
         VBox root = createSettingsRoot();
 
-        ComponentList list = new ComponentList();
-        list.getContent().addAll(
+        // 2026-07-10 真机反馈"高级设置太乱"：单张大杂烩卡片重构为分节结构（参照数据设置页的
+        // 分节样式）。分组原则：同类相邻、危险项聚拢、开发者项收尾。
+
+        // ① 审批与安全 — 审批模式说明 + 高危红色二次确认（危险项聚拢在最上方，先看到）。
+        ComponentList approvalList = new ComponentList();
+        approvalList.getContent().addAll(
                 buildAutoModeInfoRow(),
                 // "危险操作二次确认" itself (the orange, non-critical toggle) lives in the 技能 tab's
                 // "工具权限" card (see buildSkillsTab/buildDangerousConfirmationRow) — it's a single
                 // copy, not a duplicate, so it stays where it already was rather than moving here too.
                 toggleRow(i18n("ai.settings.advanced.critical_confirm"), i18n("ai.settings.advanced.critical_confirm.desc"),
-                        aiSettings.criticalConfirmEnabledProperty()),
-                toggleRow(i18n("ai.settings.advanced.nbt_tools"), i18n("ai.settings.advanced.nbt_tools.desc"),
-                        aiSettings.nbtToolsEnabledProperty()),
-                toggleRow(i18n("ai.settings.advanced.auto_compact"), i18n("ai.settings.advanced.auto_compact.desc"),
-                        aiSettings.autoCompactEnabledProperty()),
+                        aiSettings.criticalConfirmEnabledProperty()));
+
+        // ② 代理循环 — 一轮对话内 agent 循环的预算/压缩类参数。
+        ComponentList loopList = new ComponentList();
+        loopList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.max_tool_cycles"), i18n("ai.settings.advanced.max_tool_cycles.desc"),
                         aiSettings.maxToolCyclesProperty(), 1, 50, ""),
                 sliderRow(i18n("ai.settings.advanced.max_context_messages"), i18n("ai.settings.advanced.max_context_messages.desc"),
                         aiSettings.maxContextMessagesProperty(), 0, 100, ""),
                 sliderRow(i18n("ai.settings.advanced.tool_result_max"), i18n("ai.settings.advanced.tool_result_max.desc"),
                         aiSettings.toolResultMaxCharsProperty(), 0, 20000, i18n("ai.settings.advanced.unit_chars")),
+                toggleRow(i18n("ai.settings.advanced.auto_compact"), i18n("ai.settings.advanced.auto_compact.desc"),
+                        aiSettings.autoCompactEnabledProperty()));
+
+        // ③ 模型请求 — 网络请求与花费。
+        ComponentList requestList = new ComponentList();
+        requestList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.request_timeout"), i18n("ai.settings.advanced.request_timeout.desc"),
                         aiSettings.requestTimeoutSecondsProperty(), 15, 600, i18n("ai.settings.advanced.unit_seconds")),
-                buildSpendLimitRow(),
-                buildShellToolRow(),
+                buildSpendLimitRow());
+
+        // ④ 工具开关 — 默认关闭的可选工具域（NBT / Shell）。
+        ComponentList toolsList = new ComponentList();
+        toolsList.getContent().addAll(
+                toggleRow(i18n("ai.settings.advanced.nbt_tools"), i18n("ai.settings.advanced.nbt_tools.desc"),
+                        aiSettings.nbtToolsEnabledProperty()),
+                buildShellToolRow());
+
+        // ⑤ 开发者 — 收尾：跳过确认 + 工具调用日志。
+        ComponentList developerList = new ComponentList();
+        developerList.getContent().addAll(
                 buildDangerouslySkipRow(),
                 toggleRow(i18n("ai.settings.advanced.tool_call_log"), i18n("ai.settings.advanced.tool_call_log.desc"),
                         aiSettings.toolCallLoggingEnabledProperty()));
 
         root.getChildren().addAll(
-                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section")), list);
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.approval")), approvalList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.loop")), loopList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.request")), requestList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.tools")), toolsList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.advanced.section.developer")), developerList);
         return wrapScroll(root);
     }
 
@@ -2648,8 +2810,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         }
     }
 
-    /// A connectivity-test row tracked in the test dialog.
-    private static final class TestRow {
+    /// A connectivity-test row tracked in the test dialog. Package-private (not private) so the
+    /// tri-state FX test can build rows for {@link #updateMasterBox}.
+    static final class TestRow {
         final AiProviderProfile profile;
         final String modelId;
         final CheckBox checkBox;
