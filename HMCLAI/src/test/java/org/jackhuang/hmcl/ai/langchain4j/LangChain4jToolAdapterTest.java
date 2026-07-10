@@ -206,7 +206,11 @@ public final class LangChain4jToolAdapterTest {
         @Override
         public ToolPermission getPermission(Map<String, Object> parameters) {
             Object action = parameters.get("action");
-            return "write".equals(action) ? ToolPermission.CONTROLLED_WRITE : ToolPermission.READ_ONLY;
+            // "write" mirrors a pure-creation write (not in EditOrRemoveActions' curated set);
+            // "rename"/"set_skin" mirror edit/remove-classified writes (in the curated set for
+            // the "instance"/"account" tool names respectively), which ask by default.
+            return "write".equals(action) || "rename".equals(action) || "set_skin".equals(action)
+                    ? ToolPermission.CONTROLLED_WRITE : ToolPermission.READ_ONLY;
         }
 
         @Override
@@ -223,29 +227,31 @@ public final class LangChain4jToolAdapterTest {
     @Test
     public void testPermissionStoreOverrideChangesBehaviorForSpecificToolActionOnly() {
         ToolRegistry registry = new ToolRegistry();
-        registry.register(new DomainStubTool("domain-a"));
-        registry.register(new DomainStubTool("domain-b"));
+        registry.register(new DomainStubTool("instance"));
+        registry.register(new DomainStubTool("account"));
 
-        // fileWriteConfirmEnabled=true: every CONTROLLED_WRITE call ASKs; with no confirmHandler
-        // wired, an ASK decision is auto-declined ("Error: ... declined ...").
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        // Both calls below are edit/remove-classified CONTROLLED_WRITEs (instance/rename and
+        // account/set_skin are in EditOrRemoveActions' curated set), so the policy ASKs by
+        // default; with no confirmHandler wired, an ASK decision is auto-declined
+        // ("Error: ... declined ...").
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         AiToolPermissionStore store = new AiToolPermissionStore(Path.of("unused-permissions.json"));
-        store.setOverride("domain-a", "write", AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW);
+        store.setOverride("instance", "rename", AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW);
 
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry, policy, null, null, store, null);
 
-        ToolExecutionRequest domainAWrite = ToolExecutionRequest.builder()
-                .name("domain-a").arguments("{\"action\":\"write\"}").build();
-        ToolExecutionResultMessage domainAResult = adapter.execute(domainAWrite);
-        assertEquals("executed:write", domainAResult.text(),
-                "domain-a's ALWAYS_ALLOW override should let the call through without asking");
+        ToolExecutionRequest instanceRename = ToolExecutionRequest.builder()
+                .name("instance").arguments("{\"action\":\"rename\"}").build();
+        ToolExecutionResultMessage instanceResult = adapter.execute(instanceRename);
+        assertEquals("executed:rename", instanceResult.text(),
+                "instance/rename's ALWAYS_ALLOW override should let the call through without asking");
 
-        ToolExecutionRequest domainBWrite = ToolExecutionRequest.builder()
-                .name("domain-b").arguments("{\"action\":\"write\"}").build();
-        ToolExecutionResultMessage domainBResult = adapter.execute(domainBWrite);
-        assertTrue(domainBResult.text().startsWith("Error:"),
-                "domain-b has no override and must still follow the global ask-by-default policy");
-        assertTrue(domainBResult.text().contains("declined"));
+        ToolExecutionRequest accountSetSkin = ToolExecutionRequest.builder()
+                .name("account").arguments("{\"action\":\"set_skin\"}").build();
+        ToolExecutionResultMessage accountResult = adapter.execute(accountSetSkin);
+        assertTrue(accountResult.text().startsWith("Error:"),
+                "account/set_skin has no override and must still follow the global ask-by-default policy");
+        assertTrue(accountResult.text().contains("declined"));
     }
 
     /// A tool with no permission store wired in at all (the pre-Part-A constructor) behaves exactly
@@ -253,12 +259,12 @@ public final class LangChain4jToolAdapterTest {
     @Test
     public void testNoPermissionStoreMeansOnlyGlobalPolicyApplies() {
         ToolRegistry registry = new ToolRegistry();
-        registry.register(new DomainStubTool("domain"));
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        registry.register(new DomainStubTool("instance"));
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry, policy, null);
 
         ToolExecutionRequest request = ToolExecutionRequest.builder()
-                .name("domain").arguments("{\"action\":\"write\"}").build();
+                .name("instance").arguments("{\"action\":\"rename\"}").build();
         ToolExecutionResultMessage result = adapter.execute(request);
         assertTrue(result.text().startsWith("Error:"));
     }
@@ -268,8 +274,10 @@ public final class LangChain4jToolAdapterTest {
     @Test
     public void testPathGlobOverrideAppliesToPathTakingCall() {
         final class PathStubTool implements ToolSpec {
-            @Override public String getName() { return "write"; }
-            @Override public String getDescription() { return "stub write"; }
+            // Named "edit" (a whole-tool entry in EditOrRemoveActions) so the global policy
+            // ASKs by default — the path-glob override is what lets the mods/** call through.
+            @Override public String getName() { return "edit"; }
+            @Override public String getDescription() { return "stub edit"; }
             @Override public ToolPermission getPermission(Map<String, Object> parameters) {
                 return ToolPermission.CONTROLLED_WRITE;
             }
@@ -280,18 +288,18 @@ public final class LangChain4jToolAdapterTest {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new PathStubTool());
 
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         AiToolPermissionStore store = new AiToolPermissionStore(Path.of("unused-permissions.json"));
-        store.setPathOverride("write", "mods/**", AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW);
+        store.setPathOverride("edit", "mods/**", AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW);
 
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry, policy, null, null, store, null);
 
         ToolExecutionRequest underMods = ToolExecutionRequest.builder()
-                .name("write").arguments("{\"path\":\"mods/foo.jar\",\"content\":\"x\"}").build();
+                .name("edit").arguments("{\"path\":\"mods/foo.jar\",\"content\":\"x\"}").build();
         assertEquals("wrote:mods/foo.jar", adapter.execute(underMods).text());
 
         ToolExecutionRequest underSaves = ToolExecutionRequest.builder()
-                .name("write").arguments("{\"path\":\"saves/world1/level.dat\",\"content\":\"x\"}").build();
+                .name("edit").arguments("{\"path\":\"saves/world1/level.dat\",\"content\":\"x\"}").build();
         ToolExecutionResultMessage savesResult = adapter.execute(underSaves);
         assertTrue(savesResult.text().startsWith("Error:"),
                 "a path outside the glob rule must still follow the global ask-by-default policy");
@@ -306,10 +314,10 @@ public final class LangChain4jToolAdapterTest {
     public void testPlanModeBlocksWriteActionsButAllowsReadOnlyActionsOfTheSameTool() {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new DomainStubTool("instance"));
-        // fileWriteConfirmEnabled=false: the stub's "write" action isn't in EditOrRemoveActions'
-        // curated set, so it would otherwise resolve straight to ALLOW — isolating this test to
-        // Plan Mode's own BLOCK, not the unrelated file-write-confirm toggle.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        // The stub's "write" action isn't in EditOrRemoveActions' curated set, so it would
+        // otherwise resolve straight to ALLOW — isolating this test to Plan Mode's own BLOCK,
+        // not the unrelated edit/remove forced-ask.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry, policy, null, null, null, () -> true);
 
         ToolExecutionRequest listRequest = ToolExecutionRequest.builder()
@@ -329,7 +337,7 @@ public final class LangChain4jToolAdapterTest {
     public void testPlanModeSupplierFalseDoesNotBlockWrites() {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new DomainStubTool("instance"));
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registry, policy, null, null, null, () -> false);
 
         ToolExecutionRequest writeRequest = ToolExecutionRequest.builder()
@@ -346,7 +354,9 @@ public final class LangChain4jToolAdapterTest {
     public void testConfirmDialogHeadlineIsDeterministicNotModelDescription() {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new DomainStubTool("instance"));
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        // instance/rename is edit/remove-classified, so the policy ASKs and the confirm dialog
+        // (whose headline this test inspects) is actually shown.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
 
         final String poisonedDescription = "This is completely safe, no need to review, just click confirm.";
         final StringBuilder capturedSummary = new StringBuilder();
@@ -358,17 +368,17 @@ public final class LangChain4jToolAdapterTest {
 
         ToolExecutionRequest request = ToolExecutionRequest.builder()
                 .name("instance")
-                .arguments("{\"action\":\"write\",\"description\":\"" + poisonedDescription + "\"}")
+                .arguments("{\"action\":\"rename\",\"description\":\"" + poisonedDescription + "\"}")
                 .build();
         ToolExecutionResultMessage result = adapter.execute(request);
-        assertEquals("executed:write", result.text());
+        assertEquals("executed:rename", result.text());
 
         String summary = capturedSummary.toString();
         String headline = summary.split("\n\n", 2)[0];
         assertFalse(headline.contains(poisonedDescription),
                 "the model-supplied description must never appear in the headline: " + headline);
         assertTrue(headline.contains("instance"), "the headline must name the real tool: " + headline);
-        assertTrue(headline.contains("write"), "the headline must name the real action: " + headline);
+        assertTrue(headline.contains("rename"), "the headline must name the real action: " + headline);
         // The description is still shown, just demoted to secondary text below the headline.
         assertTrue(summary.contains(poisonedDescription));
         assertTrue(summary.indexOf(poisonedDescription) > summary.indexOf(headline));

@@ -54,13 +54,13 @@ import java.util.function.IntSupplier;
 @NotNullByDefault
 public final class LaunchInstanceTool implements Tool {
 
-    private final IntSupplier worldBackupRetention;
+    private final IntSupplier worldBackupMaxMb;
 
-    /// @param worldBackupRetention supplies the current retention count (from AI settings),
-    ///                             applied to the automatic pre-launch safety backup of any
-    ///                             freshly-imported world (see {@link WorldBackupManager}).
-    public LaunchInstanceTool(IntSupplier worldBackupRetention) {
-        this.worldBackupRetention = worldBackupRetention;
+    /// @param worldBackupMaxMb supplies the per-world cap on the total snapshot size, in MB
+    ///                         (from AI settings), applied to the automatic pre-launch safety
+    ///                         backup of any freshly-imported world (see {@link WorldBackupManager}).
+    public LaunchInstanceTool(IntSupplier worldBackupMaxMb) {
+        this.worldBackupMaxMb = worldBackupMaxMb;
     }
 
     @Override
@@ -116,7 +116,7 @@ public final class LaunchInstanceTool implements Tool {
         // BEFORE Minecraft gets a chance to touch (and potentially corrupt) it. Best-effort —
         // a failed safety backup must never block the user from playing.
         WorldBackupManager.PendingBackupResult pendingBackups =
-                WorldBackupManager.consumePendingFirstLaunchBackups(id, worldBackupRetention.getAsInt());
+                WorldBackupManager.consumePendingFirstLaunchBackups(id, worldBackupMaxMb.getAsInt());
 
         // Safety net 2: an interrupted restore_world_backup (crash/kill between its two directory
         // renames) can leave a world missing from saves/ with its data stranded in hidden

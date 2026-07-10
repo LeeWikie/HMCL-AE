@@ -26,8 +26,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /// - The Auto model (post SAFE/ASK/YOLO merge — see {@link AiApprovalMode}'s own doc): everyday
 ///   operations stay low-friction, dangerous operations ask while attended, and a dangerous
 ///   operation is hard-BLOCKed — never merely asked — whenever the turn may be unattended.
-/// - Part C: the create-vs-edit/remove split ({@link EditOrRemoveActions}) that
-///   {@code fileWriteConfirmEnabled=false} may only ever suppress confirmation for pure creation.
+/// - Part C: the create-vs-edit/remove split ({@link EditOrRemoveActions}) — file-write
+///   confirmation is policy-decided (no user toggle anymore): pure creation runs automatically,
+///   an action that edits or removes something that already existed always asks.
 /// - Part E: Plan Mode BLOCKing CONTROLLED_WRITE/DANGEROUS_WRITE outright (never merely asking),
 ///   while READ_ONLY/EXTERNAL_NETWORK calls are unaffected — the fix for
 ///   {@code AIMainPage.applyPlanGating()}'s wholesale over-blocking of the 6 merged domain facades
@@ -38,9 +39,9 @@ public final class AiExecutionPolicyTest {
 
     @Test
     void autoAllowsReadOnlyControlledWriteAndNetworkWithoutAsking() {
-        // Default flags (dangerous confirmation on, file-write confirmation off) — everyday
-        // operations must never be gated, regardless of those toggles.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        // Default flags (dangerous confirmation on) — everyday operations must never be gated,
+        // regardless of that toggle.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("read", null, ToolPermission.READ_ONLY, false, false));
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
@@ -51,7 +52,7 @@ public final class AiExecutionPolicyTest {
 
     @Test
     void autoAsksForDangerousWriteWhileAttended() {
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
     }
@@ -60,7 +61,7 @@ public final class AiExecutionPolicyTest {
     void autoAllowsDangerousWriteWhileAttendedIfConfirmationToggleIsOff() {
         // The dangerous-confirmation toggle can still relax Auto down to a full auto-run for
         // dangerous operations — but only while attended (see the next test).
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, false, false);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, false);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
     }
@@ -71,13 +72,13 @@ public final class AiExecutionPolicyTest {
         // otherwise auto-allow, per the test above), a possibly-unattended turn hard-BLOCKs a
         // dangerous operation outright instead of silently running it or leaving it stuck on a
         // prompt nobody may ever answer.
-        AiExecutionPolicy lenient = new AiExecutionPolicy(AiApprovalMode.AUTO, false, false);
+        AiExecutionPolicy lenient = new AiExecutionPolicy(AiApprovalMode.AUTO, false);
         assertEquals(AiExecutionPolicy.Decision.BLOCK,
                 lenient.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true));
 
         // Same result even when dangerous confirmation IS on — unattended never merely downgrades
         // to ASK, which nobody may be present to answer.
-        AiExecutionPolicy strict = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        AiExecutionPolicy strict = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.BLOCK,
                 strict.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true));
     }
@@ -87,7 +88,7 @@ public final class AiExecutionPolicyTest {
         // Only DANGEROUS_WRITE is gated by the unattended signal — read-only/network/controlled
         // writes keep running automatically even on a possibly-unattended turn (e.g. the agent
         // polling a background job's status after firing an auto-continuation).
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("read", null, ToolPermission.READ_ONLY, false, true));
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
@@ -100,7 +101,7 @@ public final class AiExecutionPolicyTest {
     void dangerouslySkipPermissionsOutranksTheUnattendedBlock() {
         // The developer-only escape hatch is documented to skip every gate, INCLUDING the
         // unattended block (and Plan Mode — see below).
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true));
     }
@@ -110,7 +111,7 @@ public final class AiExecutionPolicyTest {
     @Test
     void planModeBlocksControlledWriteRegardlessOfApprovalMode() {
         for (AiApprovalMode mode : AiApprovalMode.values()) {
-            AiExecutionPolicy policy = new AiExecutionPolicy(mode, true, true);
+            AiExecutionPolicy policy = new AiExecutionPolicy(mode, true);
             assertEquals(AiExecutionPolicy.Decision.BLOCK,
                     policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, true),
                     "Plan Mode must BLOCK a CONTROLLED_WRITE call under " + mode);
@@ -120,7 +121,7 @@ public final class AiExecutionPolicyTest {
     @Test
     void planModeBlocksDangerousWriteRegardlessOfApprovalMode() {
         for (AiApprovalMode mode : AiApprovalMode.values()) {
-            AiExecutionPolicy policy = new AiExecutionPolicy(mode, true, true);
+            AiExecutionPolicy policy = new AiExecutionPolicy(mode, true);
             assertEquals(AiExecutionPolicy.Decision.BLOCK,
                     policy.check("instance", "delete", ToolPermission.DANGEROUS_WRITE, true),
                     "Plan Mode must BLOCK a DANGEROUS_WRITE call under " + mode);
@@ -131,7 +132,7 @@ public final class AiExecutionPolicyTest {
     void planModeDoesNotBlockReadOnlyActions() {
         // This is the exact scenario the bug report calls out: instance(action=list) and
         // search(action=mods) must stay usable in Plan Mode so the agent can keep investigating.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("instance", "list", ToolPermission.READ_ONLY, true));
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
@@ -142,7 +143,7 @@ public final class AiExecutionPolicyTest {
 
     @Test
     void planModeDoesNotBlockExternalNetwork() {
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("web_search", null, ToolPermission.EXTERNAL_NETWORK, true));
     }
@@ -152,7 +153,7 @@ public final class AiExecutionPolicyTest {
         // The core of the fix: `instance` is READ_ONLY for action=list but CONTROLLED_WRITE for
         // action=create — Plan Mode must let ONE through and BLOCK the OTHER, not treat the whole
         // tool as either all-allowed or all-disabled.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("instance", "list", ToolPermission.READ_ONLY, true));
         assertEquals(AiExecutionPolicy.Decision.BLOCK,
@@ -164,7 +165,7 @@ public final class AiExecutionPolicyTest {
     @Test
     void dangerouslySkipPermissionsOutranksPlanMode() {
         // The developer-only escape hatch is documented to skip every gate, INCLUDING Plan Mode.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("instance", "delete", ToolPermission.DANGEROUS_WRITE, true));
     }
@@ -173,8 +174,8 @@ public final class AiExecutionPolicyTest {
     void noArgCheckOverloadNeverAppliesPlanModeBlocking() {
         // Preserves the exact prior behavior of the simple, tool-agnostic overload (used by callers
         // with no tool/action context) — it must never resolve into a Plan Mode block, and (with
-        // both confirmation toggles off, so nothing else gates it either) always ALLOWs.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, false, false);
+        // dangerous confirmation off, so nothing else gates it either) always ALLOWs.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, false);
         assertEquals(AiExecutionPolicy.Decision.ALLOW, policy.check(ToolPermission.CONTROLLED_WRITE));
         assertEquals(AiExecutionPolicy.Decision.ALLOW, policy.check(ToolPermission.DANGEROUS_WRITE));
     }
@@ -182,11 +183,10 @@ public final class AiExecutionPolicyTest {
     // ---- Part C: create vs edit/remove ----
 
     @Test
-    void createTypeControlledWriteStillRespectsFileWriteConfirmDisabled() {
-        // fileWriteConfirmEnabled=false (the default) must keep suppressing confirmation for pure
-        // creation, exactly as before the SAFE/ASK/YOLO merge (SAFE and ASK already enforced this
-        // identically, which is exactly why they could be merged into one mode).
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+    void createTypeControlledWriteRunsAutomatically() {
+        // Pure creation is policy-decided to run without confirmation (the old
+        // fileWriteConfirmEnabled toggle is gone — this is now the unconditional behavior).
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, false));
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
@@ -194,9 +194,10 @@ public final class AiExecutionPolicyTest {
     }
 
     @Test
-    void editOrRemoveTypeControlledWriteAlwaysAsksEvenWithFileWriteConfirmDisabled() {
-        // instance/rename mutates an EXISTING instance — must always ASK, regardless of the toggle.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+    void editOrRemoveTypeControlledWriteAlwaysAsks() {
+        // instance/rename mutates an EXISTING instance — must always ASK; there is no toggle
+        // that could relax this.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false));
         assertEquals(AiExecutionPolicy.Decision.ASK,
@@ -211,17 +212,19 @@ public final class AiExecutionPolicyTest {
         // unconditional "skip literally everything" escape hatch. Auto has no such independently
         // selectable full-bypass tier anymore (see AiApprovalMode's own doc), so the same call now
         // asks like it always would under the old SAFE/ASK modes.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false));
     }
 
     @Test
-    void fileWriteConfirmEnabledStillAsksForEveryControlledWriteRegardlessOfClassification() {
-        // Turning the toggle ON (non-default) still confirms every CONTROLLED_WRITE call, exactly
-        // as before this classification existed — the classification only matters when it's OFF.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
-        assertEquals(AiExecutionPolicy.Decision.ASK,
+    void classificationAloneDecidesControlledWriteConfirmation() {
+        // The old fileWriteConfirmEnabled toggle (which could force EVERY controlled write to
+        // ask) is gone: the create-vs-edit/remove classification is now the ONLY thing deciding
+        // whether a CONTROLLED_WRITE confirms — creation allows, edit/remove asks, on the same
+        // policy instance.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, false));
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false));
@@ -229,11 +232,10 @@ public final class AiExecutionPolicyTest {
 
     @Test
     void withModePreservesOtherFlags() {
-        AiExecutionPolicy original = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true, false);
+        AiExecutionPolicy original = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
         AiExecutionPolicy remoded = original.withMode(AiApprovalMode.AUTO);
         assertEquals(AiApprovalMode.AUTO, remoded.getMode());
         assertEquals(original.isDangerousConfirmationEnabled(), remoded.isDangerousConfirmationEnabled());
-        assertEquals(original.isFileWriteConfirmEnabled(), remoded.isFileWriteConfirmEnabled());
         assertEquals(original.isDangerouslySkipPermissions(), remoded.isDangerouslySkipPermissions());
         // withMode always returns a COPY, never the original instance.
         assertNotSame(original, remoded);

@@ -99,21 +99,21 @@ public final class InstanceTool implements ToolSpec {
     ///                            recycle bin (delete / mods_delete / mods_update /
     ///                            worlds_delete / resourcepacks_delete / shaders_delete) — see
     ///                            {@code AiSettings#isDeleteToRecycleBin()}
-    /// @param worldBackupRetention max snapshots kept per world (worlds_backup_create /
-    ///                             worlds_backup_restore's auto-backup-before-restore)
+    /// @param worldBackupMaxMb    per-world cap on the total snapshot size in MB
+    ///                            (worlds_backup_create / worlds_backup_restore's post-restore prune)
     /// @param nbtToolsEnabled     gates the {@code worlds_info} action exactly as the standalone
     ///                            {@code ReadWorldInfoTool} registration used to (it reads NBT
     ///                            internally); the REST of this domain tool is unaffected by this
     ///                            setting — only this one action is gated per-call rather than the
     ///                            whole tool, since it's the only action here that touches NBT
-    public InstanceTool(BooleanSupplier toRecycleBin, IntSupplier worldBackupRetention,
+    public InstanceTool(BooleanSupplier toRecycleBin, IntSupplier worldBackupMaxMb,
                         BooleanSupplier nbtToolsEnabled) {
         this.delete = new DeleteInstanceTool(toRecycleBin);
         this.modsUpdate = new UpdateModTool(toRecycleBin);
         this.modsDelete = new DeleteModTool(toRecycleBin);
         this.worldsDelete = new DeleteWorldTool(toRecycleBin);
-        this.worldsBackupCreate = new CreateWorldBackupTool(worldBackupRetention);
-        this.worldsBackupRestore = new RestoreWorldBackupTool(worldBackupRetention);
+        this.worldsBackupCreate = new CreateWorldBackupTool(worldBackupMaxMb);
+        this.worldsBackupRestore = new RestoreWorldBackupTool(worldBackupMaxMb);
         this.resourcepacksDelete = new DeleteResourcePackTool(toRecycleBin);
         this.shadersDelete = new DeleteShaderTool(toRecycleBin);
         this.nbtToolsEnabled = nbtToolsEnabled;

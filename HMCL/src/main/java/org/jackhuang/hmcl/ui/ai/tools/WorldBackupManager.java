@@ -42,10 +42,11 @@ import java.util.stream.Stream;
 /// Versioned world-backup engine for the AI agent.
 ///
 /// ## What this IS (current scope)
-/// A *versioned, timestamped, FULL-COPY* backup engine with retention pruning:
+/// A *versioned, timestamped, FULL-COPY* backup engine with size-capped pruning:
 /// every backup recursively copies the entire `saves/<world>` directory into
 /// `<runDir>/ai-world-backups/<world>/<yyyyMMdd-HHmmss>/`, then deletes the
-/// oldest snapshots beyond the configured retention count.
+/// oldest snapshots once the per-world total exceeds the configured size cap (MB);
+/// the newest snapshot is always kept.
 ///
 /// ## What this is NOT (honest disclaimer)
 /// This is **NOT** an incremental / deduplicating / git-style engine. Each
@@ -231,14 +232,14 @@ public final class WorldBackupManager {
 
     // ---- Public engine API ---------------------------------------------------------
 
-    /// Creates a full-copy, timestamped snapshot of `saves/<world>` and prunes
-    /// the oldest snapshots beyond {@code retentionCount}.
+    /// Creates a full-copy, timestamped snapshot of `saves/<world>` and prunes the oldest
+    /// snapshots once the world's snapshots exceed {@code maxTotalMegabytes} in total.
     ///
-    /// @param instance       instance id (nullable → selected instance)
-    /// @param world          the save folder name under `saves/`
-    /// @param retentionCount keep at most this many newest snapshots
-    ///                       ({@code <= 0} disables pruning)
-    public static BackupResult createBackup(@Nullable String instance, String world, int retentionCount)
+    /// @param instance          instance id (nullable → selected instance)
+    /// @param world             the save folder name under `saves/`
+    /// @param maxTotalMegabytes per-world cap on the total snapshot size, in MB; the newest
+    ///                          snapshot is always kept ({@code <= 0} disables pruning)
+    public static BackupResult createBackup(@Nullable String instance, String world, int maxTotalMegabytes)
             throws IOException {
         Path runDir = resolveRunDirectory(instance);
         Path worldDir = resolveWorldDir(runDir, world);
@@ -286,7 +287,7 @@ public final class WorldBackupManager {
             throw e;
         }
 
-        int pruned = prune(backupRoot, retentionCount);
+        int pruned = prune(backupRoot, maxTotalMegabytes);
         return new BackupResult(target, id, (int) counters[0], counters[1], pruned, lockedDuringBackup);
     }
 
@@ -322,7 +323,7 @@ public final class WorldBackupManager {
     /// HIGH RISK: this overwrites the existing `saves/<world>`.
     ///
     /// @param backupId the snapshot folder name (timestamp id) to restore
-    public static RestoreResult restore(@Nullable String instance, String world, String backupId, int retentionCount)
+    public static RestoreResult restore(@Nullable String instance, String world, String backupId, int maxTotalMegabytes)
             throws IOException {
         Path runDir = resolveRunDirectory(instance);
         Path worldDir = resolveWorldDir(runDir, world);
@@ -356,7 +357,7 @@ public final class WorldBackupManager {
         long[] counters = copyTree(snapshot, staging);
 
         // 2) Safety: snapshot the current world before overwriting it. Pruning is DISABLED here
-        //    (retentionCount 0) so this safety backup can never evict the snapshot being restored.
+        //    (cap 0 = no prune) so this safety backup can never evict the snapshot being restored.
         @Nullable String safetyId = null;
         @Nullable Path replaced = null;
         @Nullable Path marker = null;
@@ -440,7 +441,7 @@ public final class WorldBackupManager {
             }
         }
         try {
-            prune(backupRoot, retentionCount);
+            prune(backupRoot, maxTotalMegabytes);
         } catch (IOException pruneFailed) {
             // best-effort: a pruning failure must not mask an already-successful restore
         }
@@ -479,7 +480,7 @@ public final class WorldBackupManager {
     /// Never throws: any failure resolving the instance itself (no profile/instance selected,
     /// etc.) yields an empty result rather than propagating, since the caller has already
     /// validated the instance before launching.
-    public static PendingBackupResult consumePendingFirstLaunchBackups(@Nullable String instance, int retentionCount) {
+    public static PendingBackupResult consumePendingFirstLaunchBackups(@Nullable String instance, int maxTotalMegabytes) {
         List<String> backedUp = new ArrayList<>();
         List<String> failed = new ArrayList<>();
         try {
@@ -518,7 +519,7 @@ public final class WorldBackupManager {
                     continue;
                 }
                 try {
-                    createBackup(instance, world, retentionCount);
+                    createBackup(instance, world, maxTotalMegabytes);
                     Files.deleteIfExists(marker);
                     backedUp.add(world);
                 } catch (IOException backupFailed) {
@@ -712,11 +713,16 @@ public final class WorldBackupManager {
         return stats;
     }
 
-    /// Deletes snapshots beyond the newest {@code retentionCount}.
+    /// Deletes the oldest snapshots once the total size of all snapshots exceeds
+    /// {@code maxTotalMegabytes}. The window is monotonic newest-first: the first snapshot
+    /// that overflows the budget and everything older than it are deleted, so what remains
+    /// is always the most recent run of snapshots. The newest snapshot is always kept, even
+    /// when it alone exceeds the cap. {@code maxTotalMegabytes <= 0} means "no cap" — used by
+    /// restore()'s safety backup so it can never evict the snapshot being restored.
     ///
     /// @return the number of snapshots deleted
-    private static int prune(Path backupRoot, int retentionCount) throws IOException {
-        if (retentionCount <= 0) {
+    private static int prune(Path backupRoot, int maxTotalMegabytes) throws IOException {
+        if (maxTotalMegabytes <= 0) {
             return 0;
         }
         List<Path> snapshots = new ArrayList<>();
@@ -728,18 +734,45 @@ public final class WorldBackupManager {
                 }
             }
         }
-        if (snapshots.size() <= retentionCount) {
+        if (snapshots.size() <= 1) {
             return 0;
         }
-        // Newest first; delete everything past the retention window.
+        // Newest first; keep snapshots while they fit the size budget, delete from the first
+        // overflow onwards (the newest one is unconditionally kept).
         snapshots.sort(Comparator.comparing((Path p) -> p.getFileName().toString(),
                 WorldBackupManager::compareSnapshotIds).reversed());
+        long budget = maxTotalMegabytes * 1024L * 1024L;
+        long total = 0;
+        boolean overflowed = false;
         int pruned = 0;
-        for (int i = retentionCount; i < snapshots.size(); i++) {
-            deleteTree(snapshots.get(i));
+        for (int i = 0; i < snapshots.size(); i++) {
+            Path snapshot = snapshots.get(i);
+            if (!overflowed) {
+                long size = treeSize(snapshot);
+                if (i == 0 || total + size <= budget) {
+                    total += size;
+                    continue;
+                }
+                overflowed = true;
+            }
+            deleteTree(snapshot);
             pruned++;
         }
         return pruned;
+    }
+
+    /// Returns the total byte size of all regular files under {@code root} (best effort:
+    /// entries that vanish mid-walk are counted as 0).
+    private static long treeSize(Path root) throws IOException {
+        long[] total = {0};
+        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                total[0] += attrs.size();
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return total[0];
     }
 
     /// Recursively deletes a directory tree.

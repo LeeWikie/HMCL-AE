@@ -37,12 +37,12 @@ public final class GameTool implements ToolSpec {
     private final LaunchInstanceTool launch;
     private final StopInstanceTool stop = new StopInstanceTool();
 
-    /// @param worldBackupRetention max snapshots kept per world, applied to the automatic
-    ///                             pre-launch safety backup of a freshly-imported world (see
-    ///                             {@link LaunchInstanceTool} / {@code WorldBackupManager}).
-    ///                             Typically `aiSettings::getWorldBackupRetention`.
-    public GameTool(IntSupplier worldBackupRetention) {
-        this.launch = new LaunchInstanceTool(worldBackupRetention);
+    /// @param worldBackupMaxMb per-world cap on the total snapshot size in MB, applied to the
+    ///                          automatic pre-launch safety backup of a freshly-imported world
+    ///                          (see {@link LaunchInstanceTool} / {@code WorldBackupManager}).
+    ///                          Typically `aiSettings::getWorldBackupMaxMb`.
+    public GameTool(IntSupplier worldBackupMaxMb) {
+        this.launch = new LaunchInstanceTool(worldBackupMaxMb);
     }
 
     @Override

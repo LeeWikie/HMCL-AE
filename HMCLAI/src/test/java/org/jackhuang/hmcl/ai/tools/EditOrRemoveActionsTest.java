@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /// Locks in the "new vs edit/remove" classification (Part C) used by {@link AiExecutionPolicy} to
-/// decide whether {@code fileWriteConfirmEnabled=false} may suppress confirmation for a
-/// CONTROLLED_WRITE call.
+/// decide whether a CONTROLLED_WRITE call runs automatically (pure creation) or always asks
+/// (edit/remove of pre-existing state).
 public final class EditOrRemoveActionsTest {
 
     @Test
@@ -38,7 +38,7 @@ public final class EditOrRemoveActionsTest {
 
     @Test
     void instanceCreateAndInstallActionsAreNotEditOrRemove() {
-        // Pure creation/addition — must stay governed by fileWriteConfirmEnabled.
+        // Pure creation/addition — runs automatically without confirmation.
         assertFalse(EditOrRemoveActions.isEditOrRemove("instance", "create"));
         assertFalse(EditOrRemoveActions.isEditOrRemove("instance", "mods_install"));
         assertFalse(EditOrRemoveActions.isEditOrRemove("instance", "resourcepacks_install"));

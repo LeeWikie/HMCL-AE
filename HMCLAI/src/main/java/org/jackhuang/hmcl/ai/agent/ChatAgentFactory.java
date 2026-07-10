@@ -172,7 +172,7 @@ public final class ChatAgentFactory {
         org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
                         settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
-                        settings.isFileWriteConfirmEnabled(), settings.isDangerouslySkipPermissions());
+                        settings.isDangerouslySkipPermissions());
         AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler,
                 session.getId(), permissionStore, planMode, unattended);
         // Apply the configurable agent-loop limits (tool cycles / context window / tool-result
@@ -306,6 +306,38 @@ public final class ChatAgentFactory {
             }
             throw new LlmException("Connection test failed", 0, e);
         }
+    }
+
+    /// Builds a bare, tool-less, non-streaming client against an explicit provider profile and
+    /// model id — for ancillary calls such as session title naming ("自动命名模型"), where the
+    /// user picked a model other than the current chat one. The profile's endpoint is normalized
+    /// the same way {@code AiSettings.applyProfileToProperties} does for the chat client.
+    ///
+    /// @param profile        the provider profile carrying endpoint / API key / protocol family
+    /// @param modelId        the model id on that profile to call
+    /// @param timeoutSeconds per-request timeout in seconds (values <= 0 fall back to the default)
+    public static AiChatClient buildPlainClient(org.jackhuang.hmcl.ai.AiProviderProfile profile,
+                                                String modelId, int timeoutSeconds) {
+        String endpoint = org.jackhuang.hmcl.ai.AiEndpointNormalizer.normalize(
+                profile.getEndpoint(), profile.getProtocolFamily());
+        LlmConfig config = new LlmConfig(
+                endpoint != null ? endpoint : LlmConfig.DEFAULT_ENDPOINT,
+                profile.getApiKey() != null ? profile.getApiKey() : "",
+                modelId == null || modelId.isEmpty() ? LlmConfig.DEFAULT_MODEL : modelId,
+                profile.getProtocolFamily(),
+                LlmConfig.DEFAULT_MAX_TOKENS,
+                LlmConfig.DEFAULT_TEMPERATURE,
+                timeoutSeconds > 0 ? java.time.Duration.ofSeconds(timeoutSeconds) : LlmConfig.DEFAULT_TIMEOUT,
+                LlmConfig.DEFAULT_CONTEXT_WINDOW,
+                LlmConfig.DEFAULT_MAX_TOKENS,
+                LlmConfig.DEFAULT_TOP_P,
+                LlmConfig.DEFAULT_PRESENCE_PENALTY,
+                LlmConfig.DEFAULT_FREQUENCY_PENALTY,
+                null,
+                null,
+                false,
+                Collections.emptyList());
+        return resolveClient(config, null);
     }
 
     /// Builds an [`LlmConfig`] from the given settings.

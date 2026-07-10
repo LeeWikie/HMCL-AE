@@ -26,16 +26,16 @@ import java.util.Set;
 
 /// Classifies a CONTROLLED_WRITE tool call as EDITING or REMOVING state that already exists,
 /// versus CREATING something the user didn't have before — used by {@link AiExecutionPolicy} to
-/// decide whether {@code fileWriteConfirmEnabled} (default OFF, for low-friction routine additions)
-/// is allowed to suppress the confirmation prompt.
+/// decide whether the call runs automatically (pure creation, for low-friction routine additions)
+/// or always shows the confirmation prompt (there is no user toggle for this anymore).
 ///
 /// # The "new" vs "edit/remove" principle
 ///
-/// `fileWriteConfirmEnabled=false` may ONLY suppress confirmation for PURE CREATION — installing a
+/// Automatic execution ONLY ever applies to PURE CREATION — installing a
 /// new mod/modpack/resourcepack/shader, downloading a JDK, creating a new instance/world/account,
-/// exporting/backing up to a new file. It must NEVER suppress confirmation for an action that EDITS
+/// exporting/backing up to a new file. Confirmation is NEVER suppressed for an action that EDITS
 /// or REMOVES something that already existed before the call — renaming, reconfiguring, toggling,
-/// deleting, or otherwise overwriting existing state ALWAYS prompts, regardless of the toggle. (Note
+/// deleting, or otherwise overwriting existing state ALWAYS prompts. (Note
 /// this tier is strictly BELOW {@link CriticalOperations}'s red tier: any action already classified
 /// DANGEROUS_WRITE — e.g. `instance` `delete`/`mods_delete`/`mods_update` — is gated by the
 /// dangerous-confirmation toggle instead and, for the ones in {@code CriticalOperations
@@ -48,7 +48,7 @@ import java.util.Set;
 /// {@code action} pair here (or, for a tool with no `action` parameter that is ALWAYS an edit of an
 /// existing target — e.g. {@code edit}, an in-place substring replace — add the tool name mapped to
 /// an EMPTY set, mirroring {@link CriticalOperations#CRITICAL_ACTIONS}'s "whole tool" convention).
-/// If no, leave it out — it stays governed by {@code fileWriteConfirmEnabled} as before.
+/// If no, leave it out — it runs automatically as pure creation.
 @NotNullByDefault
 public final class EditOrRemoveActions {
 
@@ -61,7 +61,7 @@ public final class EditOrRemoveActions {
             // resourcepacks_install/shaders_install/modpacks_install, worlds_import,
             // worlds_backup_create, worlds_datapacks_install, modpacks_export and download_java —
             // every one of those introduces something new rather than mutating/removing something
-            // that already existed, so they stay governed by fileWriteConfirmEnabled. open_folder
+            // that already existed, so they run automatically as pure creation. open_folder
             // is excluded too (it only creates a directory if missing and opens a file browser; it
             // doesn't mutate/delete any user content). delete/mods_delete/mods_update/worlds_delete/
             // worlds_backup_restore are already DANGEROUS_WRITE (see InstanceTool.getPermission)
@@ -70,7 +70,7 @@ public final class EditOrRemoveActions {
             // account: set_skin overwrites an EXISTING account's skin/cape. add_offline creates a
             // new account, select only switches which already-logged-in account is active, and
             // microsoft_login just opens the native sign-in dialog — none of those three mutate or
-            // remove existing account state, so they stay governed by fileWriteConfirmEnabled.
+            // remove existing account state, so they run automatically as pure creation.
             Map.entry("account", Set.of("set_skin")),
             // edit: in-place substring replace inside an file that must ALREADY exist (see
             // EditTool#execute, which fails outright if the target is missing) — this tool has no
@@ -80,8 +80,8 @@ public final class EditOrRemoveActions {
 
     /// Returns whether {@code toolName}'s call with the given {@code action} (may be {@code null}
     /// or blank for a tool with no action parameter) edits or removes pre-existing state, per the
-    /// curated set above. Unknown tools/actions default to {@code false} (i.e. they stay governed
-    /// by {@code fileWriteConfirmEnabled} exactly as before this classification existed).
+    /// curated set above. Unknown tools/actions default to {@code false} (i.e. they run
+    /// automatically as pure creation).
     public static boolean isEditOrRemove(String toolName, @Nullable String action) {
         Set<String> actions = EDIT_OR_REMOVE.get(toolName.toLowerCase(Locale.ROOT));
         if (actions == null) {

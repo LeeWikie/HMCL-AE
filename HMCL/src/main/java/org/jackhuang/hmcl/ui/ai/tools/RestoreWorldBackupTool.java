@@ -40,12 +40,13 @@ import java.util.function.IntSupplier;
 @NotNullByDefault
 public final class RestoreWorldBackupTool implements Tool {
 
-    private final IntSupplier retentionSupplier;
+    private final IntSupplier maxTotalMegabytesSupplier;
 
-    /// @param retentionSupplier supplies the current retention count (from AI settings),
-    ///                          applied to the auto safety-backup taken before overwrite
-    public RestoreWorldBackupTool(IntSupplier retentionSupplier) {
-        this.retentionSupplier = retentionSupplier;
+    /// @param maxTotalMegabytesSupplier supplies the per-world cap on the total snapshot size,
+    ///                                  in MB (from AI settings), applied to the post-restore
+    ///                                  prune of the world's snapshots
+    public RestoreWorldBackupTool(IntSupplier maxTotalMegabytesSupplier) {
+        this.maxTotalMegabytesSupplier = maxTotalMegabytesSupplier;
     }
 
     @Override
@@ -93,11 +94,11 @@ public final class RestoreWorldBackupTool implements Tool {
         }
         String instance = target.name();
 
-        int retention = retentionSupplier.getAsInt();
+        int maxTotalMegabytes = maxTotalMegabytesSupplier.getAsInt();
 
         try {
             WorldBackupManager.RestoreResult result =
-                    WorldBackupManager.restore(instance, world, backupId, retention);
+                    WorldBackupManager.restore(instance, world, backupId, maxTotalMegabytes);
             StringBuilder sb = new StringBuilder();
             sb.append("Restored world '").append(world).append("' from snapshot ").append(backupId).append(".\n");
             sb.append("Restored path: ").append(result.restoredWorldPath()).append('\n');

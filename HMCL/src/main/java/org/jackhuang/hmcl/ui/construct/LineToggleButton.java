@@ -31,6 +31,12 @@ public final class LineToggleButton extends LineButtonBase {
         this.getStyleClass().add(DEFAULT_STYLE_CLASS);
 
         this.toggleButton = new JFXToggleButton();
+        // The whole row is the single click surface (LineButtonBase wires row clicks to fire(),
+        // which flips the switch). Without this, a click landing ON the switch itself toggles
+        // twice — once by the ToggleButton's own mouse handling, once by the bubbled row click —
+        // for a net no-op, making the switch appear stuck.
+        toggleButton.setMouseTransparent(true);
+        toggleButton.setFocusTraversable(false);
         toggleButton.selectedProperty().bindBidirectional(selectedProperty());
         toggleButton.setSize(8);
         FXUtils.setLimitHeight(toggleButton, 30);

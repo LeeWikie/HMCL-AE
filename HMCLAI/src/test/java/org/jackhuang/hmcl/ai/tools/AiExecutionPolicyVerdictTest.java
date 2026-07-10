@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public final class AiExecutionPolicyVerdictTest {
 
     private static AiExecutionPolicy policy() {
-        return new AiExecutionPolicy(AiApprovalMode.AUTO, true, false, false);
+        return new AiExecutionPolicy(AiApprovalMode.AUTO, true, false);
     }
 
     @Test
@@ -73,7 +73,7 @@ public final class AiExecutionPolicyVerdictTest {
 
     @Test
     public void dangerouslySkipPermissionsStillBypassesEverything() {
-        AiExecutionPolicy skip = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true, true);
+        AiExecutionPolicy skip = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
         AiExecutionPolicy.Verdict v = skip.evaluate(
                 "shell", null, ToolPermission.DANGEROUS_WRITE, true, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW, v.decision());

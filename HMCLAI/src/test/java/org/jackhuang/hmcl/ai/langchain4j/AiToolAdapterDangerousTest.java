@@ -256,7 +256,7 @@ public final class AiToolAdapterDangerousTest {
     @Test
     void dangerouslySkipPermissionsOutranksTheUnattendedBlockToo() {
         // The developer-only escape hatch skips every gate, including the unattended block.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, false, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(
                 registryWithShell(), policy, null, null, null, null, () -> true);
 

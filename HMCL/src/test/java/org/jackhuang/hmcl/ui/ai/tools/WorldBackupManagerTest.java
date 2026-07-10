@@ -283,6 +283,70 @@ public final class WorldBackupManagerTest {
     }
 
     // ---------------------------------------------------------------------
+    // Size-capped pruning: createBackup(instance, world, maxTotalMegabytes) deletes the
+    // oldest snapshots once the per-world TOTAL SIZE exceeds the cap (MB); the newest
+    // snapshot is always kept, and 0 disables pruning entirely.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void pruneBySizeDeletesOldestSnapshotsOnceTotalExceedsCap() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            Path worldDir = makeWorld(fx, "Inst", "MyWorld", "x".repeat(700_000)); // ~0.7 MB
+
+            String first = WorldBackupManager.createBackup("Inst", "MyWorld", 1).id();
+            Files.writeString(worldDir.resolve("level.dat"), "y".repeat(700_000));
+            WorldBackupManager.BackupResult second = WorldBackupManager.createBackup("Inst", "MyWorld", 1);
+
+            // Two ~0.7 MB snapshots against a 1 MB cap: the newest fits, adding the older one
+            // overflows the budget — exactly the older one must be pruned.
+            assertEquals(1, second.prunedCount(), "the older snapshot must have been pruned");
+            List<WorldBackupManager.BackupInfo> remaining = WorldBackupManager.listBackups("Inst", "MyWorld");
+            assertEquals(1, remaining.size());
+            assertEquals(second.id(), remaining.get(0).id(), "the NEWEST snapshot must be the one kept");
+            assertFalse(remaining.stream().anyMatch(info -> info.id().equals(first)),
+                    "the oldest snapshot must be gone");
+        }
+    }
+
+    @Test
+    void newestSnapshotIsKeptEvenWhenItAloneExceedsTheCap() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            Path worldDir = makeWorld(fx, "Inst", "MyWorld", "x".repeat(1_500_000)); // ~1.4 MB > 1 MB cap
+
+            WorldBackupManager.createBackup("Inst", "MyWorld", 1);
+            Files.writeString(worldDir.resolve("level.dat"), "y".repeat(1_500_000));
+            WorldBackupManager.BackupResult second = WorldBackupManager.createBackup("Inst", "MyWorld", 1);
+
+            // Every snapshot single-handedly busts the 1 MB budget, but the newest one must
+            // still be kept — a size cap must never leave the user with ZERO backups.
+            List<WorldBackupManager.BackupInfo> remaining = WorldBackupManager.listBackups("Inst", "MyWorld");
+            assertEquals(1, remaining.size(),
+                    "everything but the newest snapshot must be pruned: " + remaining);
+            assertEquals(second.id(), remaining.get(0).id(),
+                    "the newest snapshot must survive even though it alone exceeds the cap");
+        }
+    }
+
+    @Test
+    void capOfZeroDisablesPruningEntirely() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            Path worldDir = makeWorld(fx, "Inst", "MyWorld", "x".repeat(700_000));
+
+            for (int i = 0; i < 3; i++) {
+                Files.writeString(worldDir.resolve("level.dat"), i + "x".repeat(700_000));
+                WorldBackupManager.BackupResult result = WorldBackupManager.createBackup("Inst", "MyWorld", 0);
+                assertEquals(0, result.prunedCount(), "cap 0 must never prune");
+            }
+
+            assertEquals(3, WorldBackupManager.listBackups("Inst", "MyWorld").size(),
+                    "cap 0 (used by restore()'s safety backup) must retain every snapshot");
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Candidate enumeration: createBackup's missing-world and resolveRunDirectory's
     // missing-instance failures now carry the real names, matching the rest of the tool suite.
     // ---------------------------------------------------------------------

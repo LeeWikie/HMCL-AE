@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Covers [CreateWorldBackupTool]'s parameter-resolution/validation branches and its delegation
-/// to [WorldBackupManager#createBackup] (versioned snapshot creation + retention pruning), using a
+/// to [WorldBackupManager#createBackup] (versioned snapshot creation + size-capped pruning), using a
 /// real [ProfileFixture]-backed instance and world folder on disk — mirroring
 /// [DeleteInstanceToolTest]'s no-mocks approach (this tool's only external dependencies are
 /// [org.jackhuang.hmcl.setting.Profiles] / [org.jackhuang.hmcl.game.HMCLGameRepository] and
@@ -106,16 +106,17 @@ public final class CreateWorldBackupToolTest {
     }
 
     @Test
-    void prunesOldSnapshotsBeyondRetention() throws Exception {
+    void prunesOldestSnapshotsOnceTotalSizeExceedsTheCap() throws Exception {
         try (ProfileFixture fx = new ProfileFixture()) {
             fx.createInstance("Existing");
             Path worldDir = fx.repository().getRunDirectory("Existing").resolve("saves").resolve("MyWorld");
             Files.createDirectories(worldDir);
-            Files.writeString(worldDir.resolve("level.dat"), "fake-level-data");
+            // ~0.86 MB per snapshot against a 2 MB cap: two fit, the third overflows the budget,
+            // so exactly the oldest one must be pruned. Sleep briefly between calls so each
+            // snapshot gets a distinct second-granularity timestamp id.
+            Files.writeString(worldDir.resolve("level.dat"), "x".repeat(900_000));
             CreateWorldBackupTool tool = new CreateWorldBackupTool(() -> 2);
 
-            // Three snapshots at retention=2 must leave exactly 2 behind. Sleep briefly between
-            // calls so each gets a distinct second-granularity timestamp id.
             tool.execute(Map.of("instance", "Existing", "world", "MyWorld"));
             TimeUnit.SECONDS.sleep(1);
             tool.execute(Map.of("instance", "Existing", "world", "MyWorld"));
@@ -126,7 +127,7 @@ public final class CreateWorldBackupToolTest {
             assertTrue(third.getOutput().contains("pruned"), "unexpected message: " + third.getOutput());
 
             List<WorldBackupManager.BackupInfo> backups = WorldBackupManager.listBackups("Existing", "MyWorld");
-            assertEquals(2, backups.size(), "retention=2 must leave exactly 2 snapshots");
+            assertEquals(2, backups.size(), "a 2 MB cap over three ~0.86 MB snapshots must leave exactly 2");
         }
     }
 }

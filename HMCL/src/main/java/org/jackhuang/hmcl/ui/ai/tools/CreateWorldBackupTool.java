@@ -27,8 +27,9 @@ import org.jetbrains.annotations.NotNullByDefault;
 import java.util.Map;
 import java.util.function.IntSupplier;
 
-/// Creates a versioned, timestamped snapshot of a single world and keeps only
-/// the newest N snapshots (retention from AI settings).
+/// Creates a versioned, timestamped snapshot of a single world and prunes the
+/// oldest snapshots once the per-world total size exceeds the cap (MB, from AI
+/// settings); the newest snapshot is always kept.
 ///
 /// Backed by {@link WorldBackupManager}. NOTE (honest): each snapshot is a FULL
 /// copy of `saves/<world>` (not incremental/git) — see WorldBackupManager.
@@ -38,11 +39,12 @@ import java.util.function.IntSupplier;
 @NotNullByDefault
 public final class CreateWorldBackupTool implements Tool {
 
-    private final IntSupplier retentionSupplier;
+    private final IntSupplier maxTotalMegabytesSupplier;
 
-    /// @param retentionSupplier supplies the current retention count (from AI settings)
-    public CreateWorldBackupTool(IntSupplier retentionSupplier) {
-        this.retentionSupplier = retentionSupplier;
+    /// @param maxTotalMegabytesSupplier supplies the per-world cap on the total snapshot size,
+    ///                                  in MB (from AI settings); {@code <= 0} disables pruning
+    public CreateWorldBackupTool(IntSupplier maxTotalMegabytesSupplier) {
+        this.maxTotalMegabytesSupplier = maxTotalMegabytesSupplier;
     }
 
     @Override
@@ -52,8 +54,9 @@ public final class CreateWorldBackupTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Creates a VERSIONED, timestamped backup of a single Minecraft world and keeps only the newest N "
-                + "snapshots (retention is configured in AI settings). Each backup is a FULL copy of saves/<world> "
+        return "Creates a VERSIONED, timestamped backup of a single Minecraft world; once the world's snapshots "
+                + "exceed a total-size cap (MB, configured in AI settings) the oldest are pruned automatically, "
+                + "and the newest snapshot is always kept. Each backup is a FULL copy of saves/<world> "
                 + "into '<runDir>/ai-world-backups/<world>/<yyyyMMdd-HHmmss>/' — this is NOT incremental/git-style, "
                 + "so snapshots do not share storage (a future version may switch to incremental). "
                 + "Parameters: world (required, the save folder name under 'saves/'), "
@@ -83,18 +86,19 @@ public final class CreateWorldBackupTool implements Tool {
         }
         String instance = target.name();
 
-        int retention = retentionSupplier.getAsInt();
+        int maxTotalMegabytes = maxTotalMegabytesSupplier.getAsInt();
 
         try {
             WorldBackupManager.BackupResult result =
-                    WorldBackupManager.createBackup(instance, world, retention);
+                    WorldBackupManager.createBackup(instance, world, maxTotalMegabytes);
             StringBuilder sb = new StringBuilder();
             sb.append("Created backup of world '").append(world).append("'.\n");
             sb.append("Snapshot id: ").append(result.id()).append('\n');
             sb.append("Path: ").append(result.backupPath()).append('\n');
             sb.append("Files: ").append(result.fileCount())
                     .append(" (").append(WorldBackupManager.humanBytes(result.sizeBytes())).append(")\n");
-            sb.append("Retention: keep newest ").append(retention <= 0 ? "all (unlimited)" : retention);
+            sb.append("Size cap: ").append(maxTotalMegabytes <= 0
+                    ? "unlimited (no pruning)" : maxTotalMegabytes + " MB total per world, newest always kept");
             if (result.prunedCount() > 0) {
                 sb.append(" — pruned ").append(result.prunedCount()).append(" old snapshot(s)");
             }

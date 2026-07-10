@@ -68,30 +68,23 @@ public final class AiExecutionPolicy {
 
     private final AiApprovalMode mode;
     private final boolean dangerousConfirmationEnabled;
-    private final boolean fileWriteConfirmEnabled;
     /// Developer-only bypass: when true, {@link #check} allow-alls every permission,
     /// regardless of mode/confirmation flags. See {@code AiSettings.dangerouslySkipPermissions}.
     private final boolean dangerouslySkipPermissions;
 
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
-                             boolean fileWriteConfirmEnabled, boolean dangerouslySkipPermissions) {
+                             boolean dangerouslySkipPermissions) {
         this.mode = mode;
         this.dangerousConfirmationEnabled = dangerousConfirmationEnabled;
-        this.fileWriteConfirmEnabled = fileWriteConfirmEnabled;
         this.dangerouslySkipPermissions = dangerouslySkipPermissions;
     }
 
-    public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
-                             boolean fileWriteConfirmEnabled) {
-        this(mode, dangerousConfirmationEnabled, fileWriteConfirmEnabled, false);
-    }
-
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled) {
-        this(mode, dangerousConfirmationEnabled, false, false);
+        this(mode, dangerousConfirmationEnabled, false);
     }
 
     public AiExecutionPolicy() {
-        this(AiApprovalMode.AUTO, true, false, false);
+        this(AiApprovalMode.AUTO, true, false);
     }
 
     /// Evaluates whether a tool with the given permission is allowed.
@@ -169,15 +162,15 @@ public final class AiExecutionPolicy {
         if (unattended && permission == ToolPermission.DANGEROUS_WRITE) {
             return Verdict.block(BlockReason.UNATTENDED_DANGEROUS);
         }
-        // PRODUCT DECISION: fileWriteConfirmEnabled=false only ever suppresses confirmation for
-        // PURE CREATION — an action that edits or removes something that already existed always
-        // asks, regardless of the toggle. See EditOrRemoveActions for the curated classification.
+        // PRODUCT DECISION (2026-07-10): file-write confirmation is policy-decided, not a user
+        // toggle — PURE CREATION runs automatically; an action that edits or removes something
+        // that already existed always asks. See EditOrRemoveActions for the curated classification.
         boolean forcedAsk = toolName != null && permission == ToolPermission.CONTROLLED_WRITE
                 && EditOrRemoveActions.isEditOrRemove(toolName, action);
         if (permission == ToolPermission.DANGEROUS_WRITE) {
             return dangerousConfirmationEnabled ? Verdict.ASK : Verdict.ALLOW;
         }
-        if (permission == ToolPermission.CONTROLLED_WRITE && (fileWriteConfirmEnabled || forcedAsk)) {
+        if (forcedAsk) {
             return Verdict.ASK;
         }
         return Verdict.ALLOW;
@@ -187,7 +180,7 @@ public final class AiExecutionPolicy {
     /// other flag unchanged. Kept for API compatibility (and used by tests) even though, with a
     /// single {@link AiApprovalMode} value, this is currently always a same-mode copy.
     public AiExecutionPolicy withMode(AiApprovalMode newMode) {
-        return new AiExecutionPolicy(newMode, dangerousConfirmationEnabled, fileWriteConfirmEnabled, dangerouslySkipPermissions);
+        return new AiExecutionPolicy(newMode, dangerousConfirmationEnabled, dangerouslySkipPermissions);
     }
 
     public AiApprovalMode getMode() {
@@ -196,10 +189,6 @@ public final class AiExecutionPolicy {
 
     public boolean isDangerousConfirmationEnabled() {
         return dangerousConfirmationEnabled;
-    }
-
-    public boolean isFileWriteConfirmEnabled() {
-        return fileWriteConfirmEnabled;
     }
 
     public boolean isDangerouslySkipPermissions() {
