@@ -204,15 +204,19 @@ public class GameCrashWindow extends Stage {
         }).start();
     }
 
-    /// Sends the crash log + context to the AI assistant: builds the diagnosis prompt, submits
-    /// it via `AIMainPage.submitExternalPrompt` and navigates to the AI page.
+    /// Sends the crash log + context to the AI assistant: builds the diagnosis prompt and
+    /// submits it via `AIMainPage.submitExternalPrompt`, which queues it and renders it as a
+    /// neutral event pill regardless of `interactive`. Only when `interactive` is `true` does
+    /// this also show/raise the launcher main window and navigate it to the AI page — see
+    /// {@link #shouldBringMainWindowToFront}.
     ///
     /// @param interactive `true` when triggered by the user clicking the "AI diagnose" button
-    ///                    (falls back to clipboard + alert when the main window is gone, and
-    ///                    closes this crash window on success); `false` when triggered
-    ///                    automatically by the "auto crash analysis" setting (silently skips
-    ///                    when the main window is gone, and keeps this crash window open so
-    ///                    the native details remain visible).
+    ///                    (falls back to clipboard + alert when the main window is gone; brings
+    ///                    the main window to front and navigates to the AI page; closes this
+    ///                    crash window on success); `false` when triggered automatically by the
+    ///                    "auto crash analysis" setting (silently skips when the main window is
+    ///                    gone; never steals focus or navigates — the prompt is only queued —
+    ///                    and keeps this crash window open so the native details remain visible).
     private void submitToAiAssistant(boolean interactive) {
         String rawLog = logs.stream().map(Log::getLog).collect(Collectors.joining("\n"));
         String tail = rawLog.length() > 6000 ? rawLog.substring(rawLog.length() - 6000) : rawLog;
@@ -235,17 +239,38 @@ public class GameCrashWindow extends Stage {
         }
         org.jackhuang.hmcl.ui.ai.AIMainPage ai = Controllers.getAiMainPage();
         ai.submitExternalPrompt(prompt);
-        Controllers.getStage().show();
-        Controllers.navigate(ai);
-        Controllers.getStage().toFront();
+        if (shouldBringMainWindowToFront(interactive)) {
+            Controllers.getStage().show();
+            Controllers.navigate(ai);
+            Controllers.getStage().toFront();
+        }
         if (interactive) {
             close();
         }
     }
 
+    /// Whether handing the prompt off to the AI should also steal focus by showing/raising the
+    /// launcher main window and navigating it to the AI page.
+    ///
+    /// Only the interactive path (the user clicking the "AI diagnose" button just now) may do
+    /// this: they asked for it, so jumping them to the AI page is expected. The automatic crash
+    /// analysis path (`interactive == false`) must never do this — `submitExternalPrompt` above
+    /// already queues the prompt and the AI page renders it as a neutral event pill on its own;
+    /// forcing the main window to the front on every auto-detected crash would yank focus away
+    /// from whatever the user is currently doing, even if they're not looking at HMCL at all.
+    ///
+    /// Kept as a standalone pure function (rather than inlined) so the interactive/auto decision
+    /// can be unit-tested without a live JavaFX `Stage`/`Controllers` environment. Package-visible
+    /// for tests, same as {@link #isAutoCrashAnalysisEnabled}.
+    static boolean shouldBringMainWindowToFront(boolean interactive) {
+        return interactive;
+    }
+
     /// Consumes the "auto crash analysis" AI setting (previously stored + shown in the UI but
-    /// read by nobody): when enabled, automatically hands the crash off to the AI assistant,
-    /// reusing the exact jump-to-AI-page + `submitExternalPrompt` path of the manual button.
+    /// read by nobody): when enabled, automatically hands the crash off to the AI assistant via
+    /// the same `submitExternalPrompt` path as the manual button — but, unlike the manual button,
+    /// this must NOT jump the user to the AI page or steal focus; see
+    /// {@link #shouldBringMainWindowToFront}.
     ///
     /// The settings file is read off the FX thread; the actual submission is re-dispatched to
     /// the FX thread. Reading a fresh [org.jackhuang.hmcl.ai.AiSettings] from disk is correct

@@ -39,6 +39,7 @@ public final class ManagedProcess {
     private final Map<String, Object> properties = new HashMap<>();
     private final List<String> lines = new ArrayList<>();
     private final List<Thread> relatedThreads = new ArrayList<>();
+    private volatile boolean stoppedIntentionally = false;
 
     public ManagedProcess(ProcessBuilder processBuilder) throws IOException {
         this.process = processBuilder.start();
@@ -181,10 +182,27 @@ public final class ManagedProcess {
 
     /**
      * Destroys the raw process and other related threads that are monitoring this raw process.
+     * <p>
+     * This marks the process as {@link #isStoppedIntentionally() stopped intentionally}: the
+     * underlying {@link Process#destroy()} call almost always makes the process exit with a
+     * non-zero code (and sometimes with crash-report-shaped log output), which is indistinguishable
+     * from a real crash by exit code/log heuristics alone. Callers that watch this process for
+     * completion (e.g. {@link org.jackhuang.hmcl.launch.ExitWaiter}) should consult
+     * {@link #isStoppedIntentionally()} first so a deliberate stop (native "Stop" button, an AI
+     * tool call, etc.) is not misreported as a crash.
      */
     public void stop() {
+        stoppedIntentionally = true;
         process.destroy();
         destroyRelatedThreads();
+    }
+
+    /**
+     * True iff {@link #stop()} has been called on this process, i.e. its termination was requested
+     * by HMCL itself rather than the process exiting/crashing on its own.
+     */
+    public boolean isStoppedIntentionally() {
+        return stoppedIntentionally;
     }
 
     public void destroyRelatedThreads() {

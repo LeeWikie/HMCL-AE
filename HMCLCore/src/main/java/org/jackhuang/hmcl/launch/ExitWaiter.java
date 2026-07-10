@@ -59,31 +59,42 @@ final class ExitWaiter implements Runnable {
             for (Thread thread : joins)
                 thread.join();
 
-            List<String> errorLines = process.getLines(Log4jLevel::guessLogLineError);
             ProcessListener.ExitType exitType;
 
-            // LaunchWrapper will catch the exception logged and will exit normally.
-            if (exitCode != 0 && StringUtils.containsOne(errorLines,
-                    "Could not create the Java Virtual Machine.",
-                    "Error occurred during initialization of VM",
-                    "A fatal exception has occurred. Program will exit.")) {
-                EventBus.EVENT_BUS.fireEvent(new JVMLaunchFailedEvent(this, process));
-                exitType = ProcessListener.ExitType.JVM_ERROR;
-            } else if (exitCode != 0 || StringUtils.containsOne(errorLines,
-                    "Crash report saved to", "Could not save crash report to", "This crash report has been saved to:",
-                    "Unable to launch", "An exception was thrown, the game will display an error screen and halt.")) {
-                EventBus.EVENT_BUS.fireEvent(new ProcessExitedAbnormallyEvent(this, process));
-
-                if (exitCode == 137 && OperatingSystem.CURRENT_OS.isLinuxOrBSD()) {
-                    exitType = ProcessListener.ExitType.SIGKILL;
-                } else {
-                    exitType = ProcessListener.ExitType.APPLICATION_ERROR;
-                }
+            if (process.isStoppedIntentionally()) {
+                // The process was deliberately killed via ManagedProcess#stop() (native "Stop"
+                // button, an AI tool call, cancelling an in-progress launch, etc.), not left to
+                // exit or crash on its own. Process#destroy() virtually always yields a non-zero
+                // exit code, which the crash heuristics below cannot tell apart from a real crash,
+                // so skip them entirely and report this exactly like the InterruptedException path
+                // below: no crash-related events, no crash classification.
+                exitType = ProcessListener.ExitType.INTERRUPTED;
             } else {
-                exitType = ProcessListener.ExitType.NORMAL;
-            }
+                List<String> errorLines = process.getLines(Log4jLevel::guessLogLineError);
 
-            EventBus.EVENT_BUS.fireEvent(new ProcessStoppedEvent(this, process));
+                // LaunchWrapper will catch the exception logged and will exit normally.
+                if (exitCode != 0 && StringUtils.containsOne(errorLines,
+                        "Could not create the Java Virtual Machine.",
+                        "Error occurred during initialization of VM",
+                        "A fatal exception has occurred. Program will exit.")) {
+                    EventBus.EVENT_BUS.fireEvent(new JVMLaunchFailedEvent(this, process));
+                    exitType = ProcessListener.ExitType.JVM_ERROR;
+                } else if (exitCode != 0 || StringUtils.containsOne(errorLines,
+                        "Crash report saved to", "Could not save crash report to", "This crash report has been saved to:",
+                        "Unable to launch", "An exception was thrown, the game will display an error screen and halt.")) {
+                    EventBus.EVENT_BUS.fireEvent(new ProcessExitedAbnormallyEvent(this, process));
+
+                    if (exitCode == 137 && OperatingSystem.CURRENT_OS.isLinuxOrBSD()) {
+                        exitType = ProcessListener.ExitType.SIGKILL;
+                    } else {
+                        exitType = ProcessListener.ExitType.APPLICATION_ERROR;
+                    }
+                } else {
+                    exitType = ProcessListener.ExitType.NORMAL;
+                }
+
+                EventBus.EVENT_BUS.fireEvent(new ProcessStoppedEvent(this, process));
+            }
 
             watcher.accept(exitCode, exitType);
         } catch (InterruptedException e) {
