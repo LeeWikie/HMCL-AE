@@ -994,7 +994,13 @@ public final class LauncherHelper {
 
             if (exitType != ExitType.NORMAL) {
                 repository.markVersionLaunchedAbnormally(version.getId());
-                runLater(() -> new GameCrashWindow(process, exitType, repository, version, launchOptions, logs).show());
+                runLater(() -> {
+                    GameCrashWindow crashWindow = new GameCrashWindow(process, exitType, repository, version, launchOptions, logs);
+                    crashWindow.show();
+                    // Consume the "auto crash analysis" AI setting: when enabled, hand the crash
+                    // off to the AI assistant automatically (same path as the manual AI button).
+                    crashWindow.autoDiagnoseIfEnabled();
+                });
             }
 
             checkExit();

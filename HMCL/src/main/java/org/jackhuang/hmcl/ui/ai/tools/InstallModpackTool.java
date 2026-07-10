@@ -59,7 +59,8 @@ public final class InstallModpackTool implements Tool {
                 + "name (optional, the new instance name; defaults to the modpack name), "
                 + "game_version (optional, picks the newest pack file for that version), "
                 + "version_id (optional, exact version name/number), "
-                + "source (optional, \"modrinth\" (default) or \"curseforge\"). "
+                + "source (optional, \"modrinth\" or \"curseforge\"; when omitted, follows the user's default "
+                + "addon source launcher setting, falling back to Modrinth if CurseForge has no API key). "
                 + "Returns the created instance name. May take several minutes for large packs.";
     }
 
@@ -70,9 +71,12 @@ public final class InstallModpackTool implements Tool {
             return ToolResult.failure("Missing required parameter: id (the modpack id/slug from search_modpacks).");
         }
 
+        // When the model gives no explicit source, follow the user's "default addon source"
+        // launcher preference (DefaultAddonSource already degrades a key-less CurseForge
+        // preference to Modrinth). An explicit source keeps its strict failure semantics below.
         ContentToolSupport.Source source = parameters.containsKey("source")
                 ? ContentToolSupport.parseSource(ContentToolSupport.optional(parameters, "source"))
-                : ContentToolSupport.Source.MODRINTH;
+                : DefaultAddonSource.preferred();
 
         RemoteAddonRepository repository = ContentToolSupport.repositoryFor(source, RemoteAddonRepository.Type.MODPACK);
         if (repository == null) {

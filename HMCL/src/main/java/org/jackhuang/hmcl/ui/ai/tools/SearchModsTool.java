@@ -54,11 +54,12 @@ public final class SearchModsTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Searches for Minecraft mods on Modrinth (default) or CurseForge. "
+        return "Searches for Minecraft mods on Modrinth or CurseForge. "
                 + "Parameters: query (string, required search text), "
                 + "gameVersion (string, optional Minecraft version like \"1.20.1\"; empty matches any), "
                 + "loader (string, optional: fabric/forge/neoforge/quilt - used to hint the user, not a hard filter), "
-                + "source (string, optional: \"modrinth\" (default) or \"curseforge\"). "
+                + "source (string, optional: \"modrinth\" or \"curseforge\"; when omitted, follows the user's "
+                + "default addon source launcher setting, falling back to Modrinth if CurseForge has no API key). "
                 + "Returns up to " + MAX_RESULTS + " results with slug, title, author and short description. "
                 + "Use the returned slug with instance(action=\"mods_install\") to install. Read-only.";
     }
@@ -73,7 +74,13 @@ public final class SearchModsTool implements Tool {
 
         String gameVersion = extractString(parameters, "gameVersion", "");
         String loader = extractString(parameters, "loader", null);
-        String source = extractString(parameters, "source", "modrinth");
+        // When the model gives no explicit source, follow the user's "default addon source"
+        // launcher preference (with the no-API-key CurseForge → Modrinth fallback) instead of
+        // hard-coding Modrinth. An explicit source keeps its strict failure semantics below.
+        String source = extractString(parameters, "source", null);
+        if (source == null) {
+            source = DefaultAddonSource.preferredName();
+        }
 
         RemoteAddonRepository repository;
         if ("curseforge".equalsIgnoreCase(source)) {

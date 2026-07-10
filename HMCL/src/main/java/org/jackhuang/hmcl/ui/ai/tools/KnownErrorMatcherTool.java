@@ -21,18 +21,13 @@ import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.CrashReportAnalyzer;
+import org.jackhuang.hmcl.game.CrashReportLocalization;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 
 /// An AI tool that matches a Minecraft log / crash report against HMCL's curated
 /// crash-rule knowledge base and returns the matched known issues together with
@@ -57,9 +52,6 @@ public final class KnownErrorMatcherTool implements Tool {
 
     /// Maximum number of stack-trace keywords (suspected mods) to report when no rule matches.
     private static final int MAX_KEYWORDS = 12;
-
-    /// Pattern used to translate Fabric "{modid @ version}" tokens into readable names.
-    private static final Pattern FABRIC_MOD_ID = Pattern.compile("\\{(?<modid>.*?) @ (?<version>.*?)}");
 
     /// Returns the unique name `"match_known_errors"`.
     @Override
@@ -137,76 +129,15 @@ public final class KnownErrorMatcherTool implements Tool {
         return ToolResult.success(out.toString().trim());
     }
 
-    /// Builds the plain-language cause + fix message for a matched rule, mirroring the
-    /// logic HMCL uses in its native crash window (`GameCrashWindow`).
+    /// Builds the plain-language cause + fix message for a matched rule.
+    ///
+    /// Delegates to [CrashReportLocalization], the shared rule→text source that the native
+    /// crash window (`GameCrashWindow`) uses too, so the two surfaces can never drift apart.
     ///
     /// @param result the matched analyzer result
     /// @return a localized, human-readable cause + fix description
     private static String describe(CrashReportAnalyzer.Result result) {
-        CrashReportAnalyzer.Rule rule = result.getRule();
-        Matcher matcher = result.getMatcher();
-        try {
-            switch (rule) {
-                case TOO_OLD_JAVA:
-                    return i18n("game.crash.reason.too_old_java",
-                            CrashReportAnalyzer.getJavaVersionFromMajorVersion(
-                                    Integer.parseInt(matcher.group("expected"))));
-                case MOD_RESOLUTION_CONFLICT:
-                case MOD_RESOLUTION_MISSING:
-                case MOD_RESOLUTION_COLLECTION:
-                    return i18n("game.crash.reason." + rule.name().toLowerCase(Locale.ROOT),
-                            translateFabricModId(matcher.group("sourcemod")),
-                            parseFabricModId(matcher.group("destmod")),
-                            parseFabricModId(matcher.group("destmod")));
-                case MOD_RESOLUTION_MISSING_MINECRAFT:
-                    return i18n("game.crash.reason." + rule.name().toLowerCase(Locale.ROOT),
-                            translateFabricModId(matcher.group("mod")),
-                            matcher.group("version"));
-                case MOD_FOREST_OPTIFINE:
-                case TWILIGHT_FOREST_OPTIFINE:
-                case PERFORMANT_FOREST_OPTIFINE:
-                case JADE_FOREST_OPTIFINE:
-                case NEOFORGE_FOREST_OPTIFINE:
-                    return i18n("game.crash.reason.mod", "OptiFine");
-                default:
-                    return i18n("game.crash.reason." + rule.name().toLowerCase(Locale.ROOT),
-                            Arrays.stream(rule.getGroupNames())
-                                    .map(matcher::group)
-                                    .toArray());
-            }
-        } catch (RuntimeException e) {
-            // Missing i18n key, format mismatch, or absent capture group — degrade gracefully.
-            return i18n("game.crash.reason." + rule.name().toLowerCase(Locale.ROOT));
-        }
-    }
-
-    /// Translates well-known Fabric mod ids into friendly names.
-    private static String translateFabricModId(String modName) {
-        switch (modName) {
-            case "fabricloader":
-                return "Fabric";
-            case "fabric":
-                return "Fabric API";
-            case "minecraft":
-                return "Minecraft";
-            default:
-                return modName;
-        }
-    }
-
-    /// Parses a Fabric "{modid @ version}" token into a readable, localized requirement string.
-    private static String parseFabricModId(String modName) {
-        Matcher matcher = FABRIC_MOD_ID.matcher(modName);
-        if (matcher.find()) {
-            String modid = matcher.group("modid");
-            String version = matcher.group("version");
-            if ("[*]".equals(version)) {
-                return i18n("game.crash.reason.mod_resolution_mod_version.any", translateFabricModId(modid));
-            } else {
-                return i18n("game.crash.reason.mod_resolution_mod_version", translateFabricModId(modid), version);
-            }
-        }
-        return translateFabricModId(modName);
+        return CrashReportLocalization.getReasonText(result);
     }
 
     /// Extracts suspected stack-trace keywords without throwing on malformed input.

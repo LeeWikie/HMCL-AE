@@ -22,6 +22,7 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.text.Text;
 import org.jackhuang.hmcl.Metadata;
+import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 
 import java.io.IOException;
 import java.net.URI;
@@ -226,13 +227,24 @@ public final class EmojiImages {
         return remote;
     }
 
+    /// Builds the emoji download client. `java.net.http.HttpClient` already follows the
+    /// user's proxy via the default `ProxySelector`, but it does NOT consult
+    /// `Authenticator.setDefault`, so a username/password proxy would 407-fail every download
+    /// unless the authenticator pushed by `ProxyManager` is attached explicitly (only attached
+    /// when one has actually been pushed — see [ProxyAuthenticatorHolder#configure]).
+    /// Package-visible for unit tests.
+    static HttpClient newHttpClient() {
+        return ProxyAuthenticatorHolder.configure(HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NORMAL)
+                        .connectTimeout(Duration.ofSeconds(15)))
+                .build();
+    }
+
     private static void download(String filename, Path file) {
         if (!downloading.add(filename)) return;
         DOWNLOADER.submit(() -> {
             try {
-                HttpClient client = HttpClient.newBuilder()
-                        .followRedirects(HttpClient.Redirect.NORMAL)
-                        .connectTimeout(Duration.ofSeconds(15)).build();
+                HttpClient client = newHttpClient();
                 HttpRequest request = HttpRequest.newBuilder(URI.create(BASE_URL + filename + ".png"))
                         .timeout(Duration.ofSeconds(20))
                         .header("User-Agent", "HMCL-AE").GET().build();

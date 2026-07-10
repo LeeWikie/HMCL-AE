@@ -63,8 +63,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.jackhuang.hmcl.util.DataSizeUnit.MEGABYTES;
@@ -183,38 +181,9 @@ public class GameCrashWindow extends Stage {
                 }
 
                 for (CrashReportAnalyzer.Result result : results.values()) {
-                    String message;
-                    switch (result.getRule()) {
-                        case TOO_OLD_JAVA:
-                            message = i18n("game.crash.reason.too_old_java", CrashReportAnalyzer.getJavaVersionFromMajorVersion(Integer.parseInt(result.getMatcher().group("expected"))));
-                            break;
-                        case MOD_RESOLUTION_CONFLICT:
-                        case MOD_RESOLUTION_MISSING:
-                        case MOD_RESOLUTION_COLLECTION:
-                            message = i18n("game.crash.reason." + result.getRule().name().toLowerCase(Locale.ROOT),
-                                    translateFabricModId(result.getMatcher().group("sourcemod")),
-                                    parseFabricModId(result.getMatcher().group("destmod")),
-                                    parseFabricModId(result.getMatcher().group("destmod")));
-                            break;
-                        case MOD_RESOLUTION_MISSING_MINECRAFT:
-                            message = i18n("game.crash.reason." + result.getRule().name().toLowerCase(Locale.ROOT),
-                                    translateFabricModId(result.getMatcher().group("mod")),
-                                    result.getMatcher().group("version"));
-                            break;
-                        case MOD_FOREST_OPTIFINE:
-                        case TWILIGHT_FOREST_OPTIFINE:
-                        case PERFORMANT_FOREST_OPTIFINE:
-                        case JADE_FOREST_OPTIFINE:
-                        case NEOFORGE_FOREST_OPTIFINE:
-                            message = i18n("game.crash.reason.mod", "OptiFine");
-                            LOG.info("Crash cause: " + result.getRule() + ": " + i18n("game.crash.reason.mod", "OptiFine"));
-                            break;
-                        default:
-                            message = i18n("game.crash.reason." + result.getRule().name().toLowerCase(Locale.ROOT),
-                                    Arrays.stream(result.getRule().getGroupNames()).map(groupName -> result.getMatcher().group(groupName))
-                                            .toArray());
-                            break;
-                    }
+                    // Shared rule→text source (also used by the AI KnownErrorMatcherTool) so the
+                    // native crash window and the AI diagnosis can never drift apart.
+                    String message = CrashReportLocalization.getReasonText(result);
                     LOG.info("Crash cause: " + result.getRule() + ": " + message);
                     segments.addAll(FXUtils.parseSegment(message, Controllers::onHyperlinkAction));
                     segments.add(new Text("\n\n"));
@@ -235,33 +204,74 @@ public class GameCrashWindow extends Stage {
         }).start();
     }
 
-    private static final Pattern FABRIC_MOD_ID = Pattern.compile("\\{(?<modid>.*?) @ (?<version>.*?)}");
-
-    private String translateFabricModId(String modName) {
-        switch (modName) {
-            case "fabricloader":
-                return "Fabric";
-            case "fabric":
-                return "Fabric API";
-            case "minecraft":
-                return "Minecraft";
-            default:
-                return modName;
+    /// Sends the crash log + context to the AI assistant: builds the diagnosis prompt, submits
+    /// it via `AIMainPage.submitExternalPrompt` and navigates to the AI page.
+    ///
+    /// @param interactive `true` when triggered by the user clicking the "AI diagnose" button
+    ///                    (falls back to clipboard + alert when the main window is gone, and
+    ///                    closes this crash window on success); `false` when triggered
+    ///                    automatically by the "auto crash analysis" setting (silently skips
+    ///                    when the main window is gone, and keeps this crash window open so
+    ///                    the native details remain visible).
+    private void submitToAiAssistant(boolean interactive) {
+        String rawLog = logs.stream().map(Log::getLog).collect(Collectors.joining("\n"));
+        String tail = rawLog.length() > 6000 ? rawLog.substring(rawLog.length() - 6000) : rawLog;
+        // NOTE: ai.crash.prompt is MODEL INPUT (the prompt injected into the AI chat),
+        // not pure UI copy — it still goes through i18n for unified maintenance (BF P11).
+        String prompt = i18n("ai.crash.prompt", version.getId(), java, tail);
+        // The crash window is a standalone Stage; if the launcher main window isn't up
+        // (e.g. it was closed after launch) there is no decorator to navigate — don't NPE.
+        if (Controllers.getDecorator() == null || Controllers.getStage() == null) {
+            if (!interactive) {
+                LOG.info("Auto crash analysis skipped: launcher main window is not available");
+                return;
+            }
+            javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
+            cc.putString(prompt);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
+            new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION,
+                    i18n("ai.crash.window_closed")).showAndWait();
+            return;
+        }
+        org.jackhuang.hmcl.ui.ai.AIMainPage ai = Controllers.getAiMainPage();
+        ai.submitExternalPrompt(prompt);
+        Controllers.getStage().show();
+        Controllers.navigate(ai);
+        Controllers.getStage().toFront();
+        if (interactive) {
+            close();
         }
     }
 
-    private String parseFabricModId(String modName) {
-        Matcher matcher = FABRIC_MOD_ID.matcher(modName);
-        if (matcher.find()) {
-            String modid = matcher.group("modid");
-            String version = matcher.group("version");
-            if ("[*]".equals(version)) {
-                return i18n("game.crash.reason.mod_resolution_mod_version.any", translateFabricModId(modid));
-            } else {
-                return i18n("game.crash.reason.mod_resolution_mod_version", translateFabricModId(modid), version);
+    /// Consumes the "auto crash analysis" AI setting (previously stored + shown in the UI but
+    /// read by nobody): when enabled, automatically hands the crash off to the AI assistant,
+    /// reusing the exact jump-to-AI-page + `submitExternalPrompt` path of the manual button.
+    ///
+    /// The settings file is read off the FX thread; the actual submission is re-dispatched to
+    /// the FX thread. Reading a fresh [org.jackhuang.hmcl.ai.AiSettings] from disk is correct
+    /// here because the AI settings page persists every toggle immediately.
+    public void autoDiagnoseIfEnabled() {
+        Thread reader = new Thread(() -> {
+            if (isAutoCrashAnalysisEnabled(org.jackhuang.hmcl.setting.SettingsManager.localConfigDirectory())) {
+                javafx.application.Platform.runLater(() -> submitToAiAssistant(false));
             }
+        }, "auto-crash-analysis");
+        reader.setDaemon(true);
+        reader.start();
+    }
+
+    /// Loads the persisted AI settings from `configDir` and returns the "auto crash analysis"
+    /// switch. Never throws: any read/parse failure logs a warning and reports `false`
+    /// (a broken settings file must not auto-open the AI page). Package-visible for unit tests.
+    static boolean isAutoCrashAnalysisEnabled(Path configDir) {
+        try {
+            org.jackhuang.hmcl.ai.AiSettings aiSettings = new org.jackhuang.hmcl.ai.AiSettings(configDir);
+            aiSettings.load();
+            return aiSettings.isAutoCrashAnalysisEnabled();
+        } catch (Exception e) {
+            LOG.warning("Failed to read AI settings for auto crash analysis", e);
+            return false;
         }
-        return translateFabricModId(modName);
     }
 
     private void showLogWindow() {
@@ -472,29 +482,7 @@ public class GameCrashWindow extends Stage {
                 // Hand the crash off to the AI assistant: jump to the AI page with the log + context
                 // and let it diagnose and propose a fix.
                 JFXButton aiButton = FXUtils.newRaisedButton(i18n("ai.crash.diagnose"));
-                aiButton.setOnAction(e -> {
-                    String rawLog = logs.stream().map(Log::getLog).collect(Collectors.joining("\n"));
-                    String tail = rawLog.length() > 6000 ? rawLog.substring(rawLog.length() - 6000) : rawLog;
-                    // NOTE: ai.crash.prompt is MODEL INPUT (the prompt injected into the AI chat),
-                    // not pure UI copy — it still goes through i18n for unified maintenance (BF P11).
-                    String prompt = i18n("ai.crash.prompt", version.getId(), java, tail);
-                    // The crash window is a standalone Stage; if the launcher main window isn't up
-                    // (e.g. it was closed after launch) there is no decorator to navigate — don't NPE.
-                    if (Controllers.getDecorator() == null || Controllers.getStage() == null) {
-                        javafx.scene.input.ClipboardContent cc = new javafx.scene.input.ClipboardContent();
-                        cc.putString(prompt);
-                        javafx.scene.input.Clipboard.getSystemClipboard().setContent(cc);
-                        new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION,
-                                i18n("ai.crash.window_closed")).showAndWait();
-                        return;
-                    }
-                    org.jackhuang.hmcl.ui.ai.AIMainPage ai = Controllers.getAiMainPage();
-                    ai.submitExternalPrompt(prompt);
-                    Controllers.getStage().show();
-                    Controllers.navigate(ai);
-                    Controllers.getStage().toFront();
-                    close();
-                });
+                aiButton.setOnAction(e -> submitToAiAssistant(true));
 
                 toolBar.setPadding(new Insets(8));
                 toolBar.setSpacing(8);

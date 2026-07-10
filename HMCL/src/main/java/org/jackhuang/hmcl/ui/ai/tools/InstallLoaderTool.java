@@ -304,12 +304,9 @@ public final class InstallLoaderTool implements ToolSpec {
             return ToolResult.failure(installError);
         }
 
-        // Make the new instance visible to the rest of the launcher.
-        try {
-            profile.getRepository().refreshVersions();
-        } catch (RuntimeException ignored) {
-            // Non-fatal: the instance is on disk; the list will refresh on next access.
-        }
+        // Make the new instance visible to the rest of the launcher and apply the user's
+        // default-isolation preset, exactly like the native install wizard does.
+        applyPostInstallDefaults(profile, name);
 
         StringBuilder sb = new StringBuilder();
         sb.append("Successfully installed instance \"").append(name).append("\".\n");
@@ -320,6 +317,24 @@ public final class InstallLoaderTool implements ToolSpec {
             sb.append("Loader: ").append(loader).append(' ').append(loaderVersion);
         }
         return ToolResult.success(sb.toString());
+    }
+
+    /// Applies the same post-install steps the native wizard applies after `buildAsync()`
+    /// completes (see `VanillaInstallWizardProvider.finishVersionDownloadingAsync`): refresh
+    /// the version list so the new instance becomes visible, then apply the user's "default
+    /// version isolation" preset to it. Both steps are best-effort — the install itself has
+    /// already succeeded on disk. Package-visible for unit tests.
+    static void applyPostInstallDefaults(Profile profile, String name) {
+        try {
+            profile.getRepository().refreshVersions();
+        } catch (RuntimeException ignored) {
+            // Non-fatal: the instance is on disk; the list will refresh on next access.
+        }
+        try {
+            profile.getRepository().applyDefaultIsolationSetting(name);
+        } catch (RuntimeException ignored) {
+            // Non-fatal: the isolation preset is a convenience default, not part of the install.
+        }
     }
 
     /// Returns the newest RELEASE version id from a game version collection, or {@code null}.
