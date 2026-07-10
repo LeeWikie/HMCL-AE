@@ -43,7 +43,7 @@ import java.util.Map;
 ///   - **post-write validation** — `.json`/`.properties` content is re-validated after the
 ///     write and a WARNING is appended to the success receipt when it came out broken.
 @NotNullByDefault
-public final class EditTool implements ToolSpec {
+public final class EditTool implements ToolSpec, BackupTargetResolver {
     private final List<Path> roots = new ArrayList<>();
     private final ReadLedger ledger;
 
@@ -232,6 +232,37 @@ public final class EditTool implements ToolSpec {
             return FileToolFailures.io("editing the file", e);
         } catch (RuntimeException e) {
             return FileToolFailures.invalid("edit request", e);
+        }
+    }
+
+    /// Backup-target resolution for the adapter's small-file ASK→ALLOW downgrade (see
+    /// {@link BackupTargetResolver}): an `edit` call ALWAYS edits one pre-existing file, so its
+    /// snapshot target is exactly that file. Resolves the `path` argument the same way
+    /// {@link #execute} does (relative → first root; symlink-resolved real-path containment), and
+    /// returns it ONLY when it is an existing regular file inside an allowed root. Any missing arg,
+    /// containment failure, or non-file yields {@code null} (best-effort — the adapter then simply
+    /// keeps the confirmation), and this never throws.
+    @Override
+    @Nullable
+    public Target resolveBackupTarget(Map<String, Object> parameters) {
+        Object pathObj = parameters.get("path");
+        if (pathObj == null || pathObj.toString().isBlank()) {
+            return null;
+        }
+        try {
+            Path candidate = Path.of(pathObj.toString());
+            Path resolved = (candidate.isAbsolute() ? candidate : roots.get(0).resolve(pathObj.toString()))
+                    .toAbsolutePath().normalize();
+            if (roots.stream().noneMatch(resolved::startsWith) || !Files.isRegularFile(resolved)) {
+                return null;
+            }
+            Path real = resolved.toRealPath();
+            if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
+                return null;
+            }
+            return new Target(real, List.copyOf(roots));
+        } catch (IOException | RuntimeException e) {
+            return null;
         }
     }
 

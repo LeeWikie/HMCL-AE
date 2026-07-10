@@ -23,8 +23,11 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import org.jackhuang.hmcl.ai.tools.AiExecutionPolicy;
 import org.jackhuang.hmcl.ai.tools.AiToolPermissionStore;
+import org.jackhuang.hmcl.ai.tools.BackupTargetResolver;
 import org.jackhuang.hmcl.ai.tools.CriticalOperations;
 import org.jackhuang.hmcl.ai.tools.DangerousCommands;
+import org.jackhuang.hmcl.ai.tools.EditOrRemoveActions;
+import org.jackhuang.hmcl.ai.tools.FileBackup;
 import org.jackhuang.hmcl.ai.tools.ShellToolOverlap;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolConfirmHandler;
@@ -375,6 +378,33 @@ public final class LangChain4jToolAdapter {
                         permissionStore.getOverride(tool.getName(), resolvedAction, resolvedPath);
                 decision = override.apply(decision, perm);
             }
+            // Small-file ASK→ALLOW downgrade (spec 条目1, product decision 2026-07-11): the
+            // CONTROLLED_WRITE edit/remove ⚠️ASK tier is cheap-and-reversible, so it need not
+            // interrupt the user once a restore point is secured. STRICTLY scoped to that tier
+            // (perm==CONTROLLED_WRITE AND EditOrRemoveActions classifies it edit/remove), so a
+            // DANGEROUS_WRITE / CRITICAL confirmation — and a non-negotiable BLOCK, which isn't ASK
+            // and is left untouched — is NEVER relaxed here. mods_toggle/clean_logs are inherently
+            // lossless (rename / discardable-log delete, no backup needed); every other edit target
+            // must be snapshotted first via FileBackup, and a failed / oversize / unresolvable
+            // snapshot keeps the original ASK (fail-closed — we only skip the prompt when a genuine
+            // restore point exists).
+            String autoBackupNote = null;
+            if (decision == AiExecutionPolicy.Decision.ASK
+                    && perm == ToolPermission.CONTROLLED_WRITE
+                    && EditOrRemoveActions.isEditOrRemove(tool.getName(), resolvedAction)) {
+                if (isLosslessReversible(tool.getName(), resolvedAction)) {
+                    decision = AiExecutionPolicy.Decision.ALLOW;
+                } else if (tool instanceof BackupTargetResolver resolver) {
+                    BackupTargetResolver.Target target = resolver.resolveBackupTarget(parameters);
+                    if (target != null) {
+                        FileBackup.Result backup = FileBackup.backup(target, BACKUP_MAX_BYTES);
+                        if (backup.success()) {
+                            decision = AiExecutionPolicy.Decision.ALLOW;
+                            autoBackupNote = "已自动备份到 " + backup.backupPath() + "，如需可恢复。";
+                        }
+                    }
+                }
+            }
             if (decision == AiExecutionPolicy.Decision.BLOCK) {
                 // Per-reason text (borrow-list A4 / rewrite #21): what the model should do next
                 // depends on WHICH gate fired, so the two causes get their own precise envelope
@@ -476,7 +506,10 @@ public final class LangChain4jToolAdapter {
                         "treat this call as failed; accomplish the task another way or report it to "
                                 + "the user");
             } else if (result.isSuccess()) {
-                text = result.getOutput();
+                // On a successful auto-backed-up downgrade, tell the model a restore point exists so
+                // it (and the user) know there's a way back — appended, never replacing the tool's
+                // own receipt.
+                text = autoBackupNote != null ? result.getOutput() + "\n\n" + autoBackupNote : result.getOutput();
             } else {
                 text = "Error: " + result.getError();
             }
@@ -571,6 +604,28 @@ public final class LangChain4jToolAdapter {
                 + "重要：在 job(action=\"check\") 显示该任务已完成之前，绝不要声称它已完成。"
                 + "如果想在下一条回复里嵌入这个任务的实时进度，可以在文本中写 {{job_progress:" + jobId
                 + "}}，界面会自动动态更新，无需你再发新消息。";
+    }
+
+    /// Snapshot ceiling for the small-file ASK→ALLOW downgrade (see {@link #tryDowngradeEditAsk}).
+    /// The product-agreed default (2026-07-11); a future user setting can override it without
+    /// touching {@link FileBackup} by threading a different value in here.
+    private static final long BACKUP_MAX_BYTES = FileBackup.DEFAULT_MAX_BYTES;
+
+    /// Tool name → action set whose CONTROLLED_WRITE edit/remove is INHERENTLY reversible with no
+    /// data loss, so its ⚠️ASK can be dropped WITHOUT even taking a backup (product decision
+    /// 2026-07-11). `mods_toggle` only renames `.jar`↔`.jar.disabled` (trivially undoable);
+    /// `clean_logs` only removes discardable rolled log archives (never saves/configs). Everything
+    /// else in the edit/remove tier must earn its downgrade via a real {@link FileBackup} snapshot.
+    private static final Map<String, java.util.Set<String>> LOSSLESS_REVERSIBLE = Map.ofEntries(
+            Map.entry("instance", java.util.Set.of("mods_toggle", "clean_logs")));
+
+    private static boolean isLosslessReversible(String toolName, @Nullable String action) {
+        java.util.Set<String> actions = LOSSLESS_REVERSIBLE.get(toolName.toLowerCase(Locale.ROOT));
+        if (actions == null) {
+            return false;
+        }
+        String a = action != null ? action.trim().toLowerCase(Locale.ROOT) : "";
+        return actions.contains(a);
     }
 
     /// Tool name → long-running action set, mirroring {@code CriticalOperations.CRITICAL_ACTIONS}'
