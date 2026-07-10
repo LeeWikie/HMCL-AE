@@ -39,7 +39,10 @@ import java.util.UUID;
 /// but a cross-version warning is included (item formats may not be fully compatible).
 ///
 /// Safety: the destination is backed up first, the write is atomic and preserves compression,
-/// and the operation is refused while the world is open in-game.
+/// the operation is refused while the world is open in-game (and the world's `session.lock`
+/// is HELD for the whole backup+write, so a game launched mid-call cannot race it), and the
+/// written file is re-read and validated afterwards (a corrupt read-back is surfaced as a
+/// WARNING on the success receipt).
 ///
 /// Permission level: WRITE / HIGH-RISK.
 @NotNullByDefault
@@ -85,9 +88,11 @@ public final class TransferInventoryTool implements Tool {
                 return ToolResult.failure("'from' and 'to' resolve to the same UUID (" + fromUuid + ").");
             }
 
-            if (NbtToolSupport.isWorldLocked(worldDir)) {
-                return ToolResult.failure("World '" + world + "' is currently open in the game. Quit to the title "
-                        + "screen (or close Minecraft) first, then retry.");
+            // Fail-fast pre-check only — the authoritative guard is backupAndWriteLocked below,
+            // which HOLDS the world's session.lock for the whole backup+write.
+            @Nullable String lockRejection = GameResourceGuard.checkWorldNotLocked(worldDir, world);
+            if (lockRejection != null) {
+                return ToolResult.failure(lockRejection);
             }
 
             NbtToolSupport.PlayerHandle source = NbtToolSupport.locatePlayer(worldDir, fromUuid);
@@ -136,16 +141,19 @@ public final class TransferInventoryTool implements Tool {
                 }
             }
 
-            Path backup = NbtToolSupport.backup(dest.backingFile);
-            NbtToolSupport.writeTag(dest.backingFile, (Tag) dest.root(), dest.gzip);
+            NbtToolSupport.WriteReceipt receipt = NbtToolSupport.backupAndWriteLocked(
+                    worldDir, world, dest.backingFile, (Tag) dest.root(), dest.gzip);
 
             StringBuilder sb = new StringBuilder();
             sb.append("Transferred inventory in world '").append(world).append("':\n");
             sb.append("  from: ").append(from).append("  (").append(fromUuid).append(")\n");
             sb.append("  to:   ").append(to).append("  (").append(toUuid).append(")").append(enderNote).append('\n');
             sb.append("  destination file: ").append(savesDir.relativize(dest.backingFile)).append('\n');
-            sb.append("Backup of destination: ").append(backup != null ? backup.getFileName() : "(none)");
+            sb.append("Backup of destination: ").append(receipt.backup() != null ? receipt.backup().getFileName() : "(none)");
             sb.append(warn);
+            if (receipt.warning() != null) {
+                sb.append('\n').append(receipt.warning());
+            }
             return ToolResult.success(sb.toString());
         } catch (NbtToolSupport.NbtToolException e) {
             return ToolResult.failure(e.getMessage());

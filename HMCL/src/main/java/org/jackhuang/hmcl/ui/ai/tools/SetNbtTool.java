@@ -35,8 +35,11 @@ import java.util.Map;
 ///
 /// Safety contract enforced here: the target tag must already exist (this tool edits, it does
 /// not invent keys); the original value is echoed before and after; a timestamped backup of the
-/// file is taken before writing; the write is atomic and preserves the file's compression; and
-/// if the containing world is currently locked (game running) the write is refused.
+/// file is taken before writing; the write is atomic and preserves the file's compression; if
+/// the containing world is currently locked (game running) the write is refused, and otherwise
+/// the world's `session.lock` is HELD for the whole backup+write (no check-then-write TOCTOU
+/// window); after writing, the file is re-read and validated (a corrupt read-back is surfaced
+/// as a WARNING on the success receipt).
 ///
 /// Scalars are mutated in place (parsed into the existing tag's type). Replacing a whole
 /// compound/list subtree is supported only when its parent is a compound, with the new value
@@ -80,13 +83,21 @@ public final class SetNbtTool implements Tool {
             }
             String value = String.valueOf(valueObj);
 
-            // Refuse to write into a world that is currently open in the game.
+            // Refuse to write into a world that is currently open in the game. This is a
+            // fail-fast pre-check only — the authoritative guard is backupAndWriteLocked below,
+            // which HOLDS the world's session.lock for the whole backup+write.
             Path rel = savesDir.relativize(file);
+            @Nullable Path lockWorldDir = null;
+            @Nullable String lockWorldLabel = null;
             if (rel.getNameCount() >= 2) {
                 Path worldDir = savesDir.resolve(rel.getName(0));
-                if (Files.isRegularFile(worldDir.resolve("level.dat")) && NbtToolSupport.isWorldLocked(worldDir)) {
-                    return ToolResult.failure("World '" + rel.getName(0) + "' is currently open in the game. "
-                            + "Please quit to the title screen (or close Minecraft) first, then retry.");
+                if (Files.isRegularFile(worldDir.resolve("level.dat"))) {
+                    lockWorldDir = worldDir;
+                    lockWorldLabel = rel.getName(0).toString();
+                    @Nullable String rejection = GameResourceGuard.checkWorldNotLocked(worldDir, lockWorldLabel);
+                    if (rejection != null) {
+                        return ToolResult.failure(rejection);
+                    }
                 }
             }
 
@@ -129,14 +140,17 @@ public final class SetNbtTool implements Tool {
                 after = "(" + newTag.getType().name() + ") " + NbtToolSupport.toSNBT(newTag);
             }
 
-            Path backup = NbtToolSupport.backup(file);
-            NbtToolSupport.writeTag(file, root, gzip);
+            NbtToolSupport.WriteReceipt receipt =
+                    NbtToolSupport.backupAndWriteLocked(lockWorldDir, lockWorldLabel, file, root, gzip);
 
             StringBuilder sb = new StringBuilder();
             sb.append("Updated ").append(nbtPath).append(" in ").append(rel).append('\n');
             sb.append("  before: ").append(before).append('\n');
             sb.append("  after:  ").append(after).append('\n');
-            sb.append("Backup saved to: ").append(backup != null ? backup.getFileName() : "(none)");
+            sb.append("Backup saved to: ").append(receipt.backup() != null ? receipt.backup().getFileName() : "(none)");
+            if (receipt.warning() != null) {
+                sb.append('\n').append(receipt.warning());
+            }
             return ToolResult.success(sb.toString());
         } catch (NbtToolSupport.NbtToolException e) {
             return ToolResult.failure(e.getMessage());

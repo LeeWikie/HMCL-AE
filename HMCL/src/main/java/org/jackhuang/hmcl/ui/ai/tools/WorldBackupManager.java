@@ -17,6 +17,7 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
@@ -34,6 +35,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -73,6 +75,28 @@ public final class WorldBackupManager {
     /// `-N` uniqueness suffix when two backups land in the same second).
     private static final Pattern SNAPSHOT_ID = Pattern.compile("\\d{8}-\\d{6}(-\\d+)?");
 
+    /// The world session lock file. Excluded from snapshots (the native `WorldBackupTask`
+    /// excludes it the same way) — copying it is at best noise and at worst confuses a
+    /// restored world into looking "locked".
+    private static final String SESSION_LOCK_FILE = "session.lock";
+
+    /// Suffix of the hidden marker file written while [#restore] is between its two directory
+    /// renames (the only window in which `saves/<world>` is absent from disk). A surviving
+    /// marker means a restore was interrupted mid-swap — [#scanInterruptedRestores] reports it.
+    static final String RESTORE_IN_PROGRESS_SUFFIX = ".restore-in-progress";
+
+    /// Recognizes the hidden leftovers an interrupted restore can strand in `saves/`:
+    /// `.{world}.replaced` (the pre-restore world, set aside), `.{world}.restoring` (a staged
+    /// snapshot copy that was never swapped in) and `.{world}.restore-in-progress` (the
+    /// mid-swap marker).
+    private static final Pattern LEFTOVER_NAME =
+            Pattern.compile("\\.(.+)\\.(replaced|restoring|restore-in-progress)");
+
+    /// Test hook: invoked between the two `Files.move` calls of [#restore] (right after the
+    /// live world was set aside, right before the staged snapshot is swapped in) to simulate a
+    /// hard crash in the mid-swap window. Always `null` in production.
+    static volatile @Nullable Runnable crashBetweenMovesForTesting = null;
+
     private WorldBackupManager() {
     }
 
@@ -80,8 +104,19 @@ public final class WorldBackupManager {
     public record BackupInfo(String id, int fileCount, long sizeBytes) {
     }
 
-    /// Outcome of creating a snapshot.
-    public record BackupResult(Path backupPath, String id, int fileCount, long sizeBytes, int prunedCount) {
+    /// Outcome of creating a snapshot. {@code lockedDuringBackup} is `true` when the world's
+    /// `session.lock` was held by a running game for the whole copy — the snapshot was still
+    /// taken (a backup never mutates the live world, so refusing would help nobody), but it may
+    /// not represent a single consistent point in time; callers should surface that as a soft
+    /// warning on the success receipt.
+    public record BackupResult(Path backupPath, String id, int fileCount, long sizeBytes, int prunedCount,
+                               boolean lockedDuringBackup) {
+    }
+
+    /// One leftover artifact of an interrupted world restore found by
+    /// [#scanInterruptedRestores]: the world it belongs to, which kind of leftover it is
+    /// (`replaced` / `restoring` / `restore-in-progress`) and its absolute path.
+    public record InterruptedRestoreLeftover(String world, String kind, Path path) {
     }
 
     /// Outcome of a restore. {@code safetyBackupId} is the snapshot taken of the
@@ -200,9 +235,22 @@ public final class WorldBackupManager {
         String id = uniqueSnapshotId(backupRoot);
         Path target = backupRoot.resolve(id);
 
+        boolean lockedDuringBackup = false;
         long[] counters; // [0] files, [1] bytes
         try {
-            counters = copyTree(worldDir, target);
+            try {
+                // Hold the world's session.lock for the ENTIRE copy (the native
+                // WorldManageUIUtils.getSessionLockChannel() editing-session discipline, via
+                // GameResourceGuard): a game launched mid-copy cannot acquire the world and
+                // mutate files under us, so an unlocked world yields a consistent snapshot.
+                counters = GameResourceGuard.withWorldLock(worldDir, world, () -> copyTree(worldDir, target));
+            } catch (GameResourceGuard.WorldBusyException busy) {
+                // The world is open in a running game. A backup never mutates the live world,
+                // so refusing outright would be worse than a possibly-fuzzy snapshot: proceed
+                // WITHOUT the lock and report the consistency risk to the caller instead.
+                lockedDuringBackup = true;
+                counters = copyTree(worldDir, target);
+            }
         } catch (IOException e) {
             // A failed/partial copy (e.g. disk full) must not leave a truncated snapshot folder
             // behind — listBackups()/prune() would otherwise treat it as a complete, restorable
@@ -218,7 +266,7 @@ public final class WorldBackupManager {
         }
 
         int pruned = prune(backupRoot, retentionCount);
-        return new BackupResult(target, id, (int) counters[0], counters[1], pruned);
+        return new BackupResult(target, id, (int) counters[0], counters[1], pruned, lockedDuringBackup);
     }
 
     /// Lists all snapshots of a world, newest first.
@@ -259,13 +307,23 @@ public final class WorldBackupManager {
         Path worldDir = resolveWorldDir(runDir, world);
         Path backupRoot = resolveBackupRoot(runDir, world);
 
+        // FIRST line of defense: refuse outright while the world is open in a running game.
+        // On Windows/NTFS the directory rename below usually SUCCEEDS even while the game holds
+        // open file handles inside the world, so the "rename throws => in use" heuristic further
+        // down must never be the only guard — it would let a live game session be swapped out
+        // from under the running process, cross-polluting old and new data.
+        @Nullable String lockRejection = GameResourceGuard.checkWorldNotLocked(worldDir, world);
+        if (lockRejection != null) {
+            throw new IOException(lockRejection);
+        }
+
         // Validate the requested snapshot id and confine its path.
         if (!SNAPSHOT_ID.matcher(backupId).matches()) {
             throw new IOException("Invalid backupId '" + backupId + "' (expected a snapshot timestamp like 20260629-153000).");
         }
         Path snapshot = backupRoot.resolve(backupId).toAbsolutePath().normalize();
         if (!snapshot.startsWith(backupRoot) || !Files.isDirectory(snapshot)) {
-            throw new IOException("Backup '" + backupId + "' of world '" + world + "' was not found at: " + snapshot);
+            throw new IOException(describeMissingSnapshot(instance, world, backupId));
         }
 
         // 1) Stage the chosen snapshot into a temp dir FIRST, so a copy failure can never destroy the
@@ -280,6 +338,7 @@ public final class WorldBackupManager {
         //    (retentionCount 0) so this safety backup can never evict the snapshot being restored.
         @Nullable String safetyId = null;
         @Nullable Path replaced = null;
+        @Nullable Path marker = null;
         if (Files.isDirectory(worldDir)) {
             BackupResult safety = createBackup(instance, world, 0);
             safetyId = safety.id();
@@ -291,12 +350,27 @@ public final class WorldBackupManager {
             if (Files.exists(replaced)) {
                 deleteTree(replaced);
             }
+            // Drop a mid-swap marker BEFORE the world leaves saves/: between the two renames the
+            // world is absent from disk, and if the process dies in that window the marker (and
+            // the .replaced/.restoring directories) let scanInterruptedRestores() tell the user
+            // where their world went instead of it silently vanishing.
+            marker = worldDir.resolveSibling("." + world + RESTORE_IN_PROGRESS_SUFFIX);
             try {
+                Files.writeString(marker, "world=" + world + "\n"
+                        + "backupId=" + backupId + "\n"
+                        + "originalWorldSetAsideAt=" + replaced.getFileName() + "\n"
+                        + "stagedSnapshotAt=" + staging.getFileName() + "\n"
+                        + "startedAt=" + LocalDateTime.now() + "\n");
                 Files.move(worldDir, replaced);
             } catch (IOException moveFailed) {
                 deleteTree(staging); // clean up; the live world is untouched
+                deleteQuietly(marker);
                 throw new IOException("World '" + world + "' is in use (is the game running?) — restore aborted; "
                         + "the current world was NOT touched. Close the world/game and retry.", moveFailed);
+            }
+            @Nullable Runnable crashHook = crashBetweenMovesForTesting;
+            if (crashHook != null) {
+                crashHook.run();
             }
         }
 
@@ -318,12 +392,17 @@ public final class WorldBackupManager {
                     }
                     Files.move(replaced, worldDir); // roll the original back
                 } catch (IOException rollbackFailed) {
+                    // The marker is intentionally KEPT: the startup scan must flag the stranded
+                    // .replaced directory until the user recovers it.
                     throw new IOException("Restore failed AND rollback failed — the original world is preserved at "
                             + replaced + " (rename it back to '" + world + "' to recover).", swapFailed);
                 }
+                deleteQuietly(marker); // rollback succeeded — the world is back in place
             }
             throw swapFailed;
         }
+        // The swap is complete: saves/<world> exists again, so the mid-swap window is closed.
+        deleteQuietly(marker);
 
         // 4) The staged copy is fully in place — the restore itself has ALREADY fully succeeded at
         //    this point (saves/<world> now IS the snapshot). Dropping the set-aside original and
@@ -431,7 +510,87 @@ public final class WorldBackupManager {
         return new PendingBackupResult(backedUp, failed);
     }
 
+    /// Lightweight scan for leftovers of an interrupted [#restore] under the instance's
+    /// `saves/` directory: `.{world}.replaced` / `.{world}.restoring` directories and
+    /// `.{world}.restore-in-progress` markers. Callers on the launch path surface any findings
+    /// to the user — a `.replaced` directory in particular still contains the world's complete
+    /// pre-restore data and can be renamed back to recover it.
+    ///
+    /// Never throws: any failure to resolve or list yields the (possibly partial) findings
+    /// gathered so far — a broken scan must never block a launch.
+    public static List<InterruptedRestoreLeftover> scanInterruptedRestores(@Nullable String instance) {
+        List<InterruptedRestoreLeftover> found = new ArrayList<>();
+        Path savesDir;
+        try {
+            savesDir = resolveRunDirectory(instance).resolve("saves").toAbsolutePath().normalize();
+        } catch (IOException resolveFailed) {
+            return found; // no profile/instance available — nothing to scan
+        }
+        if (!Files.isDirectory(savesDir)) {
+            return found;
+        }
+        try (Stream<Path> children = Files.list(savesDir)) {
+            for (Path child : (Iterable<Path>) children::iterator) {
+                Matcher m = LEFTOVER_NAME.matcher(child.getFileName().toString());
+                if (m.matches()) {
+                    found.add(new InterruptedRestoreLeftover(m.group(1), m.group(2), child));
+                }
+            }
+        } catch (IOException ignored) {
+            // best-effort scan
+        }
+        found.sort(Comparator.comparing(InterruptedRestoreLeftover::world)
+                .thenComparing(InterruptedRestoreLeftover::kind));
+        return found;
+    }
+
     // ---- Internals -----------------------------------------------------------------
+
+    /// Builds the failure envelope for a restore whose {@code backupId} does not exist,
+    /// carrying the data the model actually needs: the most recent REAL snapshot ids (newest
+    /// first, at most 5), or a terminal "no snapshots at all" verdict.
+    private static String describeMissingSnapshot(@Nullable String instance, String world, String backupId) {
+        List<String> recent = new ArrayList<>();
+        try {
+            for (BackupInfo info : listBackups(instance, world)) {
+                recent.add(info.id());
+                if (recent.size() >= 5) {
+                    break;
+                }
+            }
+        } catch (IOException ignored) {
+            // listing failed — fall through to the "no snapshots" wording, which still names
+            // the tool that shows the authoritative list
+        }
+        if (recent.isEmpty()) {
+            return ToolFailures.failureEnvelope(
+                    "Backup '" + backupId + "' of world '" + world + "' was not found, and this world has no "
+                            + "snapshots at all",
+                    ToolFailures.Retryable.NO,
+                    "there is nothing to restore from",
+                    "Create a snapshot first with instance(action=\"worlds_backup_create\"), or check the world "
+                            + "name with instance(action=\"worlds_list\")");
+        }
+        return ToolFailures.failureEnvelope(
+                "Backup '" + backupId + "' of world '" + world + "' was not found. Most recent snapshot id(s), "
+                        + "newest first: " + String.join(", ", recent),
+                ToolFailures.Retryable.YES,
+                "the listed ids are the snapshots that actually exist",
+                "Retry with one of the listed backupId values, or run instance(action=\"worlds_backup_list\") "
+                        + "for the full list");
+    }
+
+    /// Best-effort delete of a marker/cleanup file; `null` and failures are ignored.
+    private static void deleteQuietly(@Nullable Path file) {
+        if (file == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException ignored) {
+            // best-effort
+        }
+    }
 
     /// Compares two snapshot ids chronologically. The fixed-width `yyyyMMdd-HHmmss` prefix (15
     /// chars) sorts correctly as a plain string (same width, lexicographic order == chronological
@@ -478,7 +637,9 @@ public final class WorldBackupManager {
         return base + "-" + System.nanoTime();
     }
 
-    /// Recursively copies {@code source} into {@code target}.
+    /// Recursively copies {@code source} into {@code target}, excluding `session.lock` files
+    /// (matching the native `WorldBackupTask`'s explicit exclusion — the lock is per-live-session
+    /// state, not world data).
     ///
     /// @return a 2-element array: [0] = files copied, [1] = total bytes copied
     private static long[] copyTree(Path source, Path target) throws IOException {
@@ -490,6 +651,8 @@ public final class WorldBackupManager {
                 Path destination = target.resolve(relative.toString());
                 if (Files.isDirectory(path)) {
                     Files.createDirectories(destination);
+                } else if (SESSION_LOCK_FILE.equals(String.valueOf(path.getFileName()))) {
+                    // skip — see method doc
                 } else {
                     Path parent = destination.getParent();
                     if (parent != null) {

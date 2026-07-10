@@ -100,6 +100,11 @@ public final class CreateWorldBackupTool implements Tool {
             }
             sb.append('\n');
             sb.append("Note: this is a full copy (not incremental).");
+            if (result.lockedDuringBackup()) {
+                sb.append("\nNOTE: the world was open in a running game while this backup was taken, so the "
+                        + "snapshot may not represent a single consistent point in time. Suggest to the user to "
+                        + "quit the world (or close the game) and back up again for a guaranteed-consistent snapshot.");
+            }
             return ToolResult.success(sb.toString());
         } catch (Throwable e) {
             return ToolResult.failure("Failed to back up world '" + world + "': " + e.getMessage());

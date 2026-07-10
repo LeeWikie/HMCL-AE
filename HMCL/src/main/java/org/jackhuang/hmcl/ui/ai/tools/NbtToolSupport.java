@@ -65,7 +65,9 @@ import java.util.zip.GZIPOutputStream;
 ///     on write-back (standard `.dat` files are gzip; `servers.dat` is uncompressed),
 ///   - a mandatory timestamped backup (`<file>.bak-<yyyyMMdd-HHmmss>`) taken before any
 ///     mutation,
-///   - atomic write-back via [`FileUtils#saveSafely`],
+///   - atomic write-back via [`FileUtils#saveSafely`], executed while HOLDING the world's
+///     `session.lock` (see [#backupAndWriteLocked]) so a game launched mid-write cannot race
+///     the mutation, plus a post-write re-read validation ([#postWriteValidation]),
 ///   - SNBT (de)serialisation and offline-UUID computation.
 ///
 /// This class is intentionally side-effect free except for the explicit `backup`/`write`
@@ -243,6 +245,90 @@ final class NbtToolSupport {
             throw new NbtToolException("Failed to create backup of '" + file + "': " + e.getMessage());
         }
         return bak;
+    }
+
+    /// Outcome of [#backupAndWriteLocked]: the pre-write backup path (`null` when the file did
+    /// not exist yet, so there was nothing to back up) and an optional post-write validation
+    /// WARNING to append verbatim to the tool's SUCCESS receipt (`null` when the write read
+    /// back clean).
+    record WriteReceipt(@Nullable Path backup, @Nullable String warning) {
+    }
+
+    /// Internal carrier that smuggles an [NbtToolException] across the
+    /// [GameResourceGuard.LockedWorldAction] boundary (which only permits [IOException]).
+    private static final class WrappedNbtToolException extends IOException {
+        WrappedNbtToolException(NbtToolException cause) {
+            super(cause);
+        }
+    }
+
+    /// The whole mutation pipeline of a write tool — `backup()` + `writeTag()` +
+    /// [#postWriteValidation] — executed while HOLDING the world's `session.lock`
+    /// [java.nio.channels.FileChannel] (via [GameResourceGuard#withWorldLock]), mirroring the
+    /// native `WorldManageUIUtils.getSessionLockChannel()` editing-session discipline. This
+    /// closes the TOCTOU window of the old check-then-write pattern: a game launched between
+    /// the pre-check and the write can no longer acquire the world and race us.
+    ///
+    /// @param worldDir   the world directory whose `session.lock` guards {@code file}, or
+    ///                   `null` when the file is not inside a world (e.g. directly under
+    ///                   `saves/`) — the write then proceeds without a lock
+    /// @param worldLabel the world name for rejection texts (`null` falls back to the
+    ///                   directory name)
+    /// @param file       the NBT file to back up and overwrite
+    /// @param root       the tag to serialise
+    /// @param gzip       whether to gzip-compress (preserve the original compression)
+    /// @throws NbtToolException when the world is busy (message is the ready-to-return
+    ///                          unified rejection envelope), or when backup/write itself fails
+    static WriteReceipt backupAndWriteLocked(@Nullable Path worldDir, @Nullable String worldLabel,
+                                             Path file, Tag root, boolean gzip) throws NbtToolException {
+        if (worldDir == null) {
+            return doBackupAndWrite(file, root, gzip);
+        }
+        String label = worldLabel != null ? worldLabel : String.valueOf(worldDir.getFileName());
+        try {
+            return GameResourceGuard.withWorldLock(worldDir, label, () -> {
+                try {
+                    return doBackupAndWrite(file, root, gzip);
+                } catch (NbtToolException e) {
+                    throw new WrappedNbtToolException(e);
+                }
+            });
+        } catch (GameResourceGuard.WorldBusyException busy) {
+            throw new NbtToolException(busy.getMessage());
+        } catch (WrappedNbtToolException wrapped) {
+            throw (NbtToolException) wrapped.getCause();
+        } catch (IOException e) {
+            throw new NbtToolException("Failed to acquire the session lock of world '" + label + "': "
+                    + e.getMessage());
+        }
+    }
+
+    private static WriteReceipt doBackupAndWrite(Path file, Tag root, boolean gzip) throws NbtToolException {
+        @Nullable Path backupPath = backup(file);
+        writeTag(file, root, gzip);
+        return new WriteReceipt(backupPath, postWriteValidation(file, root));
+    }
+
+    /// Post-write validation for the NBT write tools (the NBT leg of the same "validate what
+    /// you just wrote" contract `PostWriteValidator` applies to .json/.properties): re-reads
+    /// the just-written file and checks it parses as NBT with the same root tag type that was
+    /// written. Returns a `"WARNING: ..."` text for the SUCCESS receipt — the file HAS been
+    /// written, so failing the call would lie about the on-disk state — or `null` when clean.
+    static @Nullable String postWriteValidation(Path file, Tag written) {
+        Tag reread;
+        try {
+            reread = readTag(file);
+        } catch (NbtToolException e) {
+            return "WARNING: post-write validation failed — the file could not be read back as valid NBT ("
+                    + e.getMessage() + "). Do not assume the change took effect; the timestamped .bak backup "
+                    + "taken before this write is intact — restore it if the file is corrupted.";
+        }
+        if (reread.getType() != written.getType()) {
+            return "WARNING: post-write validation — the file read back with root tag type "
+                    + reread.getType().name() + " but " + written.getType().name() + " was written. Verify with "
+                    + "read_nbt; restore the pre-write .bak backup if the content is wrong.";
+        }
+        return null;
     }
 
     /// Atomically writes a tag back to disk, preserving the original compression format.

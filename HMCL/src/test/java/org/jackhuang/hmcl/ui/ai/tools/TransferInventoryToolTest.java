@@ -117,6 +117,43 @@ public final class TransferInventoryToolTest {
     }
 
     @Test
+    void refusesWithEnvelopeWhileWorldIsLocked() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path worldDir = fx.repository().getRunDirectory("Existing").resolve("saves").resolve("MyWorld");
+            Files.createDirectories(worldDir);
+            UUID from = UUID.randomUUID();
+            UUID to = UUID.randomUUID();
+            NbtFixtures.writePlayerData(worldDir, from, 3700, "minecraft:diamond_sword");
+            Path destFile = NbtFixtures.writePlayerData(worldDir, to, 3700, "minecraft:stone");
+            byte[] destBefore = java.nio.file.Files.readAllBytes(destFile);
+
+            // Simulate a running game session holding the world's session.lock (same-JVM
+            // FileChannel#tryLock holder, exactly like GameResourceGuardTest).
+            try (java.nio.channels.FileChannel holder = java.nio.channels.FileChannel.open(
+                    worldDir.resolve("session.lock"),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE)) {
+                java.nio.channels.FileLock held = holder.tryLock();
+                assertTrue(held != null, "test setup: could not take the session lock");
+
+                ToolResult result = tool.execute(Map.of("instance", "Existing", "world", "MyWorld",
+                        "from", from.toString(), "to", to.toString()));
+
+                assertFalse(result.isSuccess(), "a locked world must refuse the transfer");
+                assertTrue(org.jackhuang.hmcl.ai.tools.ToolFailures.isWellFormedEnvelope(result.getError()),
+                        "not a well-formed envelope: " + result.getError());
+                assertTrue(result.getError().contains("Retryable: later"),
+                        "unexpected classification: " + result.getError());
+                assertTrue(result.getError().contains("MyWorld"),
+                        "should name the world: " + result.getError());
+            }
+
+            org.junit.jupiter.api.Assertions.assertArrayEquals(destBefore, Files.readAllBytes(destFile),
+                    "the refused transfer must not touch the destination file");
+        }
+    }
+
+    @Test
     void transfersOnlyTheInventoryLeavingOtherFieldsUntouched() throws Exception {
         try (ProfileFixture fx = new ProfileFixture()) {
             fx.createInstance("Existing");
