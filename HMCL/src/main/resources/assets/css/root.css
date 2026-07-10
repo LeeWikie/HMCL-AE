@@ -2528,8 +2528,34 @@
     -fx-fill: -monet-primary;
 }
 
+/* Ask = the maximally conservative mode (nearly everything asks first); icon reads as a cautious,
+   neutral-warm tint distinct from Auto's primary tint. */
+.ai-pill-ask .svg {
+    -fx-fill: -monet-tertiary;
+}
+
+/* yolo = the mode that skips confirmations, including dangerous ones while attended; icon reads as
+   the error/danger tint so the pill visually flags "less guardrails" at a glance. */
+.ai-pill-yolo .svg {
+    -fx-fill: -monet-error;
+}
+
 /* Toolbar icon buttons (+ attach, / command) reuse the native .toggle-icon4; keep their tint
-   aligned with the surrounding on-surface-variant text. */
+   aligned with the surrounding on-surface-variant text. .toggle-icon4's own native size (30px,
+   see root.css's base rule) was the SECOND contributor — after the model selector's LineComponent
+   48px floor — to the toolbar row being taller than its ~25px pill siblings (Auto / thinking /
+   model / context ring); this scoped override brings attach/slash down to the same ~25px so the
+   whole toolbar row reads as one flat, evenly-sized strip (only inside the composer toolbar —
+   .toggle-icon4 elsewhere in the app is untouched). */
+.ai-composer-toolbar .ai-toolbar-icon {
+    -fx-min-width: 25;
+    -fx-pref-width: 25;
+    -fx-max-width: 25;
+    -fx-min-height: 25;
+    -fx-pref-height: 25;
+    -fx-max-height: 25;
+}
+
 .ai-composer-toolbar .ai-toolbar-icon .svg {
     -fx-fill: -monet-on-surface-variant;
 }
@@ -2731,28 +2757,10 @@
 
 /* ===== Page header ===== */
 
-/* Compact LineSelectButton variant used in the chat header. */
-.ai-header-selector {
-    -fx-font-size: 12px;
-}
-
-.ai-header-selector > .rippler-container > .line-component-container {
-    -fx-padding: 0 4 0 8;
-    -fx-spacing: 8;
-}
-
-.ai-header-selector .trailing-label {
-    -fx-font-size: 12px;
-}
-
-.ai-header-selector .trailing-icon {
-    -fx-padding: 0;
-}
-
-.ai-header-selector .svg {
-    -fx-scale-x: 0.8;
-    -fx-scale-y: 0.8;
-}
+/* (.ai-header-selector, the compact LineSelectButton variant, was removed together with the
+   composer's model-selector LineSelectButton NODE — see AIMainPage#buildComposer's "Model
+   selector" comment: LineComponent hardcodes a 48px min-height floor in Java that no CSS override
+   here could ever have defeated. .ai-pill-model + .ai-toolbar-pill are its replacement.) */
 
 /* Page-header AND drawer title tier (absorbed AIMainPage's former inline 15px-bold setStyle;
    text colour falls back to the global .label on-surface). */

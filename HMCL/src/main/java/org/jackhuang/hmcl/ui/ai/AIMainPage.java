@@ -278,6 +278,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final Label headerTitle = new Label();
     private final Label headerSubtitle = new Label();
     private final Label approvalBadge = new Label();
+    /// The currently-open approval-mode popup, tracked to avoid stacking duplicates (mirrors
+    /// {@link #thinkingPopup} / {@link #contextPopup} / {@link #modelSelectorPopup}).
+    private JFXPopup approvalModePopup;
     /// Header badge shown while plan mode (read-only-until-approved) is active.
     private final Label planBadge = new Label(i18n("ai.chat.plan_badge"));
 
@@ -298,12 +301,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     // ---- Toolbar ----
 
+    /// HEADLESS state/logic holder for the model list — never added to the scene graph (see the
+    /// "Model selector" comment in {@link #buildComposer()} for why: LineComponent hardcodes a
+    /// 48px min-height floor in Java that no CSS can defeat). {@link #modelSelectorBtn} is the
+    /// actual visible compact control; it mirrors this object's value and writes back to it.
     private final LineSelectButton<String> modelSelector = new LineSelectButton<>();
     /// Re-entrancy latch for {@link #setupModelSelector()}: true while the refresh itself is
     /// writing items/value into {@link #modelSelector}, so the (single, installed-once) value
     /// listener can tell a programmatic refresh apart from a real user selection and skip the
     /// side effects (clearAgentCache + settings write) that must only follow a user action.
     private boolean modelSelectorUpdating = false;
+    /// The compact ~25px pill actually shown in the composer toolbar in {@link #modelSelector}'s
+    /// place (a field so tests can find/click it without pixel-hunting the toolbar).
+    private JFXButton modelSelectorBtn;
+    /// The currently-open model-list popup, tracked to avoid stacking duplicates (mirrors
+    /// {@link #thinkingPopup} / {@link #contextPopup}).
+    private JFXPopup modelSelectorPopup;
     // ---- Messages ----
 
     // Spacing 4 keeps same-turn nodes (subordinate cards + answer bubble) visually grouped; turn
@@ -1555,13 +1568,52 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         refreshContextRing();
     }
 
-    /// Refreshes the approval badge. There is only one approval mode now ({@link AiApprovalMode#AUTO}
-    /// — see its own doc for the SAFE/ASK/YOLO merge this replaced), so this no longer varies by
-    /// mode; it just shows the fixed "Auto" label.
+    /// Refreshes the approval badge to match the CURRENTLY PERSISTED {@link AiApprovalMode} (Auto /
+    /// Ask / yolo — see its own doc for the SAFE/ASK/YOLO merge-then-restore history): swaps the
+    /// pill's tint style class, label text and tooltip. Called on session/header refresh and right
+    /// after {@link #setApprovalMode(AiApprovalMode)} persists a new mode, so the pill never shows a
+    /// stale mode.
     private void updateApprovalBadge() {
-        approvalBadge.setText(i18n("ai.settings.approval_badge_auto"));
+        AiApprovalMode mode = AiApprovalMode.fromId(aiSettings.getApprovalMode());
+        approvalBadge.getStyleClass().setAll("ai-toolbar-pill", approvalModePillStyleClass(mode));
+        approvalBadge.setText(i18n(approvalModeLabelKey(mode)));
+        FXUtils.installFastTooltip(approvalBadge, i18n(approvalModeTooltipKey(mode)));
         approvalBadge.setVisible(true);
         approvalBadge.setManaged(true);
+    }
+
+    /// Style class carrying each {@link AiApprovalMode}'s pill/icon tint (root.css's new
+    /// `.ai-pill-ask`/`.ai-pill-yolo` `.svg` rules, added alongside the pre-existing `.ai-pill-auto`
+    /// one): Auto keeps its established primary tint, Ask reads as a cautious/neutral tint, and
+    /// yolo — the mode that skips confirmations, including dangerous ones while attended — reads as
+    /// the error/danger tint.
+    private static String approvalModePillStyleClass(AiApprovalMode mode) {
+        return switch (mode) {
+            case AUTO -> "ai-pill-auto";
+            case ASK -> "ai-pill-ask";
+            case YOLO -> "ai-pill-yolo";
+        };
+    }
+
+    /// i18n key for each {@link AiApprovalMode}'s short pill/menu-row label. The key backing
+    /// {@code YOLO} resolves to the literal lowercase string `"yolo"` in every language file — a
+    /// stylistic label, not a typo (see {@link AiApprovalMode#getDisplayName()}'s own doc) — and must
+    /// stay lowercase; it is intentionally never run through this label as a translated phrase.
+    private static String approvalModeLabelKey(AiApprovalMode mode) {
+        return switch (mode) {
+            case AUTO -> "ai.settings.approval_badge_auto";
+            case ASK -> "ai.settings.approval_badge_ask";
+            case YOLO -> "ai.settings.approval_badge_yolo";
+        };
+    }
+
+    /// i18n key for each {@link AiApprovalMode}'s tooltip / popup-row description text.
+    private static String approvalModeTooltipKey(AiApprovalMode mode) {
+        return switch (mode) {
+            case AUTO -> "ai.composer.auto.tooltip";
+            case ASK -> "ai.composer.ask.tooltip";
+            case YOLO -> "ai.composer.yolo.tooltip";
+        };
     }
 
     // ---- Session management ----
@@ -1732,19 +1784,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputField.getStyleClass().add("ai-input-field");
         HBox.setHgrow(inputField, Priority.ALWAYS);
         inputField.setWrapText(true);
-        // Auto-grow between 1 line (34px) and ~8 lines (180px); beyond that it scrolls inside.
-        // Height is derived from an offscreen Text node mirroring the TextArea's wrapping width —
-        // the previous approach counted only literal '\n' characters, so a single long paragraph
-        // with no manual newline stayed pinned at 1 line height and could only be read by
-        // scrolling INSIDE the box ("一行文字只靠滚轮会丢失阅读的连续性"); WRAPPED lines never
-        // grew the box. A Text node's layout bounds reflect real wrapping without needing to be
-        // attached to the scene graph. Since this Text node is never added to the scene graph,
+        // Auto-grow between 1 line (~26px, empty-state target) and ~8 lines (180px); beyond that
+        // it scrolls inside. Height is derived from an offscreen Text node mirroring the TextArea's
+        // wrapping width — the previous approach counted only literal '\n' characters, so a single
+        // long paragraph with no manual newline stayed pinned at 1 line height and could only be
+        // read by scrolling INSIDE the box ("一行文字只靠滚轮会丢失阅读的连续性"); WRAPPED lines
+        // never grew the box. A Text node's layout bounds reflect real wrapping without needing to
+        // be attached to the scene graph. Since this Text node is never added to the scene graph,
         // CSS (including inline setStyle) never applies to it — so its font is read directly off
         // inputField (which IS in the live scene and has real, CSS-resolved font info) each time
         // the height is recomputed, instead of guessing a literal font-size that could drift from
         // .ai-input-field's actual CSS (notably for a CJK-capable custom font-family).
-        inputField.setMinHeight(34);
-        inputField.setPrefHeight(34);
+        inputField.setMinHeight(26);
+        inputField.setPrefHeight(26);
         inputField.setMaxHeight(180);
         javafx.scene.text.Text inputHeightMeasurer = new javafx.scene.text.Text();
         // The wrapping width subtracts the TextArea's REAL insets (CSS border + padding) instead
@@ -1760,8 +1812,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             inputHeightMeasurer.setFont(inputField.getFont()); // real, CSS-resolved font — not a guess
             String t = inputField.getText();
             inputHeightMeasurer.setText(t == null || t.isEmpty() ? " " : t);
-            double measured = inputHeightMeasurer.getLayoutBounds().getHeight() + 16;
-            inputField.setPrefHeight(Math.min(180, Math.max(34, measured)));
+            // Same principle as the wrapping-width binding above (bug-hunt 4.2): add the TextArea's
+            // REAL, CSS-resolved vertical insets instead of a flat magic constant, so a
+            // padding/border change in .ai-input-field (or the .ai-composer override that blends it
+            // into the card) can never desync this measurement again. This also replaces a stale
+            // "+16" that was tuned for the input field's OLD, larger 34px empty-state height.
+            Insets insets = inputField.getInsets();
+            double measured = inputHeightMeasurer.getLayoutBounds().getHeight()
+                    + insets.getTop() + insets.getBottom();
+            inputField.setPrefHeight(Math.min(180, Math.max(26, measured)));
         };
         inputField.textProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
         inputField.widthProperty().addListener((o, ov, nv) -> recomputeInputHeight.run());
@@ -1869,17 +1928,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         VBox.setVgrow(inputField, Priority.NEVER);
 
-        // ---- Auto (permission mode) pill ----
+        // ---- Approval-mode (permission mode) pill ----
         // Reuses the former header `approvalBadge` Label, restyled as a clickable toolbar pill.
-        // There is a single approval mode today (Auto — see AiApprovalMode's doc); the click shows
-        // the mode list so it reads as "view / switch mode" and stays future-proof. The unattended
-        // hard-block / dangerous-confirm semantics are unchanged (enforced in AiExecutionPolicy).
-        approvalBadge.getStyleClass().setAll("ai-toolbar-pill", "ai-pill-auto");
+        // AiApprovalMode is a three-way pick again (Auto / Ask / yolo — see its own doc for the
+        // SAFE/ASK/YOLO merge-then-restore history); clicking pops the mode list
+        // (showApprovalModePopup) so the user can actually switch, not just view it.
+        // updateApprovalBadge() owns the per-mode text/style/tooltip and is also what refreshes the
+        // pill right after a switch. The unattended hard-block / dangerous-confirm semantics live in
+        // AiExecutionPolicy and do not depend on how many modes are offered here.
         approvalBadge.setGraphic(SVG.ROCKET_LAUNCH.createIcon(14));
-        approvalBadge.setText(i18n("ai.settings.approval_badge_auto"));
-        approvalBadge.setVisible(true);
-        approvalBadge.setManaged(true);
-        FXUtils.installFastTooltip(approvalBadge, i18n("ai.composer.auto.tooltip"));
+        updateApprovalBadge();
         FXUtils.onClicked(approvalBadge, this::showApprovalModePopup);
 
         // ---- Thinking-level pill ----
@@ -1899,13 +1957,45 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         thinkBtn.setOnAction(e -> openThinkingSlider());
 
-        // ---- Model selector (moved down from the header) ----
-        // Shows the model alias only; the dropdown reveals the full "Provider / Model". Lets it
-        // shrink so the toolbar can get narrow without ever pushing the Send button out of view.
-        modelSelector.setMinWidth(90);
-        modelSelector.setMaxWidth(180);
-        modelSelector.getStyleClass().add("ai-header-selector");
+        // ---- Model selector (moved down from the header; v3 — compact pill) ----
+        // `modelSelector` (declared above as a LineSelectButton<String>) is kept as a HEADLESS
+        // state/logic holder ONLY from here on: setupModelSelector() / installModelSelectorListener()
+        // / refreshModelSelector() keep reading and writing its items/value/converters completely
+        // unchanged (ModelSelectorListenerFxTest drives modelSelector.setValue()/valueProperty()
+        // directly and must keep passing untouched) — but the LineSelectButton NODE itself is never
+        // added to the scene graph.
+        //
+        // Root cause of the "composer empty state is way too tall" report: LineComponent
+        // (LineSelectButton's grandparent) hardcodes `private static final double MIN_HEIGHT = 48.0`
+        // both in its constructor (an unconditional `setMinHeight(48)`) and in
+        // computeMinHeight()/computePrefHeight() (`Math.max(MIN_HEIGHT, ...)`, re-applied on every
+        // width change via a widthProperty listener) — no CSS override and no external
+        // `setMinHeight(...)` call from here can ever beat that floor; it is baked into Java, not
+        // style. With the real LineSelectButton sitting in the toolbar's rightGroup, that one 48px
+        // child forced the WHOLE toolbar row (and with it the whole composer) to balloon to
+        // ~55px/~133px respectively — even though every sibling pill (Auto / thinking / context
+        // ring) was already a compact ~25px. modelSelectorBtn below is the control that is actually
+        // VISIBLE: a plain compact JFXButton wearing .ai-toolbar-pill — the SAME ~25px pill style
+        // every sibling control uses — showing the current model's alias. Clicking it pops a
+        // PopupMenu listing modelSelector's items (mirrors showApprovalModePopup's
+        // PopupMenu/IconedMenuItem pattern below); picking one calls modelSelector.setValue(...), so
+        // the existing listener/persistence path fires exactly as a real LineSelectButton pick did.
+        modelSelectorBtn = new JFXButton();
+        modelSelectorBtn.getStyleClass().addAll("ai-toolbar-pill", "ai-pill-model");
+        modelSelectorBtn.setGraphic(SVG.UNFOLD_MORE.createIcon(12));
+        modelSelectorBtn.setContentDisplay(javafx.scene.control.ContentDisplay.RIGHT);
+        modelSelectorBtn.setTextOverrun(javafx.scene.control.OverrunStyle.CENTER_ELLIPSIS);
+        modelSelectorBtn.setMinWidth(70);
+        modelSelectorBtn.setMaxWidth(160);
+        FXUtils.installFastTooltip(modelSelectorBtn, i18n("ai.model.select"));
+        modelSelectorBtn.setOnAction(e -> showModelSelectorPopup());
+        Runnable syncModelSelectorBtnText = () -> {
+            String val = modelSelector.getValue();
+            modelSelectorBtn.setText(modelPartOf(val == null ? "" : val));
+        };
+        modelSelector.valueProperty().addListener((obs, old, val) -> syncModelSelectorBtnText.run());
         setupModelSelector();
+        syncModelSelectorBtnText.run();
 
         // ---- Context-usage ring (v2) ----
         // Pure arc, no number; arc length = used/total of the current session's context window.
@@ -1922,7 +2012,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         leftGroup.setAlignment(Pos.CENTER_LEFT);
         leftGroup.setMinWidth(0); // may squeeze to nothing (its children wrap) before the right group yields
 
-        HBox rightGroup = new HBox(6, modelSelector, thinkBtn, contextRing);
+        HBox rightGroup = new HBox(6, modelSelectorBtn, thinkBtn, contextRing);
         rightGroup.setAlignment(Pos.CENTER_RIGHT);
         rightGroup.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE); // model/think/ring never fold into overflow
 
@@ -1940,7 +2030,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         HBox.setHgrow(inputField, Priority.ALWAYS);
 
         // ---- Composer card: input row (top) + toolbar (bottom), one rounded bordered box ----
-        VBox composerCard = new VBox(6, jobsPane, askPanel, fileChipArea, inputRow, toolbar);
+        // Spacing 8 = the gap between the input row and the toolbar row in the empty-state target
+        // (jobsPane/askPanel/fileChipArea are unmanaged when hidden and contribute no gap).
+        VBox composerCard = new VBox(8, jobsPane, askPanel, fileChipArea, inputRow, toolbar);
         composerCard.getStyleClass().add("ai-composer");
         composerCard.setMaxWidth(Double.MAX_VALUE);
         // The composer must never be squeezed away in a short window.
@@ -2179,24 +2271,73 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         handleSlashAutocomplete("/");
     }
 
-    /// Shows the approval-mode list from the Auto pill. One mode exists today (Auto — see
-    /// AiApprovalMode's doc for the SAFE/ASK/YOLO merge); the checked row makes the current mode
-    /// legible and keeps the surface future-proof if more modes ever return. Selecting the (only)
-    /// mode is a no-op — the unattended hard-block / dangerous-confirm semantics live in
-    /// AiExecutionPolicy and are not user-switchable here.
-    private void showApprovalModePopup() {
+    /// Shows the model list from the compact {@link #modelSelectorBtn} pill — a PopupMenu /
+    /// IconedMenuItem list mirroring {@link #showApprovalModePopup()} below (same construct, same
+    /// checked-row convention), used INSTEAD of firing the headless {@link #modelSelector}'s own
+    /// LineSelectButton popup (which would require the LineSelectButton node to be in the scene
+    /// graph, reintroducing the 48px-floor toolbar row this whole compact pill exists to avoid —
+    /// see the "Model selector" comment in {@link #buildComposer()}). Picking a row calls
+    /// {@code modelSelector.setValue(...)}, which drives the one, already-installed
+    /// {@link #installModelSelectorListener()} listener exactly like a real LineSelectButton pick.
+    private void showModelSelectorPopup() {
+        if (modelSelectorPopup != null && modelSelectorPopup.isShowing()) {
+            modelSelectorPopup.hide();
+            return;
+        }
         PopupMenu menu = new PopupMenu();
         JFXPopup popup = new JFXPopup(menu);
+        modelSelectorPopup = popup;
+        String current = modelSelector.getValue();
+        for (String label : modelSelector.getItems()) {
+            boolean active = java.util.Objects.equals(label, current);
+            menu.getContent().add(new IconedMenuItem(active ? SVG.CHECK : null, label,
+                    () -> modelSelector.setValue(label), popup));
+        }
+        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(modelSelectorBtn, popup);
+        popup.show(modelSelectorBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
+                0,
+                vPosition == JFXPopup.PopupVPosition.TOP ? modelSelectorBtn.getHeight() : -modelSelectorBtn.getHeight());
+    }
+
+    /// Shows the approval-mode list from the pill: Auto / Ask / yolo (see AiApprovalMode's doc for
+    /// the SAFE/ASK/YOLO merge-then-restore history). A second click while showing closes it instead
+    /// of stacking another (mirrors {@link #openThinkingSlider()} / {@link #showContextPopup()} /
+    /// {@link #showModelSelectorPopup()}'s toggle behaviour). The checked row marks the
+    /// currently-persisted mode; picking a different row persists it via
+    /// {@link #setApprovalMode(AiApprovalMode)} and refreshes the pill. The unattended hard-block /
+    /// dangerous-confirm semantics live in AiExecutionPolicy and are unaffected by this switch (yolo
+    /// cannot relax them either — see that class's doc).
+    private void showApprovalModePopup() {
+        if (approvalModePopup != null && approvalModePopup.isShowing()) {
+            approvalModePopup.hide();
+            return;
+        }
+        PopupMenu menu = new PopupMenu();
+        JFXPopup popup = new JFXPopup(menu);
+        approvalModePopup = popup;
+        AiApprovalMode current = AiApprovalMode.fromId(aiSettings.getApprovalMode());
         for (AiApprovalMode mode : AiApprovalMode.values()) {
-            boolean active = AiApprovalMode.fromId(aiSettings.getApprovalMode()) == mode;
+            boolean active = current == mode;
             menu.getContent().add(new IconedMenuItem(active ? SVG.CHECK : null,
-                    i18n("ai.settings.approval_badge_auto"), popup::hide, popup)
-                    .addTooltip(i18n("ai.composer.auto.tooltip")));
+                    i18n(approvalModeLabelKey(mode)), () -> setApprovalMode(mode), popup)
+                    .addTooltip(i18n(approvalModeTooltipKey(mode))));
         }
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
         popup.show(approvalBadge, vPosition, JFXPopup.PopupHPosition.LEFT,
                 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
+    }
+
+    /// Persists a newly-picked {@link AiApprovalMode} (from {@link #showApprovalModePopup()}'s rows)
+    /// into {@link AiSettings} and refreshes the pill. A no-op if the mode picked is already the
+    /// persisted one, so re-clicking the current row doesn't re-fire a redundant save.
+    private void setApprovalMode(AiApprovalMode mode) {
+        if (AiApprovalMode.fromId(aiSettings.getApprovalMode()) == mode) {
+            return;
+        }
+        aiSettings.approvalModeProperty().set(mode.getId());
+        persistAiSettings();
+        updateApprovalBadge();
     }
 
     // ---- Search dialog ----

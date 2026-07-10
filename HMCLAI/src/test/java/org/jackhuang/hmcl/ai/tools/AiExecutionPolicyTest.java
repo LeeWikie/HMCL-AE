@@ -23,12 +23,17 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /// Unit tests for {@link AiExecutionPolicy}, covering:
-/// - The Auto model (post SAFE/ASK/YOLO merge — see {@link AiApprovalMode}'s own doc): everyday
-///   operations stay low-friction, dangerous operations ask while attended, and a dangerous
-///   operation is hard-BLOCKed — never merely asked — whenever the turn may be unattended.
+/// - The Auto model (unchanged across the SAFE/ASK/YOLO &rarr; single-AUTO &rarr;
+///   restored-Auto/Ask/yolo history — see {@link AiApprovalMode}'s own doc): everyday operations
+///   stay low-friction, dangerous operations ask while attended, and a dangerous operation is
+///   hard-BLOCKed — never merely asked — whenever the turn may be unattended.
+/// - The restored Ask and yolo modes: Ask is the maximally conservative pick (nearly everything
+///   asks), yolo is the maximally permissive pick (nearly everything auto-runs, dangerous
+///   operations included while attended) — and, critically, the unattended DANGEROUS_WRITE
+///   hard-BLOCK applies identically under all three modes, including yolo.
 /// - Part C: the create-vs-edit/remove split ({@link EditOrRemoveActions}) — file-write
-///   confirmation is policy-decided (no user toggle anymore): pure creation runs automatically,
-///   an action that edits or removes something that already existed always asks.
+///   confirmation is policy-decided (no user toggle anymore) under Auto: pure creation runs
+///   automatically, an action that edits or removes something that already existed always asks.
 /// - Part E: Plan Mode BLOCKing CONTROLLED_WRITE/DANGEROUS_WRITE outright (never merely asking),
 ///   while READ_ONLY/EXTERNAL_NETWORK calls are unaffected — the fix for
 ///   {@code AIMainPage.applyPlanGating()}'s wholesale over-blocking of the 6 merged domain facades
@@ -104,6 +109,126 @@ public final class AiExecutionPolicyTest {
         AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true, true);
         assertEquals(AiExecutionPolicy.Decision.ALLOW,
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true));
+    }
+
+    // ---- Restored three-way mode: Ask (the maximally conservative pick) ----
+
+    @Test
+    void askAsksForReadOnlyAndExternalNetwork() {
+        // Ask exists precisely because some users want to be prompted for literally everything,
+        // not just the dangerous stuff Auto already gates — this is what makes it meaningfully
+        // stricter than Auto rather than a re-skinned copy of it.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+        assertEquals(AiExecutionPolicy.Decision.ASK,
+                policy.check("read", null, ToolPermission.READ_ONLY, false, false));
+        assertEquals(AiExecutionPolicy.Decision.ASK,
+                policy.check("web_search", null, ToolPermission.EXTERNAL_NETWORK, false, false));
+    }
+
+    @Test
+    void askAsksForControlledWriteEvenPureCreation() {
+        // Under Auto, pure creation (e.g. instance/create) auto-runs. Under Ask it must still ask
+        // — the create-vs-edit/remove split is an Auto-only relaxation.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+        assertEquals(AiExecutionPolicy.Decision.ASK,
+                policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, false, false));
+        assertEquals(AiExecutionPolicy.Decision.ASK,
+                policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false, false));
+    }
+
+    @Test
+    void askAsksForDangerousWriteRegardlessOfTheConfirmationToggle() {
+        // Under Auto, turning the dangerous-confirmation toggle off relaxes DANGEROUS_WRITE to
+        // ALLOW while attended. Ask must NOT honor that toggle at all — it always asks.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, false);
+        assertEquals(AiExecutionPolicy.Decision.ASK,
+                policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
+    }
+
+    @Test
+    void askIsMeaningfullyStricterThanAutoAcrossTheWholeMatrix() {
+        // Ask must never be more permissive than Auto for the same call — that would defeat the
+        // entire point of choosing it. (It's fine, and expected, for Ask to be strictly stricter.)
+        AiExecutionPolicy auto = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
+        AiExecutionPolicy ask = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+        for (ToolPermission permission : ToolPermission.values()) {
+            assertEquals(AiExecutionPolicy.Decision.ASK,
+                    ask.check("instance", "create", permission, false, false),
+                    "Ask must ask for permission=" + permission);
+        }
+    }
+
+    // ---- Restored three-way mode: yolo (the maximally permissive pick) ----
+
+    @Test
+    void yoloAllowsReadOnlyExternalNetworkAndControlledWriteWithoutAsking() {
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.YOLO, true);
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("read", null, ToolPermission.READ_ONLY, false, false));
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("web_search", null, ToolPermission.EXTERNAL_NETWORK, false, false));
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, false, false));
+    }
+
+    @Test
+    void yoloAllowsEditOrRemoveControlledWriteUnlikeAuto() {
+        // Auto's create-vs-edit/remove split (EditOrRemoveActions) does not apply under yolo —
+        // restoring the old YOLO semantics of "everything auto-runs, no questions asked".
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.YOLO, true);
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false, false));
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("account", "set_skin", ToolPermission.CONTROLLED_WRITE, false, false));
+    }
+
+    @Test
+    void yoloAllowsDangerousWriteWhileAttendedRegardlessOfTheConfirmationToggle() {
+        // This is the core restored behavior: yolo skips the dangerous-confirmation ask even with
+        // the toggle ON, unlike Auto (which still asks unless the toggle is explicitly off).
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.YOLO, true);
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
+
+        AiExecutionPolicy lenientToggle = new AiExecutionPolicy(AiApprovalMode.YOLO, false);
+        assertEquals(AiExecutionPolicy.Decision.ALLOW,
+                lenientToggle.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
+    }
+
+    // ---- The non-negotiable invariant: unattended DANGEROUS_WRITE is BLOCKed under EVERY mode ----
+
+    @Test
+    void unattendedDangerousWriteIsHardBlockedUnderEveryApprovalModeIncludingYolo() {
+        // This is the one rule that must survive the SAFE/ASK/YOLO restoration completely
+        // unscathed: no matter which mode is selected -- including yolo, whose entire purpose is
+        // to skip confirmations -- a DANGEROUS_WRITE reached while the turn may be unattended is
+        // hard-BLOCKed, never merely asked and never allowed. Both values of the
+        // dangerous-confirmation toggle are covered so the toggle can't be used as a side-door
+        // around this either.
+        for (AiApprovalMode mode : AiApprovalMode.values()) {
+            for (boolean confirmationEnabled : new boolean[]{true, false}) {
+                AiExecutionPolicy policy = new AiExecutionPolicy(mode, confirmationEnabled);
+                assertEquals(AiExecutionPolicy.Decision.BLOCK,
+                        policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true),
+                        "mode=" + mode + " dangerousConfirmationEnabled=" + confirmationEnabled
+                                + " must hard-BLOCK an unattended DANGEROUS_WRITE");
+            }
+        }
+    }
+
+    @Test
+    void unattendedDangerousWriteBlockCannotBeRescuedByAPerToolAlwaysAllowOverride() {
+        // The BLOCK from the check above must also survive AiToolPermissionStore.OverrideMode#apply
+        // — the one place a per-tool "remembered yes" could otherwise try to relax it.
+        for (AiApprovalMode mode : AiApprovalMode.values()) {
+            AiExecutionPolicy policy = new AiExecutionPolicy(mode, true);
+            AiExecutionPolicy.Decision base =
+                    policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true);
+            assertEquals(AiExecutionPolicy.Decision.BLOCK, base);
+            assertEquals(AiExecutionPolicy.Decision.BLOCK,
+                    AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW.apply(base, ToolPermission.DANGEROUS_WRITE),
+                    "mode=" + mode + ": ALWAYS_ALLOW override must not rescue an unattended-dangerous BLOCK");
+        }
     }
 
     // ---- Part E: Plan Mode ----
@@ -207,11 +332,11 @@ public final class AiExecutionPolicyTest {
     }
 
     @Test
-    void editOrRemoveForcedAskAppliesUnderAutoUnlikeTheOldYolo() {
-        // Before the SAFE/ASK/YOLO merge, picking YOLO bypassed this forced-ask gate entirely — an
-        // unconditional "skip literally everything" escape hatch. Auto has no such independently
-        // selectable full-bypass tier anymore (see AiApprovalMode's own doc), so the same call now
-        // asks like it always would under the old SAFE/ASK modes.
+    void editOrRemoveForcedAskAppliesUnderAutoButNotUnderYolo() {
+        // Auto enforces the create-vs-edit/remove split unconditionally — there is no toggle that
+        // bypasses it while Auto is selected. Picking `yolo` instead (see the yolo-specific tests
+        // above) is the only way to skip this forced ask — restoring the old YOLO semantics as an
+        // explicit, separately-selected mode rather than a hidden escape hatch inside Auto.
         AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("instance", "rename", ToolPermission.CONTROLLED_WRITE, false));

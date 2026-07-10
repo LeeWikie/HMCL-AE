@@ -37,18 +37,30 @@ import static org.jackhuang.hmcl.ui.ai.AiMainPageFxTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/// Structural gate for the composer redesign, updated for the v2 精修. Automated tests cannot judge
-/// visual alignment/reflow — that is verified on a real machine — but they CAN pin the structural
-/// invariants:
-///  ① the Auto pill and the model selector both live INSIDE the composer card (they moved out of
-///     the header);
+/// Structural gate for the composer redesign, updated for the v2 精修 and then for the v3 compact-
+/// pill height fix. Automated tests cannot judge visual alignment/reflow — that is verified on a
+/// real machine — but they CAN pin the structural invariants AND (unlike alignment) the exact
+/// pixel heights JavaFX itself computed, by driving a REAL {@link AIMainPage} through TestFX and
+/// reading {@code Node.getHeight()} / {@code getLayoutBounds()} after layout ({@code
+/// getBoundsInLocal()} is deliberately avoided for height assertions — it also unions in a raised
+/// button's drop-shadow effect, overstating the real footprint):
+///  ① the Auto pill and the model selector button both live INSIDE the composer card (they moved
+///     out of the header);
 ///  ② v2 §7: Send/Stop is a square that lives in the INPUT ROW (`.ai-input-row`), NOT in the bottom
 ///     toolbar; the model selector + thinking pill + context ring sit in the toolbar's right group;
 ///  ③ v2 §6: the Auto pill sits in the WRAPPING left FlowPane while the thinking pill moved to the
 ///     right group (toolbar, not FlowPane);
 ///  ④ after shrinking the window to a very narrow width, Send stays visible and fully within the
 ///     composer card's horizontal bounds (it is pinned to the input row's right edge);
-///  ⑤ v2 §5: the context ring exists in the toolbar and is clickable.
+///  ⑤ v2 §5: the context ring exists in the toolbar and is clickable;
+///  ⑥ v3: the model selector is rendered by a COMPACT `modelSelectorBtn` pill (~25px, matching the
+///     Auto/thinking/context-ring siblings), never by the headless `modelSelector` LineSelectButton
+///     — whose LineComponent ancestor hardcodes a 48px min-height floor in Java that no CSS override
+///     can defeat (confirmed root cause of the "composer empty state is way too tall" report: with
+///     the real LineSelectButton in the toolbar, it alone forced the whole toolbar row to ~55px and
+///     the whole composer card to ~133px in the empty state) — {@link #modelSelectorIsCompactPill()}
+///     pins the fixed height, and {@link #composerEmptyStateIsCompact()} pins the resulting overall
+///     empty-state dimensions.
 public final class ComposerLayoutFxTest {
 
     @BeforeAll
@@ -79,14 +91,16 @@ public final class ComposerLayoutFxTest {
         JFXButton sendBtn = (JFXButton) getField(page, "sendBtn");
         JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
         Label autoPill = (Label) getField(page, "approvalBadge");
-        LineSelectButton<?> modelSelector = (LineSelectButton<?>) getField(page, "modelSelector");
+        // v3: the VISIBLE model control is the compact modelSelectorBtn pill, not the headless
+        // modelSelector LineSelectButton (see class doc ⑥ / modelSelectorIsCompactPill() below).
+        JFXButton modelSelectorBtn = (JFXButton) getField(page, "modelSelectorBtn");
         Node contextRing = (Node) getField(page, "contextRing");
 
-        // ① Auto pill + model selector are inside the composer card (they moved down from the header).
+        // ① Auto pill + model selector button are inside the composer card (moved down from the header).
         assertTrue(hasAncestorWithStyleClass(autoPill, "ai-composer"),
                 "the Auto pill must live inside the composer card (moved out of the header)");
-        assertTrue(hasAncestorWithStyleClass(modelSelector, "ai-composer"),
-                "the model selector must live inside the composer card (moved out of the header)");
+        assertTrue(hasAncestorWithStyleClass(modelSelectorBtn, "ai-composer"),
+                "the model selector button must live inside the composer card (moved out of the header)");
 
         // ② v2 §7: Send is a square in the INPUT ROW, not the bottom toolbar.
         assertTrue(hasAncestorWithStyleClass(sendBtn, "ai-input-row"),
@@ -98,8 +112,8 @@ public final class ComposerLayoutFxTest {
 
         // ③ v2 §6: model + thinking + ring are in the toolbar; the Auto pill sits in the wrapping
         //    left FlowPane while thinking moved to the right group (toolbar, NOT a FlowPane child).
-        assertTrue(hasAncestorWithStyleClass(modelSelector, "ai-composer-toolbar"),
-                "the model selector must live in the composer's bottom toolbar");
+        assertTrue(hasAncestorWithStyleClass(modelSelectorBtn, "ai-composer-toolbar"),
+                "the model selector button must live in the composer's bottom toolbar");
         assertTrue(hasAncestorWithStyleClass(thinkBtn, "ai-composer-toolbar"),
                 "the thinking pill must live in the composer's bottom toolbar");
         assertFalse(hasAncestorOfType(thinkBtn, FlowPane.class),
@@ -115,6 +129,113 @@ public final class ComposerLayoutFxTest {
                 "the context ring must live in the composer's bottom toolbar");
 
         assertTrue(sendBtn.isVisible() && sendBtn.isManaged(), "Send must be visible/managed");
+    }
+
+    @Test
+    public void modelSelectorIsCompactPill() throws Exception {
+        AIMainPage page = showPage();
+
+        // The old, rejected shape: modelSelector is a LineSelectButton, and LineComponent (its
+        // grandparent) hardcodes `private static final double MIN_HEIGHT = 48.0` in BOTH its
+        // constructor (an unconditional setMinHeight(48)) and in computeMinHeight()/
+        // computePrefHeight() (Math.max(MIN_HEIGHT, ...), re-applied on every width change) — no
+        // CSS override can beat that floor. Confirming that object is never attached to the scene
+        // pins the fix: the toolbar must never be able to regrow the old 48px/55px/133px chain.
+        LineSelectButton<?> modelSelector = (LineSelectButton<?>) getField(page, "modelSelector");
+        assertNull(modelSelector.getParent(),
+                "the headless modelSelector LineSelectButton must never be added to the scene graph "
+                        + "(its LineComponent ancestor hardcodes a 48px min-height floor in Java that "
+                        + "would balloon the whole toolbar row again)");
+
+        JFXButton modelSelectorBtn = (JFXButton) getField(page, "modelSelectorBtn");
+        JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
+        Node contextRing = (Node) getField(page, "contextRing");
+        assertNotNull(modelSelectorBtn.getParent(), "modelSelectorBtn must be in the scene graph");
+
+        double modelH = modelSelectorBtn.getHeight();
+        double thinkH = thinkBtn.getHeight();
+        double ringH = contextRing.getLayoutBounds().getHeight();
+
+        // Precise: modelSelectorBtn wears the exact same .ai-toolbar-pill style as thinkBtn, so the
+        // two MUST resolve to the identical real layout height.
+        assertEquals(thinkH, modelH, 0.5,
+                "the model selector pill must be the SAME height as the thinking pill "
+                        + "(both wear .ai-toolbar-pill) — model=" + modelH + " think=" + thinkH);
+        assertEquals(25.0, modelH, 1.0,
+                "the model selector pill must be the compact ~25px .ai-toolbar-pill height, "
+                        + "not LineComponent's 48px floor — was " + modelH);
+        assertEquals(ringH, modelH, 2.0,
+                "the model selector pill must be within a couple px of the context ring's height "
+                        + "(both are toolbar siblings meant to read as one even strip) — model="
+                        + modelH + " ring=" + ringH);
+    }
+
+    @Test
+    public void composerEmptyStateIsCompact() throws Exception {
+        AIMainPage page = showPage();
+
+        javafx.scene.control.TextArea inputField =
+                (javafx.scene.control.TextArea) getField(page, "inputField");
+        Node inputRow = page.lookup(".ai-input-row");
+        Node toolbar = page.lookup(".ai-composer-toolbar");
+        Node composerCard = page.lookup(".ai-composer");
+        assertNotNull(inputRow, "composer must expose its input row node");
+        assertNotNull(toolbar, "composer must expose its toolbar node");
+        assertNotNull(composerCard, "composer must expose its card node");
+
+        // NOTE: layout height, not getBoundsInLocal() — the latter also unions in the Send square's
+        // raised-button drop-shadow effect (a pre-existing cosmetic bleed a couple px below its own
+        // box, unrelated to this fix), which is not space the layout actually reserves and would
+        // make these numbers overstate the real footprint.
+
+        // ① empty-state input field rests at ~1 line (~26px), not the old, larger 34px.
+        assertEquals(26.0, inputField.getMinHeight(), 1.0,
+                "empty-state input field min-height must be ~26px (1 line) — was "
+                        + inputField.getMinHeight());
+        assertEquals(inputField.getMinHeight(), inputField.getPrefHeight(), 0.01,
+                "empty-state input field must rest exactly at its min-height floor (no content to grow for)");
+        double inputRowH = inputRow.getLayoutBounds().getHeight();
+        assertEquals(26.0, inputRowH, 2.0,
+                "input row's real layout height must be ~26px in the empty state — was " + inputRowH);
+
+        // ② the toolbar row is a slim strip now that no child forces a 48px floor — measured exactly
+        // 25px on this machine (every child is the same ~25px .ai-toolbar-pill height); loosely
+        // bounded so minor font/DPI drift elsewhere doesn't make this test flaky, but tight enough
+        // to fail hard if the old 48px floor (which alone pushed this to ~55px) ever comes back.
+        double toolbarH = toolbar.getLayoutBounds().getHeight();
+        assertTrue(toolbarH > 15 && toolbarH < 35,
+                "toolbar row must be a compact strip (~25px), not ballooned by the old 48px "
+                        + "LineComponent floor (~55px+) — was " + toolbarH);
+
+        // ③ the whole composer card in the empty state is compact overall — measured 59px on this
+        // machine, nowhere near the pre-fix ~133px (modelSelector's 48px floor alone pushed the
+        // toolbar to ~55px and the whole card past ~130px; see modelSelectorIsCompactPill()) and
+        // comfortably under the ~84px target given in the bug report.
+        double cardH = composerCard.getLayoutBounds().getHeight();
+        assertTrue(cardH > 40 && cardH < 90,
+                "composer card must be compact overall in the empty state (~59-84px), not the "
+                        + "pre-fix ~133px — was " + cardH);
+    }
+
+    @Test
+    public void modelSelectorPillOpensAndTogglesPopup() throws Exception {
+        AIMainPage page = showPage();
+        JFXButton modelSelectorBtn = (JFXButton) getField(page, "modelSelectorBtn");
+
+        // Clicking the compact pill must still open the model-picker popup (mirrors
+        // showApprovalModePopup's toggle behaviour: a second click while showing closes it instead
+        // of stacking another) — the interaction the old LineSelectButton used to provide natively.
+        WaitForAsyncUtils.asyncFx(modelSelectorBtn::fire).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        com.jfoenix.controls.JFXPopup popup =
+                (com.jfoenix.controls.JFXPopup) getField(page, "modelSelectorPopup");
+        assertNotNull(popup, "clicking the model selector pill must build/open its popup");
+        assertTrue(popup.isShowing(), "the model selector popup must be showing after one click");
+
+        WaitForAsyncUtils.asyncFx(modelSelectorBtn::fire).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(popup.isShowing(), "a second click must close the popup instead of stacking another");
     }
 
     @Test

@@ -40,19 +40,25 @@ import java.util.regex.Pattern;
 /// The global approval mode still lives in {@code AiSettings}; this store only
 /// records per-tool overrides. A missing tool entry means "follow global".
 ///
-/// ## Post SAFE/ASK/YOLO-merge shape
+/// ## Shape, independent of how many global approval modes exist
 ///
-/// Before the approval-mode merge (see {@link org.jackhuang.hmcl.ai.AiApprovalMode}'s own doc),
-/// an override picked one of the same three tiers as the (then three-way) global mode. Now that
-/// the global mode is a single, context-sensitive `Auto`, "override to a specific tier" no longer
-/// means anything — so {@link OverrideMode} instead directly describes the two ways a per-tool
-/// override can DIFFER from Auto's own computed decision: always skip asking ({@link
-/// OverrideMode#ALWAYS_ALLOW}) or always keep asking / stay conservative regardless of the global
-/// toggles ({@link OverrideMode#ALWAYS_ASK}). Both are still load-bearing: the "remember this
-/// choice" checkbox on a confirmation dialog (see {@code AIMainPage#rememberConfirmDecision})
-/// records exactly one of these two outcomes for that tool/action, and — critically — neither can
-/// ever unblock a call the policy has already hard-BLOCKed (Plan Mode, or a DANGEROUS_WRITE call on
-/// a possibly-unattended turn); see {@link OverrideMode#apply}.
+/// Before the original approval-mode merge (see {@link org.jackhuang.hmcl.ai.AiApprovalMode}'s own
+/// doc for the SAFE/ASK/YOLO &rarr; single-AUTO &rarr; restored-Auto/Ask/yolo history), an override
+/// picked one of the same three tiers as the (then three-way) global mode. During the single-mode
+/// era, "override to a specific tier" stopped meaning anything, so {@link OverrideMode} was
+/// redesigned to instead directly describe the two ways a per-tool override can DIFFER from the
+/// global mode's own computed decision: always skip asking ({@link OverrideMode#ALWAYS_ALLOW}) or
+/// always keep asking / stay conservative regardless of the global toggles ({@link
+/// OverrideMode#ALWAYS_ASK}). That two-direction shape is orthogonal to how many global modes exist
+/// — it reads just as naturally against today's restored three-way `Auto`/`Ask`/`yolo` pick as it
+/// did against the single `Auto` mode, so it was NOT reverted back to a three-tier override when
+/// the global mode was restored to three values. Both directions are still load-bearing: the
+/// "remember this choice" checkbox on a confirmation dialog (see
+/// {@code AIMainPage#rememberConfirmDecision}) records exactly one of these two outcomes for that
+/// tool/action, and — critically — neither can ever unblock a call the policy has already
+/// hard-BLOCKed (Plan Mode, or a DANGEROUS_WRITE call on a possibly-unattended turn — a rule that
+/// holds no matter which of the three global modes, including `yolo`, is active); see
+/// {@link OverrideMode#apply}.
 @NotNullByDefault
 public final class AiToolPermissionStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();

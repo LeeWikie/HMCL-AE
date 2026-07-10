@@ -7,29 +7,44 @@ import org.jetbrains.annotations.Nullable;
 /// Decides whether a tool invocation is allowed, given its {@link ToolPermission}, whether Plan
 /// Mode is active, and whether the current turn may be running unattended.
 ///
-/// # The Auto model
+/// # The three approval modes
 ///
-/// There is only one {@link AiApprovalMode} now (`AUTO` — see its own doc for the history of the
-/// SAFE/ASK/YOLO merge this replaced). Its rules:
+/// See {@link AiApprovalMode}'s own doc for the full SAFE/ASK/YOLO -> single-AUTO ->
+/// restored-Auto/Ask/yolo history. Two gates run BEFORE mode is even consulted and apply
+/// identically no matter which mode is selected (see the paragraph below the table). Once past
+/// those, the remaining decision is:
 ///
-/// | Permission        | Attended                                   | Possibly unattended |
-/// |-------------------|---------------------------------------------|----------------------|
-/// | READ_ONLY         | allow                                        | allow                |
-/// | EXTERNAL_NETWORK  | allow                                        | allow                |
-/// | CONTROLLED_WRITE  | allow, unless the file-write-confirm toggle (or the create-vs-edit/remove split, see {@link EditOrRemoveActions}) says ask | same as attended |
-/// | DANGEROUS_WRITE   | ask, unless the dangerous-confirmation toggle is off, in which case allow | **BLOCK — never merely asked** |
+/// | Permission        | `AUTO` (default)                                                                          | `ASK`                               | `yolo`                                                        |
+/// |-------------------|--------------------------------------------------------------------------------------------|--------------------------------------|----------------------------------------------------------------|
+/// | READ_ONLY         | allow                                                                                      | **ask**                             | allow                                                          |
+/// | EXTERNAL_NETWORK  | allow                                                                                      | **ask**                             | allow                                                          |
+/// | CONTROLLED_WRITE  | allow, unless the create-vs-edit/remove split (see {@link EditOrRemoveActions}) says ask   | **ask** (no exceptions)             | allow (the edit/remove split does not apply here)              |
+/// | DANGEROUS_WRITE   | ask, unless the dangerous-confirmation toggle is off, in which case allow                  | **ask** (regardless of the toggle)  | **allow** (regardless of the toggle -- the old YOLO semantics) |
 ///
-/// The unattended row is the load-bearing safety fix: previously, picking a more permissive mode
-/// (or just flipping the dangerous-confirmation toggle off) could make a destructive command
-/// auto-run with genuinely nobody watching — e.g. the synthetic follow-up turn the agent fires on
-/// its own once a background job completes, which is exactly the kind of moment a user might have
-/// stepped away. Under Auto, "unattended" always wins for DANGEROUS_WRITE: it is never downgraded
-/// to a mere ASK, and it cannot be relaxed by the dangerous-confirmation toggle, by Plan Mode being
-/// off, or by a per-tool {@link AiToolPermissionStore.OverrideMode#ALWAYS_ALLOW} override (see
-/// {@link AiToolPermissionStore.OverrideMode#apply} — it explicitly refuses to touch a BLOCK). The
-/// only thing that can still bypass it is the developer-only {@link #dangerouslySkipPermissions}
-/// escape hatch, which already bypasses literally everything (Plan Mode included) and is not a
-/// user-facing setting.
+/// `ASK` is deliberately the most conservative pick -- nearly everything asks, which is the entire
+/// point of choosing it over `AUTO`. `yolo` is deliberately the most permissive pick -- nearly
+/// everything auto-runs without asking, which is the entire point of choosing it over `AUTO`.
+///
+/// ## The two gates that run before mode is consulted, and that NO mode can relax
+///
+/// - **Plan Mode**: any call whose permission is CONTROLLED_WRITE or DANGEROUS_WRITE is BLOCKed
+///   outright while Plan Mode is active, regardless of mode.
+/// - **Unattended DANGEROUS_WRITE** (the load-bearing safety fix — see {@link AiApprovalMode}'s
+///   own doc): whenever the current turn may be running unattended, a DANGEROUS_WRITE call is
+///   hard-BLOCKed outright — never merely asked, and never merely allowed — no matter which mode
+///   is selected. `yolo`'s "allow dangerous operations without asking" and `ASK`'s
+///   toggle-independent asking both explicitly do NOT reach this case: this gate runs first and
+///   wins regardless. Previously, picking a more permissive mode (or just flipping the
+///   dangerous-confirmation toggle off) could make a destructive command auto-run with genuinely
+///   nobody watching — e.g. the synthetic follow-up turn the agent fires on its own once a
+///   background job completes, which is exactly the kind of moment a user might have stepped
+///   away. It cannot be relaxed by the dangerous-confirmation toggle, by Plan Mode being off, by
+///   which approval mode is selected, or by a per-tool
+///   {@link AiToolPermissionStore.OverrideMode#ALWAYS_ALLOW} override (see
+///   {@link AiToolPermissionStore.OverrideMode#apply} — it explicitly refuses to touch a BLOCK).
+///   The only thing that can still bypass it is the developer-only
+///   {@link #dangerouslySkipPermissions} escape hatch, which already bypasses literally everything
+///   (Plan Mode included) and is not a user-facing setting.
 ///
 /// The policy never blocks by itself where it returns ASK — callers (e.g. the chat adapter or UI)
 /// use `check` to decide whether to proceed, show confirmation, or block.
@@ -159,9 +174,29 @@ public final class AiExecutionPolicy {
         // may be unattended is refused outright, not merely asked — there may be nobody present to
         // answer a confirmation prompt, and silently letting it through (or leaving it stuck waiting
         // on a prompt nobody will ever see) are both unacceptable outcomes for a destructive command.
+        // This runs BEFORE the mode switch below and is NOT influenced by which mode is selected —
+        // not even `yolo`'s otherwise-unconditional "allow dangerous operations" can reach here.
         if (unattended && permission == ToolPermission.DANGEROUS_WRITE) {
             return Verdict.block(BlockReason.UNATTENDED_DANGEROUS);
         }
+        return switch (mode) {
+            // ASK is deliberately the most conservative pick: every call asks, full stop — that is
+            // the entire reason a user would choose it over AUTO. No exceptions for read-only or
+            // network calls, and no exception for the dangerous-confirmation toggle either.
+            case ASK -> Verdict.ASK;
+            // yolo is deliberately the most permissive pick: everything left standing after the two
+            // non-negotiable gates above auto-runs, including DANGEROUS_WRITE while attended and the
+            // create-vs-edit/remove split that AUTO enforces for CONTROLLED_WRITE — restoring the old
+            // YOLO semantics exactly. The dangerous-confirmation toggle is irrelevant here.
+            case YOLO -> Verdict.ALLOW;
+            case AUTO -> evaluateAuto(toolName, action, permission);
+        };
+    }
+
+    /// `AUTO`'s own decision table (see class doc) — unchanged from the single-mode era: everyday
+    /// operations stay low-friction, and only a DANGEROUS_WRITE (or an edit/remove-classified
+    /// CONTROLLED_WRITE) ever asks.
+    private Verdict evaluateAuto(@Nullable String toolName, @Nullable String action, ToolPermission permission) {
         // PRODUCT DECISION (2026-07-10): file-write confirmation is policy-decided, not a user
         // toggle — PURE CREATION runs automatically; an action that edits or removes something
         // that already existed always asks. See EditOrRemoveActions for the curated classification.
@@ -177,8 +212,9 @@ public final class AiExecutionPolicy {
     }
 
     /// Returns a copy of this policy with {@code newMode} substituted for the approval mode, every
-    /// other flag unchanged. Kept for API compatibility (and used by tests) even though, with a
-    /// single {@link AiApprovalMode} value, this is currently always a same-mode copy.
+    /// other flag unchanged — e.g. for switching between `AUTO`/`ASK`/`yolo` without discarding the
+    /// dangerous-confirmation / dangerously-skip-permissions flags already configured on this
+    /// instance.
     public AiExecutionPolicy withMode(AiApprovalMode newMode) {
         return new AiExecutionPolicy(newMode, dangerousConfirmationEnabled, dangerouslySkipPermissions);
     }

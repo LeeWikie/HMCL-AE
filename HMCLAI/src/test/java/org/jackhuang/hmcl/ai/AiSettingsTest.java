@@ -533,14 +533,24 @@ public final class AiSettingsTest {
         }
     }
 
-    /// Verifies that the current ("auto") AND the legacy pre-merge ("safe"/"ask"/"yolo") approval
-    /// mode ids all still deserialize correctly (all resolving to {@link AiApprovalMode#AUTO} — see
-    /// its own doc for the SAFE/ASK/YOLO merge) so existing users' settings files keep loading fine.
+    /// Verifies that the current three-way ("auto"/"ask"/"yolo") AND the legacy pre-merge ("safe")
+    /// approval mode ids all still deserialize correctly — see {@link AiApprovalMode}'s own doc for
+    /// the SAFE/ASK/YOLO &rarr; single-AUTO &rarr; restored-Auto/Ask/yolo history — so existing
+    /// users' settings files keep loading fine no matter which era they were written in.
     @Test
     public void testApprovalModeSerialization() throws IOException {
         Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
         try {
-            for (String id : new String[]{"auto", "safe", "ask", "yolo"}) {
+            java.util.Map<String, AiApprovalMode> idToExpectedMode = new java.util.LinkedHashMap<>();
+            idToExpectedMode.put("auto", AiApprovalMode.AUTO);
+            idToExpectedMode.put("ask", AiApprovalMode.ASK);
+            idToExpectedMode.put("yolo", AiApprovalMode.YOLO);
+            // Legacy id from before the original SAFE/ASK/YOLO merge: SAFE and ASK had already
+            // converged to the same enforcement back then, so "safe" resolves to ASK, not AUTO.
+            idToExpectedMode.put("safe", AiApprovalMode.ASK);
+
+            for (java.util.Map.Entry<String, AiApprovalMode> entry : idToExpectedMode.entrySet()) {
+                String id = entry.getKey();
                 AiSettings settings = new AiSettings(tempDir);
                 settings.approvalModeProperty().set(id);
                 settings.save();
@@ -548,8 +558,8 @@ public final class AiSettingsTest {
                 AiSettings loaded = new AiSettings(tempDir);
                 loaded.load();
                 assertEquals(id, loaded.getApprovalMode(), "the stored id itself is preserved verbatim");
-                assertEquals(AiApprovalMode.AUTO, loaded.getApprovalModeEnum(),
-                        "'" + id + "' must resolve to AUTO");
+                assertEquals(entry.getValue(), loaded.getApprovalModeEnum(),
+                        "'" + id + "' must resolve to " + entry.getValue());
             }
         } finally {
             try {
