@@ -17,6 +17,7 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
@@ -50,6 +51,14 @@ import java.util.function.BooleanSupplier;
 /// bin / trash via {@link FileTrash} when the user's "delete to recycle bin"
 /// preference (supplied to the constructor and read live on every call) is enabled
 /// and the platform supports it; otherwise it is permanently deleted.
+///
+/// Like {@link DeleteModTool}, a failed deletion is attributed through the shared
+/// [ToggleModTool#fileOperationFailure(String, String, Throwable)] helper (which consults
+/// [GameResourceGuard#checkInstanceNotRunning(String)]): when the instance is being played the
+/// failure says so ("the file is most likely held open by the running game; nothing was changed")
+/// instead of leaking a raw I/O message. A zero-match failure lists the real pack names in the
+/// folder (the {@link DeleteModTool} zero-match enumeration paradigm), all through the unified
+/// {@link ToolFailures} envelope.
 ///
 /// Permission level: {@link ToolPermission#CONTROLLED_WRITE} at this leaf-tool level — exactly
 /// like {@link DeleteModTool}, the merged `instance` facade elevates the `resourcepacks_delete`
@@ -152,13 +161,18 @@ public final class DeleteResourcePackTool implements ToolSpec {
         // ListResourcePacksTool reports as an installed pack — and match by case-insensitive
         // substring, exactly like DeleteModTool.
         List<Path> candidates = new ArrayList<>();
+        List<Path> installedPacks = new ArrayList<>();
         String queryLower = packQuery.toLowerCase(Locale.ROOT);
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(packsDir)) {
             for (Path entry : stream) {
                 String name = entry.getFileName().toString();
                 boolean isPackKind = Files.isDirectory(entry)
                         || (Files.isRegularFile(entry) && name.toLowerCase(Locale.ROOT).endsWith(".zip"));
-                if (isPackKind && name.toLowerCase(Locale.ROOT).contains(queryLower)) {
+                if (!isPackKind) {
+                    continue;
+                }
+                installedPacks.add(entry);
+                if (name.toLowerCase(Locale.ROOT).contains(queryLower)) {
                     candidates.add(entry);
                 }
             }
@@ -167,8 +181,14 @@ public final class DeleteResourcePackTool implements ToolSpec {
         }
 
         if (candidates.isEmpty()) {
-            return ToolResult.failure("No resource pack matching '" + packQuery + "' was found in " + packsDir
-                    + ". Use instance(action=\"packs_list_local\") to see the installed packs.");
+            // Carry the real installed pack names (the DeleteModTool zero-match enumeration
+            // paradigm) so a typo is obvious without a separate packs_list_local round-trip.
+            return ToolFailures.failure(
+                    "No resource pack matching '" + packQuery + "' was found in " + packsDir,
+                    ToolFailures.Retryable.YES,
+                    "no installed resource pack name contains this substring, which is usually a typo",
+                    "installed packs: " + describeInstalledPacks(installedPacks)
+                            + "; use instance(action=\"packs_list_local\") for the full list, or refine the query");
         }
         if (candidates.size() > 1) {
             StringBuilder sb = new StringBuilder();
@@ -188,7 +208,10 @@ public final class DeleteResourcePackTool implements ToolSpec {
         try {
             recycled = FileTrash.delete(target, toRecycleBin.getAsBoolean());
         } catch (Throwable e) {
-            return ToolResult.failure("Failed to delete resource pack '" + entryName + "': " + e.getMessage());
+            // Attribute a failed deletion to a running game (file held open) through the shared
+            // DeleteModTool/ToggleModTool helper — the same GameResourceGuard-backed envelope.
+            return ToggleModTool.fileOperationFailure(instanceId,
+                    "Deleting resource pack '" + entryName + "' from instance '" + instanceId + "' failed", e);
         }
 
         return ToolResult.success((recycled
@@ -197,5 +220,32 @@ public final class DeleteResourcePackTool implements ToolSpec {
                 + "  instance: " + instanceId + "\n"
                 + "  kind    : " + (wasFolder ? "folder" : "zip archive") + "\n"
                 + "  path    : " + target);
+    }
+
+    /// The maximum number of real pack names carried in a zero-match failure — enough for the
+    /// model to spot a typo, bounded so a huge resourcepacks folder can't flood the context.
+    /// Mirrors {@link ToggleModTool}'s zero-match file listing.
+    private static final int MAX_LISTED_PACKS = 10;
+
+    /// Lists up to [#MAX_LISTED_PACKS] real pack names (folders and `.zip` archives — exactly the
+    /// deletable entries this tool considers) for a zero-match failure, appending a "(N more)" tail
+    /// when truncated; an empty folder is reported explicitly. Mirrors {@link ToggleModTool}'s
+    /// `describeInstalledFiles`.
+    private static String describeInstalledPacks(List<Path> packs) {
+        if (packs.isEmpty()) {
+            return "(none — the resourcepacks folder is empty)";
+        }
+        int shown = Math.min(packs.size(), MAX_LISTED_PACKS);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < shown; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(packs.get(i).getFileName());
+        }
+        if (packs.size() > shown) {
+            sb.append(", ... (").append(packs.size() - shown).append(" more)");
+        }
+        return sb.toString();
     }
 }
