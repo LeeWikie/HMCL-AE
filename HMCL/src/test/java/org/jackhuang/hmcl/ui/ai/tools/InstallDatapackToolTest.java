@@ -17,6 +17,7 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.junit.jupiter.api.Test;
 
@@ -105,6 +106,30 @@ public final class InstallDatapackToolTest {
 
             assertFalse(result.isSuccess());
             assertTrue(result.getError().contains("was not found"), "unexpected message: " + result.getError());
+        }
+    }
+
+    /// The missing-world failure is the unified envelope carrying the real save folder names (the
+    /// [WorldToolSupport] candidate list), not just a bare "was not found" sentence.
+    @Test
+    void targetWorldMissingFailsWithCandidateEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path saves = fx.repository().getRunDirectory("Existing").resolve("saves");
+            Files.createDirectories(saves.resolve("RealWorldA"));
+            Files.createDirectories(saves.resolve("RealWorldB"));
+            Path zip = fx.baseDir().resolve("mydatapack.zip");
+            Files.writeString(zip, "fake-zip-bytes");
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", "NoSuchWorld",
+                    "source", zip.toString()));
+
+            assertFalse(result.isSuccess());
+            String err = result.getError();
+            assertTrue(ToolFailures.isWellFormedEnvelope(err), "not a well-formed envelope: " + err);
+            assertTrue(err.contains("was not found"), err);
+            assertTrue(err.contains("RealWorldA") && err.contains("RealWorldB"),
+                    "must list the real world names: " + err);
         }
     }
 

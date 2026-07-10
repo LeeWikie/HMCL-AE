@@ -70,6 +70,29 @@ public final class GetNbtToolTest {
         }
     }
 
+    /// T6: the world-level parallel of the above — a valid instance but a mistyped world fails via
+    /// {@link NbtToolSupport#resolveWorldDir} with the shared {@link WorldToolSupport} envelope
+    /// carrying the real save folder names, not a bare "no such folder" sentence.
+    @Test
+    void missingWorldFailsWithCandidateEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            Path saves = fx.repository().getRunDirectory("Inst").resolve("saves");
+            Files.createDirectories(saves.resolve("RealWorldA"));
+            Files.createDirectories(saves.resolve("RealWorldB"));
+
+            ToolResult result = tool.execute(Map.of("instance", "Inst",
+                    "world", "NoSuchWorld", "file", "level.dat", "nbtPath", "Data.XpLevel"));
+
+            assertFalse(result.isSuccess());
+            String err = result.getError();
+            assertTrue(ToolFailures.isWellFormedEnvelope(err), "not a well-formed envelope: " + err);
+            assertTrue(err.contains("was not found"), err);
+            assertTrue(err.contains("RealWorldA") && err.contains("RealWorldB"),
+                    "must list the real world names: " + err);
+        }
+    }
+
     @Test
     void missingPathEnumeratesSiblingKeys() throws Exception {
         try (ProfileFixture fx = new ProfileFixture()) {

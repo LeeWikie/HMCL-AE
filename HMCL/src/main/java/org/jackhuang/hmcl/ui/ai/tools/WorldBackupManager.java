@@ -157,14 +157,30 @@ public final class WorldBackupManager {
         } else {
             @Nullable String selected = Profiles.getSelectedInstance();
             if (selected == null) {
-                throw new IOException("No instance is selected and no 'instance' parameter was given.");
+                // Same unified "no instance selected" envelope (carrying the real instance names)
+                // that InstanceToolSupport.resolveInstance produces, so the backup domain fails
+                // identically to the rest of the instance tools rather than with a bare sentence.
+                throw new IOException(ToolFailures.failureEnvelope(
+                        "No instance is selected and no 'instance' parameter was given",
+                        ToolFailures.Retryable.YES,
+                        "the tool needs to know which instance to act on",
+                        "available instances: " + InstanceToolSupport.availableInstanceNames(repository)
+                                + ". Call instance(action=\"list\"), then retry with instance=<name>"));
             }
             resolved = selected;
         }
 
         try {
             if (!repository.hasVersion(resolved)) {
-                throw new IOException("Instance '" + resolved + "' does not exist in the selected profile.");
+                // Same unified "instance not found" envelope (candidate list included) that
+                // InstanceToolSupport.instanceNotFoundFailure produces for the non-backup tools.
+                throw new IOException(ToolFailures.failureEnvelope(
+                        "Instance '" + resolved + "' does not exist in the selected profile",
+                        ToolFailures.Retryable.YES,
+                        "the name is wrong, not a missing instance — use the exact id",
+                        "available instances: " + InstanceToolSupport.availableInstanceNames(repository)
+                                + ". Use instance(action=\"list\") to refresh, or omit 'instance' for the "
+                                + "currently selected one"));
             }
         } catch (IOException e) {
             throw e;
@@ -227,7 +243,12 @@ public final class WorldBackupManager {
         Path runDir = resolveRunDirectory(instance);
         Path worldDir = resolveWorldDir(runDir, world);
         if (!Files.isDirectory(worldDir)) {
-            throw new IOException("World '" + world + "' was not found at: " + worldDir);
+            // Unified "world not found" envelope carrying the real saves/ folder names (the same
+            // WorldToolSupport candidate list the non-backup world tools use), instead of a bare
+            // sentence; restore()'s missing-backupId path already lists the real snapshot ids the
+            // same way.
+            throw new IOException(WorldToolSupport.worldNotFoundEnvelope(
+                    runDir.resolve("saves").toAbsolutePath().normalize(), world));
         }
         Path backupRoot = resolveBackupRoot(runDir, world);
         Files.createDirectories(backupRoot);

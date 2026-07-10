@@ -114,7 +114,9 @@ public final class DeleteWorldTool implements Tool {
         }
 
         if (!Files.isDirectory(worldDir)) {
-            return ToolResult.failure("World '" + world + "' was not found at: " + worldDir);
+            // Same "not found → list the real candidates" pattern InstanceToolSupport uses for a
+            // missing instance, now for a missing world (lists the real saves/ folder names).
+            return WorldToolSupport.worldNotFoundFailure(savesDir, world);
         }
 
         // Best-effort lock check, mirroring World#delete()'s own guard (World.java) — a running

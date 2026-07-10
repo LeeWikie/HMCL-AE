@@ -281,4 +281,42 @@ public final class WorldBackupManagerTest {
             assertTrue(WorldBackupManager.scanInterruptedRestores("Inst").isEmpty());
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Candidate enumeration: createBackup's missing-world and resolveRunDirectory's
+    // missing-instance failures now carry the real names, matching the rest of the tool suite.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void createBackupMissingWorldFailsWithCandidateEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Inst");
+            makeWorld(fx, "Inst", "RealWorldA", "data");
+            makeWorld(fx, "Inst", "RealWorldB", "data");
+
+            IOException notFound = assertThrows(IOException.class,
+                    () -> WorldBackupManager.createBackup("Inst", "NoSuchWorld", 0));
+
+            String message = notFound.getMessage();
+            assertTrue(ToolFailures.isWellFormedEnvelope(message), "not a well-formed envelope: " + message);
+            assertTrue(message.contains("was not found"), message);
+            assertTrue(message.contains("RealWorldA") && message.contains("RealWorldB"),
+                    "must list the real world names: " + message);
+        }
+    }
+
+    @Test
+    void missingInstanceFailsWithCandidateEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+
+            IOException notFound = assertThrows(IOException.class,
+                    () -> WorldBackupManager.createBackup("DoesNotExist", "MyWorld", 0));
+
+            String message = notFound.getMessage();
+            assertTrue(ToolFailures.isWellFormedEnvelope(message), "not a well-formed envelope: " + message);
+            assertTrue(message.contains("does not exist"), message);
+            assertTrue(message.contains("Existing"), "must list the real instance names: " + message);
+        }
+    }
 }

@@ -77,7 +77,7 @@ public final class CopyPlayerDataToolTest {
             ToolResult result = tool.execute(Map.of("instance", "Existing", "world", "NoSuchWorld",
                     "from", UUID.randomUUID().toString(), "to", UUID.randomUUID().toString()));
             assertFalse(result.isSuccess());
-            assertTrue(result.getError().contains("does not exist"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().contains("was not found"), "unexpected message: " + result.getError());
         }
     }
 

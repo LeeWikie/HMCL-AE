@@ -87,15 +87,19 @@ public final class ListDatapacksTool implements Tool {
         }
         String instance = target.name();
 
+        Path savesDir;
         Path worldDir;
         try {
-            worldDir = repository.getRunDirectory(instance).resolve("saves").resolve(world);
+            savesDir = repository.getRunDirectory(instance).resolve("saves");
+            worldDir = savesDir.resolve(world);
         } catch (Throwable e) {
             return ToolResult.failure("Failed to resolve the run directory of '" + instance + "': " + e.getMessage());
         }
 
         if (!Files.isDirectory(worldDir)) {
-            return ToolResult.failure("World '" + world + "' was not found at: " + worldDir);
+            // Same "not found → list the real candidates" pattern InstanceToolSupport uses for a
+            // missing instance, now for a missing world (lists the real saves/ folder names).
+            return WorldToolSupport.worldNotFoundFailure(savesDir, world);
         }
 
         Path datapacksDir = worldDir.resolve("datapacks");

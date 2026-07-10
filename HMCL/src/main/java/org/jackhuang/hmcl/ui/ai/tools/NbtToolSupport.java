@@ -179,7 +179,10 @@ final class NbtToolSupport {
         }
         Path dir = resolveInSaves(savesDir, world.trim());
         if (!Files.isDirectory(dir)) {
-            throw new NbtToolException("World '" + world + "' does not exist (no such folder under saves/).");
+            // Same unified "world not found" envelope (real saves/ folder names) that
+            // WorldToolSupport produces for the non-NBT world tools — mirrors how requireInstance
+            // above shares InstanceToolSupport's "instance not found" candidate list.
+            throw new NbtToolException(WorldToolSupport.worldNotFoundEnvelope(savesDir, world));
         }
         return dir;
     }
