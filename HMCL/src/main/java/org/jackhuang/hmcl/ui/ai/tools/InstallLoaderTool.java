@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
 import org.jackhuang.hmcl.download.DefaultDependencyManager;
@@ -34,9 +35,12 @@ import org.jetbrains.annotations.Nullable;
 import java.net.SocketTimeoutException;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /// An AI-accessible tool that installs a Minecraft version together with an optional
 /// mod loader fully automatically, reusing HMCL's existing install pipeline.
@@ -210,8 +214,10 @@ public final class InstallLoaderTool implements ToolSpec {
                 return ToolResult.failure(loadError + ". Check your network, or the version may not exist.");
             }
             if (gameList.getVersion(requested, requested).isEmpty()) {
-                return ToolResult.failure("Unknown Minecraft version '" + requested + "'. "
-                        + "It does not exist in the remote version list.");
+                // Candidate enumeration (resolveVersion parity): the full game list is already
+                // loaded in scope, so hand the model the versions it can actually pick from
+                // instead of a dead-end "does not exist" it can only blindly retry against.
+                return ToolResult.failure(unknownGameVersionEnvelope(requested, gameList.getVersions("")));
             }
             gameVersion = requested;
         }
@@ -236,9 +242,10 @@ public final class InstallLoaderTool implements ToolSpec {
                 String requestedLoader = loaderVersionParam.trim();
                 Optional<? extends RemoteVersion> match = loaderList.getVersion(gameVersion, requestedLoader);
                 if (match.isEmpty()) {
-                    return ToolResult.failure(loader + " version '" + requestedLoader
-                            + "' is not available for Minecraft " + gameVersion
-                            + " (incompatible or unknown loader version).");
+                    // Candidate enumeration (resolveVersion parity): the loader versions that ARE
+                    // compatible with this game version were just loaded above, so list them.
+                    return ToolResult.failure(loaderVersionUnavailableEnvelope(
+                            loader, requestedLoader, gameVersion, loaderList.getVersions(gameVersion)));
                 }
                 loaderVersion = match.get().getSelfVersion();
             } else {
@@ -334,6 +341,68 @@ public final class InstallLoaderTool implements ToolSpec {
             profile.getRepository().applyDefaultIsolationSetting(name);
         } catch (RuntimeException ignored) {
             // Non-fatal: the isolation preset is a convenience default, not part of the install.
+        }
+    }
+
+    /// Candidate-enumeration failure (resolveVersion parity) for an unknown Minecraft version.
+    /// The full game list is already loaded when this fires, so the newest releases are listed as
+    /// the values the model can retry with, wrapped in the unified failure envelope. Package-visible
+    /// for unit tests.
+    static String unknownGameVersionEnvelope(String requested, Collection<? extends RemoteVersion> loaded) {
+        return ToolFailures.failureEnvelope(
+                "Unknown Minecraft version '" + requested + "'; it is not in the remote version list",
+                ToolFailures.Retryable.YES,
+                "the version id is wrong, not a network problem",
+                "recent releases: " + recentReleaseLabels(loaded, 15)
+                        + ". Retry with one of those, or pass \"latest\" for the newest release");
+    }
+
+    /// Candidate-enumeration failure (resolveVersion parity) for an unavailable loader version.
+    /// The loader versions compatible with the resolved game version are already loaded, so they
+    /// are listed as the values the model can retry with. Package-visible for unit tests.
+    static String loaderVersionUnavailableEnvelope(String loader, String requestedLoader, String gameVersion,
+                                                   Collection<? extends RemoteVersion> available) {
+        return ToolFailures.failureEnvelope(
+                loader + " version '" + requestedLoader + "' is not available for Minecraft " + gameVersion,
+                ToolFailures.Retryable.YES,
+                "incompatible or misspelled loader version, not a missing loader",
+                "available " + loader + " versions: " + loaderVersionLabels(available, 15)
+                        + ". Retry with one of those, or omit 'loaderVersion' to auto-pick the newest compatible build");
+    }
+
+    /// The newest RELEASE version ids (newest first, capped at {@code limit}) — the candidates for
+    /// an unknown-Minecraft-version failure. Never throws: building an error message must not itself
+    /// fail, so any hiccup degrades to a placeholder (mirrors {@code InstanceToolSupport}'s helper).
+    private static String recentReleaseLabels(Collection<? extends RemoteVersion> versions, int limit) {
+        try {
+            List<String> labels = versions.stream()
+                    .filter(v -> v.getVersionType() == RemoteVersion.Type.RELEASE)
+                    .sorted(Comparator.comparing(RemoteVersion::getReleaseDate,
+                            Comparator.nullsFirst(Comparator.<Instant>naturalOrder())).reversed())
+                    .map(RemoteVersion::getSelfVersion)
+                    .filter(s -> s != null && !s.isBlank())
+                    .distinct()
+                    .limit(limit)
+                    .collect(Collectors.toList());
+            return labels.isEmpty() ? "(version list unavailable — pass \"latest\")" : String.join(", ", labels);
+        } catch (Throwable t) {
+            return "(version list unavailable — pass \"latest\")";
+        }
+    }
+
+    /// The available loader version ids (in the list's own newest-first order, capped at
+    /// {@code limit}) — the candidates for an unavailable-loader-version failure. Never throws.
+    private static String loaderVersionLabels(Collection<? extends RemoteVersion> versions, int limit) {
+        try {
+            List<String> labels = versions.stream()
+                    .map(RemoteVersion::getSelfVersion)
+                    .filter(s -> s != null && !s.isBlank())
+                    .distinct()
+                    .limit(limit)
+                    .collect(Collectors.toList());
+            return labels.isEmpty() ? "(none for this Minecraft version)" : String.join(", ", labels);
+        } catch (Throwable t) {
+            return "(unavailable)";
         }
     }
 

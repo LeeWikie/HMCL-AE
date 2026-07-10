@@ -79,8 +79,10 @@ public final class StopInstanceTool implements Tool {
             return ToolResult.failure("No instance specified and no instance is currently selected.");
         }
         if (!repository.hasVersion(instance)) {
-            return ToolResult.failure("Instance '" + instance + "' does not exist in the selected profile. "
-                    + "Use game(action=\"list\") (or instance(action=\"list\")) to see available instances.");
+            // Reuse the shared "instance does not exist" envelope carrying the real instance names
+            // (the candidate list the model is looking for), so this matches the delete/rename tools
+            // instead of a bare dead-end message.
+            return InstanceToolSupport.instanceNotFoundFailure(repository, instance);
         }
 
         boolean stopped;
