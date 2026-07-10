@@ -19,6 +19,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 
 import java.util.Map;
@@ -52,10 +53,10 @@ abstract class AbstractContentSearchTool implements Tool {
 
         RemoteAddonRepository repository = ContentToolSupport.repositoryFor(source, type);
         if (repository == null) {
-            return ToolResult.failure("Source '" + source + "' does not provide this content type. Try a different source.");
+            return unavailableSource(source);
         }
         if (source == ContentToolSupport.Source.CURSEFORGE && !ContentToolSupport.isCurseForgeAvailable()) {
-            return ToolResult.failure("CurseForge is not configured (no API key in this build). Use the Modrinth source instead.");
+            return curseForgeNotConfigured();
         }
 
         String gameVersion = ContentToolSupport.optional(parameters, "game_version");
@@ -65,6 +66,32 @@ abstract class AbstractContentSearchTool implements Tool {
         } catch (Exception e) {
             return ToolResult.failure("Search failed: " + messageOf(e));
         }
+    }
+
+    /// Failure returned when {@code source} has no repository for this tool's content type.
+    ///
+    /// Overridable so that a content type structurally tied to a single source (e.g. worlds, which
+    /// only exist on CurseForge) can weld a terminal state instead of bouncing the model to another
+    /// source that also cannot serve it — the "search_worlds ping-pong" this rewrite targets.
+    ToolResult unavailableSource(ContentToolSupport.Source source) {
+        ContentToolSupport.Source other = source == ContentToolSupport.Source.CURSEFORGE
+                ? ContentToolSupport.Source.MODRINTH
+                : ContentToolSupport.Source.CURSEFORGE;
+        return ToolFailures.failure(
+                "Source '" + source + "' does not provide this content type",
+                ToolFailures.Retryable.YES,
+                "another source may serve it",
+                "retry with source=\"" + other.name().toLowerCase() + "\"");
+    }
+
+    /// Failure returned when CurseForge is the selected source but no API key is configured in this
+    /// build. Overridable for the same reason as {@link #unavailableSource}.
+    ToolResult curseForgeNotConfigured() {
+        return ToolFailures.failure(
+                "CurseForge is not configured (no API key in this build)",
+                ToolFailures.Retryable.YES,
+                "the Modrinth source needs no key",
+                "retry with source=\"modrinth\"");
     }
 
     static String messageOf(Exception e) {

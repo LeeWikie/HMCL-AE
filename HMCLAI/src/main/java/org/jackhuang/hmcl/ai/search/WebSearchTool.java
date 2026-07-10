@@ -1,13 +1,19 @@
 package org.jackhuang.hmcl.ai.search;
 
-import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.net.HttpRetryClassifier;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSource;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
 import java.util.Map;
+import java.util.function.BiFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @NotNullByDefault
@@ -17,6 +23,43 @@ public final class WebSearchTool implements ToolSpec {
 
     public WebSearchTool(AiSearchConfig config) {
         this.config = config;
+    }
+
+    /// The web-search providers actually wired in this build, in ONE place so the "provider not
+    /// recognized" failure (rewrite #13) can list exactly what is supported instead of a
+    /// hand-maintained sentence that silently drifts: the old text still said "Tavily and SearXNG"
+    /// long after Bocha and Zhipu were added, feeding the model a false capability boundary. Both
+    /// {@link #buildClient()} and {@link #supportedProviders()} derive from this enum, so they can
+    /// never fall out of sync again.
+    private enum Provider {
+        TAVILY("tavily", "Tavily", (endpoint, apiKey) -> new TavilySearchClient(endpoint, apiKey)),
+        SEARXNG("searxng", "SearXNG", (endpoint, apiKey) -> new SearxngSearchClient(endpoint, apiKey)),
+        BOCHA("bocha", "Bocha(博查)", (endpoint, apiKey) -> new BochaSearchClient(apiKey)),
+        ZHIPU("zhipu", "Zhipu(智谱)", (endpoint, apiKey) -> new ZhipuSearchClient(apiKey));
+
+        final String id;
+        final String label;
+        final BiFunction<String, String, SearchClient> factory;
+
+        Provider(String id, String label, BiFunction<String, String, SearchClient> factory) {
+            this.id = id;
+            this.label = label;
+            this.factory = factory;
+        }
+
+        @Nullable
+        static Provider fromId(@Nullable String provider) {
+            if (provider == null) {
+                return null;
+            }
+            String normalized = provider.toLowerCase();
+            for (Provider p : values()) {
+                if (p.id.equals(normalized)) {
+                    return p;
+                }
+            }
+            return null;
+        }
     }
 
     @Override
@@ -54,8 +97,12 @@ public final class WebSearchTool implements ToolSpec {
 
         SearchClient client = buildClient();
         if (client == null) {
-            return ToolResult.failure("搜索提供商「" + config.getProvider() + "」暂未接入。"
-                    + "目前已接入的是 Tavily 和 SearXNG —— 请到 AI 设置 > 联网搜索 改用其中之一并填好接口地址与 Key。");
+            return ToolFailures.failure(
+                    "Search provider '" + config.getProvider() + "' is not recognized",
+                    ToolFailures.Retryable.YES,
+                    "pick a supported one",
+                    "currently integrated providers: " + supportedProviders()
+                            + ". Go to AI 设置 > 联网搜索 to switch and configure a key");
         }
 
         try {
@@ -76,23 +123,79 @@ public final class WebSearchTool implements ToolSpec {
                     + "<untrusted_search_results>\n" + formatted + "\n</untrusted_search_results>";
             return ToolResult.success(fenced);
         } catch (Exception e) {
-            return ToolResult.failure("Search error: " + e.getMessage());
+            return classifySearchFailure(e);
         }
     }
 
-    private SearchClient buildClient() {
-        String provider = config.getProvider();
-        String endpoint = config.getEndpoint();
-        String apiKey = config.getApiKey();
-        if (provider == null) return null;
+    /// Human-readable list of every supported provider, generated from {@link Provider} so it can
+    /// never fall out of sync with what {@link #buildClient()} accepts.
+    static String supportedProviders() {
+        return Arrays.stream(Provider.values()).map(p -> p.label).collect(Collectors.joining(", "));
+    }
 
-        return switch (provider.toLowerCase()) {
-            case "tavily" -> new TavilySearchClient(endpoint, apiKey);
-            case "searxng" -> new SearxngSearchClient(endpoint, apiKey);
-            case "bocha" -> new BochaSearchClient(apiKey); // fixed endpoint, China-reachable
-            case "zhipu" -> new ZhipuSearchClient(apiKey); // fixed endpoint, China-reachable
-            default -> null;
+    /// Turns a raw search-client exception into a classified failure envelope (rewrite #15).
+    ///
+    /// The four search clients embed the HTTP status in a plain-text {@code RuntimeException}
+    /// message ("... returned 401: ...", "...返回 401: ...") rather than a typed exception — they
+    /// keep carrying code+body per rewrite #14 — so the status is recovered from the message here
+    /// and routed through the same {@link HttpRetryClassifier} the LLM layer uses, giving auth
+    /// failures (401/403 → terminal), transient failures (429/5xx/network → retry-later), and
+    /// everything else (other 4xx → non-retryable) their own envelope.
+    static ToolResult classifySearchFailure(Throwable error) {
+        int status = httpStatusOf(error);
+        String message = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
+        return switch (HttpRetryClassifier.categorize(status)) {
+            case AUTH_REJECTED -> ToolFailures.failure(
+                    "Search failed: provider rejected the API key (HTTP " + status + ")",
+                    ToolFailures.Retryable.NO,
+                    "will not succeed on retry",
+                    "tell the user to check the key in AI 设置 > 联网搜索");
+            case TRANSIENT -> ToolFailures.failure(
+                    "Search failed transiently (" + (status > 0 ? "HTTP " + status : "network error, no HTTP status") + ")",
+                    ToolFailures.Retryable.LATER,
+                    "safe to retry once after a short wait",
+                    "if it fails again, stop retrying and report to the user");
+            case UNCLASSIFIED -> ToolFailures.failure(
+                    "Search error: " + message,
+                    ToolFailures.Retryable.NO,
+                    "unclassified — treat as non-retryable unless there's a specific reason to believe it's transient",
+                    "report to the user with the raw error");
         };
+    }
+
+    /// Matches the HTTP status the search clients embed after "returned "/"返回 " in their failure
+    /// messages (e.g. "Tavily returned 401: ...", "智谱搜索返回 503: ...").
+    private static final Pattern HTTP_STATUS_IN_MESSAGE = Pattern.compile("(?:returned|返回)\\s+(\\d{3})");
+
+    /// Best-effort HTTP status from a search-client failure. The clients put it in the message text
+    /// (a plain {@code RuntimeException}), so scan the message and its cause chain for it; fall back
+    /// to the typed langchain4j extractor, and to {@code 0} (network/no-status → transient) when no
+    /// status can be recovered.
+    private static int httpStatusOf(Throwable error) {
+        Throwable t = error;
+        for (int i = 0; t != null && i < 10; i++, t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null) {
+                Matcher m = HTTP_STATUS_IN_MESSAGE.matcher(message);
+                if (m.find()) {
+                    try {
+                        return Integer.parseInt(m.group(1));
+                    } catch (NumberFormatException ignored) {
+                        // 3 digits always parse, but stay defensive and keep scanning.
+                    }
+                }
+            }
+        }
+        return HttpRetryClassifier.extractStatus(error);
+    }
+
+    @Nullable
+    private SearchClient buildClient() {
+        Provider provider = Provider.fromId(config.getProvider());
+        if (provider == null) {
+            return null;
+        }
+        return provider.factory.apply(config.getEndpoint(), config.getApiKey());
     }
 
     private static int parse(Object v, int fallback) {

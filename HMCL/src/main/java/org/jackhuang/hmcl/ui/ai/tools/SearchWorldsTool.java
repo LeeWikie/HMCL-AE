@@ -18,6 +18,8 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
+import org.jackhuang.hmcl.ai.tools.ToolResult;
 
 /// AI tool that searches for Minecraft worlds (saves) on CurseForge.
 ///
@@ -43,5 +45,40 @@ public final class SearchWorldsTool extends AbstractContentSearchTool {
                 + "Parameters: query (search keywords, required), game_version (optional). "
                 + "Requires a CurseForge API key in this build. "
                 + "Note: there is no install_world tool; results are for discovery only.";
+    }
+
+    /// The model explicitly asked for a non-CurseForge source, but Modrinth has no Worlds category
+    /// at all — do not bounce it back to CurseForge and risk the classic ping-pong; delegate to the
+    /// welded terminal handler.
+    @Override
+    ToolResult unavailableSource(ContentToolSupport.Source source) {
+        return worldSearchUnavailable();
+    }
+
+    /// Reached only when the (default) CurseForge source has no API key. Modrinth cannot serve
+    /// worlds either, so there is nowhere to fall back to — weld the terminal state (rewrite #12)
+    /// instead of the base class's "use Modrinth instead", which would send the model straight into
+    /// a source-switching loop.
+    @Override
+    ToolResult curseForgeNotConfigured() {
+        return worldSearchUnavailable();
+    }
+
+    private ToolResult worldSearchUnavailable() {
+        if (ContentToolSupport.isCurseForgeAvailable()) {
+            // CurseForge works; the model simply picked the wrong source for worlds.
+            return ToolFailures.failure(
+                    "Modrinth does not offer a Worlds category; worlds are only searchable on CurseForge",
+                    ToolFailures.Retryable.YES,
+                    "CurseForge is configured and can serve this",
+                    "retry with source=\"curseforge\" (the default for search_worlds)");
+        }
+        // No CurseForge key AND Modrinth structurally has no worlds → there is nowhere to retry.
+        return ToolFailures.failure(
+                "CurseForge is not configured, and Modrinth does not offer a Worlds category at all",
+                ToolFailures.Retryable.NO,
+                "world search structurally requires a CurseForge API key in this build",
+                "ask the user to configure a CurseForge API key in AI 设置, or skip search and let the "
+                        + "user browse/import worlds manually. Do not retry with source=\"modrinth\"");
     }
 }
