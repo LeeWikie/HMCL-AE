@@ -45,7 +45,6 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextArea;
-import javafx.scene.control.TextField;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
@@ -530,20 +529,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     // ---- Session management ----
 
-    // ---- Search overlay ----
+    // ---- Search dialog ----
 
-    @Nullable
-    private StackPane searchOverlay;
-    @Nullable
-    private TextField searchField;
-    @Nullable
-    private VBox searchResultsBox;
-    @Nullable
-    private Label searchStatusLabel;
-    @Nullable
-    private Label searchEmptyLabel;
-    private final List<SearchResult> searchResults = new ArrayList<>();
-    private int searchSelectedIndex = -1;
+    /// Double-open guard for the cross-session search dialog (blueprint B5): rapid clicks on
+    /// the toolbar button / repeated `/sessions` must not stack a second dialog. Reset by the
+    /// dialog's close callback ([AiSearchDialog#onDialogClosed]).
+    private boolean searchDialogShowing = false;
 
     // ---- File upload ----
 
@@ -587,17 +578,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private VBox autocompletePopup;
     private final List<String> autocompleteItems = new ArrayList<>();
     private int autocompleteSelectedIndex = -1;
-
-    /// Represents a single cross-session search result.
-    private static final class SearchResult {
-        final AiSession session;
-        final String matchingLine;
-
-        SearchResult(AiSession session, String matchingLine) {
-            this.session = session;
-            this.matchingLine = matchingLine;
-        }
-    }
 
     // ---- Constructor ----
 
@@ -900,7 +880,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     // ---- Layout assembly ----
 
     private void buildLayout() {
-        chatSettingsStack.getChildren().setAll(chatView, buildSearchOverlay());
+        chatSettingsStack.getChildren().setAll(chatView);
         chatSettingsStack.getStyleClass().add("ai-chat-stack");
 
         StackPane centerWithDrawer = new StackPane(chatSettingsStack);
@@ -1398,7 +1378,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         JFXButton searchBtn = FXUtils.newToggleButton4(SVG.SEARCH, 16);
         FXUtils.installFastTooltip(searchBtn, "搜索会话"); // TODO(i18n)
-        searchBtn.setOnAction(e -> showSearchOverlay());
+        searchBtn.setOnAction(e -> openSearchDialog());
 
         JFXButton chatSettingsBtn = FXUtils.newToggleButton4(SVG.TUNE, 16);
         FXUtils.installFastTooltip(chatSettingsBtn, "聊天设置"); // TODO(i18n)
@@ -1889,251 +1869,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return inputBar;
     }
 
-    // ---- Search overlay ----
+    // ---- Search dialog ----
 
-    /// Builds the cross-session search overlay that appears over the center area.
-    /// The overlay is hidden by default and shown via the toolbar search button.
-    private StackPane buildSearchOverlay() {
-        // Semi-transparent backdrop
-        StackPane backdrop = new StackPane();
-        backdrop.getStyleClass().add("ai-search-backdrop");
-
-        // Search dialog
-        VBox dialog = new VBox(8);
-        dialog.setMaxWidth(560);
-        dialog.setMaxHeight(480);
-        dialog.setPadding(new Insets(16));
-        dialog.getStyleClass().add("ai-search-dialog");
-        dialog.setOnMouseClicked(e -> e.consume()); // prevent clicks on dialog from closing overlay
-
-        Label titleLabel = new Label(i18n("ai.search"));
-        titleLabel.getStyleClass().add("ai-search-title");
-
-        JFXButton searchCloseBtn = new JFXButton();
-        searchCloseBtn.setGraphic(SVG.CLOSE.createIcon(16));
-        searchCloseBtn.getStyleClass().add("ai-search-close-btn");
-        searchCloseBtn.setOnAction(e -> hideSearchOverlay());
-
-        HBox titleRow = new HBox(titleLabel, searchCloseBtn);
-        titleRow.setAlignment(Pos.CENTER_LEFT);
-        titleRow.getStyleClass().add("ai-search-title-row");
-        HBox.setHgrow(titleLabel, Priority.ALWAYS);
-
-        searchField = new TextField();
-        searchField.setPromptText(i18n("ai.search.prompt"));
-        searchField.getStyleClass().add("ai-search-field");
-        searchField.textProperty().addListener((obs, old, val) -> performSearch(val));
-        searchField.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.getCode() == KeyCode.ESCAPE) {
-                hideSearchOverlay();
-                e.consume();
-            } else if (e.getCode() == KeyCode.DOWN) {
-                navigateSearchResults(1);
-                e.consume();
-            } else if (e.getCode() == KeyCode.UP) {
-                navigateSearchResults(-1);
-                e.consume();
-            } else if (e.getCode() == KeyCode.ENTER) {
-                selectSearchResult();
-                e.consume();
-            }
-        });
-
-        HBox searchInputRow = new HBox(8,
-                SVG.SEARCH.createIcon(16),
-                searchField);
-        searchInputRow.setAlignment(Pos.CENTER_LEFT);
-        searchInputRow.getStyleClass().add("ai-search-input-row");
-        HBox.setHgrow(searchField, Priority.ALWAYS);
-
-        searchEmptyLabel = new Label(i18n("ai.search.empty"));
-        searchEmptyLabel.getStyleClass().add("ai-search-empty");
-        searchEmptyLabel.setVisible(true);
-
-        searchStatusLabel = new Label();
-        searchStatusLabel.getStyleClass().add("ai-search-status");
-        searchStatusLabel.setVisible(false);
-
-        searchResultsBox = new VBox(2);
-        searchResultsBox.getStyleClass().add("ai-search-results");
-
-        ScrollPane resultsScroll = new ScrollPane(new StackPane(searchResultsBox, searchEmptyLabel));
-        resultsScroll.setFitToWidth(true);
-        resultsScroll.getStyleClass().addAll("edge-to-edge", "ai-search-scroll");
-        VBox.setVgrow(resultsScroll, Priority.ALWAYS);
-
-        dialog.getChildren().setAll(titleRow, searchInputRow, resultsScroll, searchStatusLabel);
-
-        // Center the dialog inside the overlay
-        StackPane dialogWrapper = new StackPane(dialog);
-        dialogWrapper.setAlignment(Pos.CENTER);
-        dialogWrapper.setPadding(new Insets(40));
-        dialogWrapper.setOnMouseClicked(e -> hideSearchOverlay()); // clicking around dialog closes
-
-        searchOverlay = new StackPane(backdrop, dialogWrapper);
-        searchOverlay.setVisible(false);
-        searchOverlay.setManaged(false);
-        StackPane.setAlignment(dialogWrapper, Pos.CENTER);
-
-        return searchOverlay;
-    }
-
-    /// Shows the search overlay with a fade-in animation.
-    private void showSearchOverlay() {
-        if (searchOverlay == null) return;
-        searchOverlay.setVisible(true);
-        searchOverlay.setManaged(true);
-        searchOverlay.setOpacity(0);
-        FadeTransition ft = new FadeTransition(Duration.millis(200), searchOverlay);
-        ft.setFromValue(0);
-        ft.setToValue(1);
-        ft.play();
-        if (searchField != null) {
-            Platform.runLater(() -> searchField.requestFocus());
-        }
-    }
-
-    /// Hides the search overlay with a fade-out animation.
-    private void hideSearchOverlay() {
-        if (searchOverlay == null) return;
-        FadeTransition ft = new FadeTransition(Duration.millis(150), searchOverlay);
-        ft.setFromValue(1);
-        ft.setToValue(0);
-        ft.setOnFinished(e -> {
-            searchOverlay.setVisible(false);
-            searchOverlay.setManaged(false);
-            if (searchField != null) searchField.clear();
-            if (searchResultsBox != null) searchResultsBox.getChildren().clear();
-            searchResults.clear();
-            searchSelectedIndex = -1;
-            if (searchStatusLabel != null) searchStatusLabel.setVisible(false);
-            if (searchEmptyLabel != null) searchEmptyLabel.setVisible(true);
-        });
-        ft.play();
-    }
-
-    /// Performs a full-text search across all sessions' titles and message content.
-    ///
-    /// Filters against the given query (case-insensitive containment match) and
-    /// updates the results list in the overlay.
-    private void performSearch(String query) {
-        if (searchResultsBox == null || searchStatusLabel == null) return;
-        searchResultsBox.getChildren().clear();
-        searchResults.clear();
-        searchSelectedIndex = -1;
-
-        if (query == null || query.trim().isEmpty()) {
-            searchStatusLabel.setVisible(false);
-            if (searchEmptyLabel != null) searchEmptyLabel.setVisible(true);
-            return;
-        }
-
-        if (searchEmptyLabel != null) searchEmptyLabel.setVisible(false);
-
-        String lowerQuery = query.toLowerCase();
-        List<AiSession> allSessions = sessionStore.listSessions();
-
-        for (AiSession session : allSessions) {
-            // Search in title
-            String title = session.getTitle();
-            boolean titleMatch = title != null && title.toLowerCase().contains(lowerQuery);
-
-            // Search in messages
-            List<LlmMessage> messages = session.getMessages();
-            for (int i = 0; i < messages.size(); i++) {
-                LlmMessage msg = messages.get(i);
-                String content = msg.getContent();
-                if (content != null) {
-                    int idx = content.toLowerCase().indexOf(lowerQuery);
-                    if (idx >= 0) {
-                        // Extract a preview line around the match
-                        int start = Math.max(0, idx - 30);
-                        int end = Math.min(content.length(), idx + lowerQuery.length() + 40);
-                        String preview = (start > 0 ? "..." : "") + content.substring(start, end) + (end < content.length() ? "..." : "");
-                        searchResults.add(new SearchResult(session, preview));
-                        break; // One result per session
-                    }
-                }
-            }
-
-            // If title matched but no message matched, still add the title result
-            if (titleMatch && searchResults.stream().noneMatch(r -> r.session.getId().equals(session.getId()))) {
-                searchResults.add(new SearchResult(session, title));
-            }
-        }
-
-        if (searchResults.isEmpty()) {
-            searchStatusLabel.setText(i18n("ai.search.no_results", query));
-            searchStatusLabel.setVisible(true);
-        } else {
-            searchStatusLabel.setVisible(false);
-            for (int i = 0; i < searchResults.size(); i++) {
-                SearchResult result = searchResults.get(i);
-                int index = i;
-                Node item = buildSearchResultItem(result, index);
-                searchResultsBox.getChildren().add(item);
-            }
-        }
-    }
-
-    /// Builds a single clickable search result row with session title and
-    /// a truncated matching-message preview.
-    private Node buildSearchResultItem(SearchResult result, int index) {
-        AiSession session = result.session;
-        String title = session.getTitle();
-        if (title == null || title.isEmpty()) {
-            title = i18n("ai.session.untitled");
-        }
-
-        Label titleLabel = new Label(title);
-        titleLabel.getStyleClass().add("ai-search-result-title");
-
-        Label previewLabel = new Label(result.matchingLine);
-        previewLabel.getStyleClass().add("ai-search-result-preview");
-        previewLabel.setMaxWidth(500);
-        previewLabel.setWrapText(true);
-
-        VBox row = new VBox(2, titleLabel, previewLabel);
-        row.setPadding(new Insets(6, 10, 6, 10));
-        row.getStyleClass().add("ai-search-result-item");
-        if (index == searchSelectedIndex) {
-            row.getStyleClass().add("ai-search-result-item-selected");
-        }
-        row.setOnMouseClicked(e -> {
-            switchToSessionAndScroll(session.getId(), result.matchingLine);
-            hideSearchOverlay();
-        });
-
-        return row;
-    }
-
-    /// Navigates the search results list by the given delta (-1 for up, +1 for down).
-    private void navigateSearchResults(int delta) {
-        if (searchResults.isEmpty()) return;
-        int newIndex = searchSelectedIndex + delta;
-        if (newIndex < 0) newIndex = searchResults.size() - 1;
-        if (newIndex >= searchResults.size()) newIndex = 0;
-        searchSelectedIndex = newIndex;
-
-        if (searchResultsBox != null) {
-            ObservableList<Node> children = searchResultsBox.getChildren();
-            for (int i = 0; i < children.size(); i++) {
-                Node node = children.get(i);
-                node.getStyleClass().remove("ai-search-result-item-selected");
-                if (i == searchSelectedIndex) {
-                    node.getStyleClass().add("ai-search-result-item-selected");
-                }
-            }
-        }
-    }
-
-    /// Selects the currently highlighted search result and navigates to it.
-    private void selectSearchResult() {
-        if (searchSelectedIndex >= 0 && searchSelectedIndex < searchResults.size()) {
-            SearchResult result = searchResults.get(searchSelectedIndex);
-            switchToSessionAndScroll(result.session.getId(), result.matchingLine);
-            hideSearchOverlay();
-        }
+    /// Opens the cross-session search dialog (native DialogPane, blueprint B5 / CP §1).
+    /// The old hand-built full-screen overlay is gone; search / navigate / select logic
+    /// lives unchanged in [AiSearchDialog], and choosing a result funnels back into
+    /// [#switchToSessionAndScroll]. A fresh dialog instance per open means state
+    /// (query text, results, selection) always starts clean.
+    private void openSearchDialog() {
+        if (searchDialogShowing) return; // double-open guard
+        searchDialogShowing = true;
+        Controllers.dialog(new AiSearchDialog(
+                sessionStore::listSessions,
+                this::switchToSessionAndScroll,
+                () -> searchDialogShowing = false));
     }
 
     /// Switches to the given session id and scrolls to a message containing
@@ -2538,12 +2287,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             String display = SLASH_COMMANDS.containsKey(item)
                     ? item + "  —  " + SLASH_COMMANDS.get(item) : item;
             Label itemLabel = new Label(display);
-            itemLabel.getStyleClass().add("ai-autocomplete-item");
+            // Shared list-row family with the search dialog's result rows (B5 / CP §1);
+            // padding comes from the .ai-list-row rule (author css beats a code setter).
+            itemLabel.getStyleClass().add("ai-list-row");
             if (i == autocompleteSelectedIndex) {
-                itemLabel.getStyleClass().add("ai-autocomplete-item-selected");
+                itemLabel.getStyleClass().add("ai-list-row-selected");
             }
             itemLabel.setMaxWidth(Double.MAX_VALUE);
-            itemLabel.setPadding(new Insets(4, 10, 4, 10));
             itemLabel.setOnMouseClicked(e -> {
                 autocompleteSelectedIndex = index;
                 applyAutocompleteSelection();
@@ -3285,7 +3035,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             case "/sessions" -> {
                 inputField.clear();
-                showSearchOverlay();
+                openSearchDialog();
                 return;
             }
             case "/import" -> {

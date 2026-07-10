@@ -2584,103 +2584,25 @@
     -fx-font-size: 16px;
 }
 
-/* ---- AI Search Overlay ---- */
+/* ---- AI Search (dialog) ----
+ * Cross-session search moved from a hand-built overlay into a native DialogPane
+ * (ui/ai/AiSearchDialog, blueprint B5); the dialog shell / text field / buttons are all
+ * native now, so only the message-locate flash below survives. Search result rows and
+ * the composer autocomplete rows share the .ai-list-row family. */
 
-.ai-search-backdrop {
-    -fx-background-color: rgba(0, 0, 0, 0.5);
-}
-
-.ai-search-dialog {
-    -fx-background-color: -monet-surface;
+.ai-list-row {
+    -fx-background-color: null;
     -fx-background-radius: 4;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-}
-
-.ai-search-title {
-    -fx-font-size: 16px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-search-title-row {
-    -fx-padding: 0 0 8 0;
-}
-
-.ai-search-close-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 4;
-    -fx-min-width: 24;
-    -fx-min-height: 24;
+    -fx-padding: 6 10 6 10;
     -fx-cursor: hand;
 }
 
-.ai-search-close-btn:hover {
+.ai-list-row:hover {
     -fx-background-color: -monet-surface-container-highest;
 }
 
-.ai-search-field {
-    -fx-font-size: 13px;
-    -fx-padding: 8 12 8 12;
-    -fx-background-color: -monet-surface-container-high;
-    -fx-background-radius: 8;
-    -fx-text-fill: -monet-on-surface;
-    -fx-prompt-text-fill: -monet-on-surface-variant;
-}
-
-.ai-search-field:focused {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-border-color: -monet-primary;
-    -fx-border-width: 1;
-    -fx-border-radius: 8;
-}
-
-.ai-search-empty {
-    -fx-font-size: 13px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 32 16 32 16;
-    -fx-alignment: center;
-}
-
-.ai-search-scroll {
-    -fx-background-color: transparent;
-}
-
-.ai-search-results {
-    -fx-padding: 4 0 0 0;
-}
-
-.ai-search-result-item {
-    -fx-background-color: transparent;
-    -fx-background-radius: 8;
-    -fx-cursor: hand;
-}
-
-.ai-search-result-item:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-search-result-item-selected {
+.ai-list-row-selected {
     -fx-background-color: -monet-secondary-container;
-}
-
-.ai-search-result-title {
-    -fx-font-size: 12px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-search-result-preview {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-}
-
-.ai-search-status {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 8 0 0 0;
-    -fx-alignment: center;
 }
 
 .ai-search-match-highlight {
@@ -2714,22 +2636,7 @@
     -fx-padding: 4;
 }
 
-.ai-autocomplete-item {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface;
-    -fx-background-color: transparent;
-    -fx-background-radius: 6;
-    -fx-cursor: hand;
-}
-
-.ai-autocomplete-item:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-autocomplete-item-selected {
-    -fx-background-color: -monet-secondary-container;
-    -fx-text-fill: -monet-on-secondary-container;
-}
+/* Autocomplete rows share the .ai-list-row family with the search dialog (B5 / CP §1). */
 
 /* org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane: a real JSON/code editor (RichTextFX
  * CodeArea) with lightweight syntax highlighting, replacing the old fixed-question-form dialog
