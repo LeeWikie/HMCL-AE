@@ -337,6 +337,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private JFXButton sendBtn;
     /// Reasoning-effort popup button in the composer (a field so tests can drive the menu).
     private JFXButton thinkBtn;
+    /// The gradient slider inside the thinking-effort popup (v2: replaces the old checkmark menu —
+    /// a field so tests can drive the effort selection without pixel-hunting the popup). Rebuilt
+    /// each time the popup opens; holds the live control while the popup is showing.
+    private javafx.scene.control.Slider thinkingSlider;
+    /// Context-usage ring in the composer toolbar (pure arc, no number). Clicking it pops a detail
+    /// panel; the arc + a redraw hook are fields so {@link #refreshContextRing()} can update it.
+    private StackPane contextRing;
+    private javafx.scene.shape.Arc contextArc;
+    /// The currently-open context-detail popup, tracked to avoid stacking duplicates.
+    private JFXPopup contextPopup;
 
     /// Panel shown above the input field when the agent calls the `ask` tool: renders the
     /// structured questions and a confirm button. Hidden/unmanaged when no question is pending.
@@ -1541,6 +1551,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         updateApprovalBadge();
+        // Session/model/title change may alter the used/total context → repaint the ring.
+        refreshContextRing();
     }
 
     /// Refreshes the approval badge. There is only one approval mode now ({@link AiApprovalMode#AUTO}
@@ -1761,7 +1773,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Autocomplete + Enter/Shift+Enter key handling
         inputField.addEventFilter(KeyEvent.KEY_PRESSED, this::handleInputKeyPress);
 
+        // Send/Stop is now a compact SQUARE that lives in the INPUT area's top-right corner (v2,
+        // Claude-Code style) — no longer a text button in the bottom toolbar. It stays a raised
+        // JFXButton (keeps the .jfx-button-raised hook + its i18n text for a11y/tests) but shows
+        // only an icon (contentDisplay=GRAPHIC_ONLY); the arrow/stop glyph is swapped in
+        // updateSendButtonMode().
         sendBtn = FXUtils.newRaisedButton(i18n("ai.send"));
+        sendBtn.getStyleClass().add("ai-send-square");
+        sendBtn.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
+        sendBtn.setGraphic(SVG.KEYBOARD_ARROW_UP.createIcon(18));
+        FXUtils.installFastTooltip(sendBtn, i18n("ai.send"));
         // While a response is streaming the button becomes a Stop button.
         sendBtn.setOnAction(e -> {
             if (isStreaming()) {
@@ -1876,36 +1897,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             thinkBtn.setText(reasoningEffortLabel(lvl));
             FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(lvl)));
         });
-        thinkBtn.setOnAction(e -> {
-            // Toggle: if the popup is already open, close it instead of stacking another.
-            if (thinkingPopup != null && thinkingPopup.isShowing()) {
-                thinkingPopup.hide();
-                return;
-            }
-            String[] levels = {"none", "low", "medium", "high", "xhigh", "max"};
-            String cur = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
-            // Native PopupMenu + IconedMenuItem (A12/C-02): rows show the human-readable effort
-            // name, the ACTIVE level carries a check icon, and each row's tooltip reveals the raw
-            // level id (e.g. "reasoning_effort: high") for troubleshooting.
-            PopupMenu menu = new PopupMenu();
-            JFXPopup popup = new JFXPopup(menu);
-            for (String level : levels) {
-                menu.getContent().add(new IconedMenuItem(level.equals(cur) ? SVG.CHECK : null,
-                        reasoningEffortLabel(level), () -> {
-                    aiSettings.reasoningEffortProperty().set(level);
-                    // AiSettings has no auto-save — without this the picked level silently
-                    // reverted on restart (P6/C-17). The pill text/tooltip update via the
-                    // reasoningEffortProperty listener installed above.
-                    persistAiSettings();
-                }, popup).addTooltip("reasoning_effort: " + level));
-            }
-            thinkingPopup = popup;
-            JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, thinkingPopup);
-            thinkingPopup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
-                    0,
-                    vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight(),
-                    true);
-        });
+        thinkBtn.setOnAction(e -> openThinkingSlider());
 
         // ---- Model selector (moved down from the header) ----
         // Shows the model alias only; the dropdown reveals the full "Provider / Model". Lets it
@@ -1915,26 +1907,40 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         modelSelector.getStyleClass().add("ai-header-selector");
         setupModelSelector();
 
-        // ---- Bottom toolbar (two-row composer) ----
-        // Left group = pills + icon entries in a FlowPane that WRAPS to more rows when the window
-        // narrows. Right group = model + Send, pinned right and never allowed to shrink, so Send is
-        // always visible and clickable no matter how narrow the window gets (overflow fix).
-        javafx.scene.layout.FlowPane leftGroup = new javafx.scene.layout.FlowPane(6, 6,
-                approvalBadge, thinkBtn, attachBtn, slashBtn);
-        leftGroup.setAlignment(Pos.CENTER_LEFT);
-        leftGroup.setMinWidth(0); // may squeeze to nothing (its children wrap) before Send yields
+        // ---- Context-usage ring (v2) ----
+        // Pure arc, no number; arc length = used/total of the current session's context window.
+        // Clicking pops a detail panel. Sits at the RIGHT end of the toolbar (right of thinking).
+        contextRing = buildContextRing();
 
-        HBox rightGroup = new HBox(6, modelSelector, sendBtn);
+        // ---- Bottom toolbar (two-row composer, v2 layout) ----
+        // Left group = Auto pill + icon entries in a FlowPane that WRAPS when the window narrows.
+        // Right group = model · thinking · context-ring, pinned right and never allowed to shrink
+        // (Send is NOT here anymore — it moved to the input area's top-right corner). Thinking sits
+        // to the RIGHT of the model and the ring to the right of thinking (Claude-Code order).
+        javafx.scene.layout.FlowPane leftGroup = new javafx.scene.layout.FlowPane(6, 6,
+                approvalBadge, attachBtn, slashBtn);
+        leftGroup.setAlignment(Pos.CENTER_LEFT);
+        leftGroup.setMinWidth(0); // may squeeze to nothing (its children wrap) before the right group yields
+
+        HBox rightGroup = new HBox(6, modelSelector, thinkBtn, contextRing);
         rightGroup.setAlignment(Pos.CENTER_RIGHT);
-        rightGroup.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE); // Send never enters overflow
+        rightGroup.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE); // model/think/ring never fold into overflow
 
         HBox toolbar = new HBox(8, leftGroup, rightGroup);
-        toolbar.setAlignment(Pos.TOP_LEFT);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.getStyleClass().add("ai-composer-toolbar");
         HBox.setHgrow(leftGroup, Priority.ALWAYS);
 
-        // ---- Composer card: input area (top) + toolbar (bottom), one rounded bordered box ----
-        VBox composerCard = new VBox(8, jobsPane, askPanel, fileChipArea, inputField, toolbar);
+        // ---- Input row: text field (grows) + Send square pinned to the TOP-RIGHT (v2) ----
+        // The square stays anchored at the top-right as the field auto-grows downward (HBox top
+        // alignment), matching Claude Code. It never enters the toolbar's overflow path.
+        HBox inputRow = new HBox(8, inputField, sendBtn);
+        inputRow.getStyleClass().add("ai-input-row");
+        inputRow.setAlignment(Pos.TOP_LEFT);
+        HBox.setHgrow(inputField, Priority.ALWAYS);
+
+        // ---- Composer card: input row (top) + toolbar (bottom), one rounded bordered box ----
+        VBox composerCard = new VBox(6, jobsPane, askPanel, fileChipArea, inputRow, toolbar);
         composerCard.getStyleClass().add("ai-composer");
         composerCard.setMaxWidth(Double.MAX_VALUE);
         // The composer must never be squeezed away in a short window.
@@ -1955,6 +1961,210 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         composerArea.setPadding(new Insets(10, 16, 12, 16));
         composerArea.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         return composerArea;
+    }
+
+    /// The six reasoning-effort levels, in ascending order — the slider's 0..5 domain (v2).
+    private static final String[] EFFORT_LEVELS = {"none", "low", "medium", "high", "xhigh", "max"};
+
+    private static int effortIndex(String level) {
+        String l = (level == null || level.isEmpty()) ? "none" : level;
+        for (int i = 0; i < EFFORT_LEVELS.length; i++) {
+            if (EFFORT_LEVELS[i].equals(l)) return i;
+        }
+        return 0;
+    }
+
+    /// Opens the thinking-effort picker (v2): a gradient slider popup that REPLACES the old
+    /// checkmark PopupMenu (whose active-row CHECK rendered invisible/white — that bug dies with the
+    /// menu). Header shows "思考强度 · <current>"; a 6-stop slider (无/低/中/高/扩展/最高) drives the
+    /// effort live; dragging/clicking persists it (AiSettings has no auto-save — P6/C-17) and the
+    /// pill text/tooltip follow via the reasoningEffortProperty listener installed in buildComposer.
+    private void openThinkingSlider() {
+        // Toggle: a second click while the popup is open closes it instead of stacking another.
+        if (thinkingPopup != null && thinkingPopup.isShowing()) {
+            thinkingPopup.hide();
+            return;
+        }
+        int curIdx = effortIndex(aiSettings.getReasoningEffort());
+
+        Label title = new Label(i18n("ai.composer.thinking.title"));
+        title.getStyleClass().add("ai-effort-title");
+        Label value = new Label(reasoningEffortLabel(EFFORT_LEVELS[curIdx]));
+        value.getStyleClass().add("ai-effort-value");
+        Region headSpacer = new Region();
+        HBox.setHgrow(headSpacer, Priority.ALWAYS);
+        HBox head = new HBox(8, title, headSpacer, value);
+        head.setAlignment(Pos.CENTER_LEFT);
+
+        javafx.scene.control.Slider slider = new javafx.scene.control.Slider(0, EFFORT_LEVELS.length - 1, curIdx);
+        slider.getStyleClass().add("ai-effort-slider");
+        slider.setMajorTickUnit(1);
+        slider.setMinorTickCount(0);
+        slider.setSnapToTicks(true);
+        slider.setBlockIncrement(1);
+        slider.setPrefWidth(264);
+        thinkingSlider = slider;
+        slider.valueProperty().addListener((o, ov, nv) -> {
+            int idx = Math.max(0, Math.min(EFFORT_LEVELS.length - 1, (int) Math.round(nv.doubleValue())));
+            String level = EFFORT_LEVELS[idx];
+            value.setText(reasoningEffortLabel(level));
+            String persisted = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
+            if (!level.equals(persisted)) {
+                aiSettings.reasoningEffortProperty().set(level);
+                persistAiSettings();
+            }
+        });
+
+        // Tick labels distributed edge-to-edge (space-between) under the track as minimal scale
+        // markers — the Faster/Smarter end captions are intentionally gone (v2 §3).
+        HBox scale = new HBox();
+        scale.setAlignment(Pos.CENTER_LEFT);
+        scale.getStyleClass().add("ai-effort-scale");
+        for (int i = 0; i < EFFORT_LEVELS.length; i++) {
+            if (i > 0) {
+                Region gap = new Region();
+                HBox.setHgrow(gap, Priority.ALWAYS);
+                scale.getChildren().add(gap);
+            }
+            Label tick = new Label(reasoningEffortLabel(EFFORT_LEVELS[i]));
+            tick.getStyleClass().add("ai-effort-tick");
+            scale.getChildren().add(tick);
+        }
+
+        VBox content = new VBox(12, head, slider, scale);
+        content.getStyleClass().add("ai-effort-popup");
+        content.setPrefWidth(300);
+
+        JFXPopup popup = new JFXPopup(content);
+        thinkingPopup = popup;
+        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, popup);
+        popup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
+                0,
+                vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
+    }
+
+    /// Builds the composer's context-usage ring (v2 §5): a pure arc (no number) whose sweep = the
+    /// current session's used/total context ratio, drawn clockwise from 12 o'clock. Clicking it
+    /// pops the detail panel. Colours come from CSS (theme-aware) — the arc turns red near-full.
+    private StackPane buildContextRing() {
+        final double sz = 22, c = sz / 2, r = 8, sw = 2.6;
+        javafx.scene.shape.Circle track = new javafx.scene.shape.Circle(c, c, r);
+        track.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        track.setStrokeWidth(sw);
+        track.getStyleClass().add("ai-ring-track");
+        javafx.scene.shape.Arc arc = new javafx.scene.shape.Arc(c, c, r, r, 90, 0);
+        arc.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        arc.setStrokeWidth(sw);
+        arc.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        arc.setType(javafx.scene.shape.ArcType.OPEN);
+        arc.getStyleClass().add("ai-ring-arc");
+        contextArc = arc;
+        javafx.scene.layout.Pane ringPane = new javafx.scene.layout.Pane(track, arc);
+        ringPane.setMinSize(sz, sz);
+        ringPane.setPrefSize(sz, sz);
+        ringPane.setMaxSize(sz, sz);
+        ringPane.setMouseTransparent(true);
+
+        StackPane wrap = new StackPane(ringPane);
+        wrap.getStyleClass().add("ai-context-ring");
+        wrap.setMinSize(25, 25);
+        wrap.setPrefSize(25, 25);
+        wrap.setMaxSize(25, 25);
+        FXUtils.installFastTooltip(wrap, i18n("ai.composer.context.tooltip"));
+        FXUtils.onClicked(wrap, this::showContextPopup);
+        refreshContextRing();
+        return wrap;
+    }
+
+    /// Current context occupancy as {used, total} tokens. `used` = the most recent turn's total
+    /// tokens (prompt + completion ≈ what the next request's context holds); `total` = the selected
+    /// model's configured context window (0 when unknown). Reuses the very data the usage footer
+    /// already shows — no new counting.
+    private int[] contextUsage() {
+        int total = 0;
+        org.jackhuang.hmcl.ai.AiProviderProfile active = aiSettings.findSelectedProfile();
+        if (active != null) {
+            String modelId = active.getDefaultModelId();
+            org.jackhuang.hmcl.ai.AiModelEntry model = (modelId != null) ? active.getModel(modelId) : null;
+            if (model != null) total = model.getContextWindow();
+        }
+        int used = 0;
+        AiSession session = sessionStore.getCurrentSession();
+        if (session != null) {
+            for (org.jackhuang.hmcl.ai.llm.LlmMessage m : session.getMessages()) {
+                LlmUsage us = m.getUsage();
+                if (us != null && us.hasData() && us.getTotalTokens() > 0) {
+                    used = us.getTotalTokens(); // last turn wins → current occupancy
+                }
+            }
+        }
+        return new int[]{used, total};
+    }
+
+    /// Repaints the ring's arc from {@link #contextUsage()} and toggles the near-full ("hot") state
+    /// at >=90%. No-op before the ring is built. Called on session/model/title change and stream end.
+    private void refreshContextRing() {
+        if (contextArc == null) return;
+        int[] u = contextUsage();
+        double frac = (u[1] > 0) ? Math.min(1.0, u[0] / (double) u[1]) : 0.0;
+        contextArc.setStartAngle(90);
+        contextArc.setLength(-frac * 360.0); // clockwise from 12 o'clock
+        boolean hot = u[1] > 0 && frac >= 0.90;
+        contextArc.getStyleClass().remove("ai-ring-hot");
+        if (hot) contextArc.getStyleClass().add("ai-ring-hot");
+    }
+
+    private static String formatTokens(int n) {
+        return n >= 1000
+                ? String.format(java.util.Locale.ROOT, "%.1fk", n / 1000.0)
+                : String.valueOf(n);
+    }
+
+    /// Pops the context-usage detail panel from the ring (v2 §5): "上下文窗口 <used> / <total>
+    /// (<pct>%)" + a progress bar that turns red at >=90%. We have no rate limit, so nothing about
+    /// one is shown.
+    private void showContextPopup() {
+        if (contextPopup != null && contextPopup.isShowing()) {
+            contextPopup.hide();
+            return;
+        }
+        int[] u = contextUsage();
+        int used = u[0], total = u[1];
+        double frac = (total > 0) ? Math.min(1.0, used / (double) total) : 0.0;
+        int pct = (int) Math.round(frac * 100.0);
+        boolean hot = total > 0 && pct >= 90;
+
+        Label title = new Label(i18n("ai.composer.context.title"));
+        title.getStyleClass().add("ai-ctx-title");
+        Label val = new Label(total > 0
+                ? i18n("ai.composer.context.usage", formatTokens(used), formatTokens(total), pct)
+                : i18n("ai.composer.context.unknown"));
+        val.getStyleClass().add("ai-ctx-value");
+        if (hot) val.getStyleClass().add("ai-ctx-hot");
+        Region rowSpacer = new Region();
+        HBox.setHgrow(rowSpacer, Priority.ALWAYS);
+        HBox row = new HBox(12, title, rowSpacer, val);
+        row.setAlignment(Pos.BASELINE_LEFT);
+
+        javafx.scene.control.ProgressBar bar = new javafx.scene.control.ProgressBar(frac);
+        bar.getStyleClass().add("ai-ctx-bar");
+        if (hot) bar.getStyleClass().add("ai-ctx-bar-hot");
+        bar.setMaxWidth(Double.MAX_VALUE);
+
+        Label hint = new Label(i18n(hot ? "ai.composer.context.hint_hot" : "ai.composer.context.hint"));
+        hint.getStyleClass().add("ai-ctx-hint");
+        hint.setWrapText(true);
+
+        VBox content = new VBox(10, row, bar, hint);
+        content.getStyleClass().add("ai-ctx-popup");
+        content.setPrefWidth(300);
+
+        JFXPopup popup = new JFXPopup(content);
+        contextPopup = popup;
+        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(contextRing, popup);
+        popup.show(contextRing, vPosition, JFXPopup.PopupHPosition.RIGHT,
+                contextRing.getWidth(),
+                vPosition == JFXPopup.PopupVPosition.TOP ? contextRing.getHeight() : -contextRing.getHeight());
     }
 
     /// Focuses the input and pops the slash-command autocomplete, as if the user typed "/". Backs
@@ -3550,13 +3760,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void updateSendButtonMode() {
         if (isStreamingCurrentSession()) {
             sendBtn.setText(i18n("ai.stop"));
+            sendBtn.setGraphic(SVG.STOP.createIcon(16));
+            FXUtils.installFastTooltip(sendBtn, i18n("ai.stop"));
             if (!sendBtn.getStyleClass().contains("ai-stop-btn")) {
                 sendBtn.getStyleClass().add("ai-stop-btn");
             }
         } else {
             sendBtn.setText(i18n("ai.send"));
+            sendBtn.setGraphic(SVG.KEYBOARD_ARROW_UP.createIcon(18));
+            FXUtils.installFastTooltip(sendBtn, i18n("ai.send"));
             sendBtn.getStyleClass().remove("ai-stop-btn");
         }
+        // A turn just started/ended → the context occupancy may have grown; keep the ring current.
+        refreshContextRing();
     }
 
     /// Auto-continuation hook. When a background job belonging to the CURRENT session finishes while

@@ -18,12 +18,8 @@
 package org.jackhuang.hmcl.ui.ai;
 
 import com.jfoenix.controls.JFXButton;
-import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.Parent;
-import javafx.scene.control.Label;
-import javafx.scene.input.MouseButton;
-import javafx.scene.input.MouseEvent;
 import org.jackhuang.hmcl.ai.AiSettings;
 import org.jackhuang.hmcl.setting.SettingsManager;
 import org.jackhuang.hmcl.ui.construct.ComponentList;
@@ -138,26 +134,29 @@ public final class ChatDrawerPersistenceFxTest {
         String original = settings.getReasoningEffort();
         String target = "high".equals(original) ? "medium" : "high";
         try {
-            // Open the thinking-level popup via its real button (a field since B3's rewrite of
-            // the hand-rolled picker into a native PopupMenu).
+            // B-v2 replaced the hand-rolled level menu with a native Slider (openThinkingSlider):
+            // firing the button builds it into the `thinkingSlider` field, and its valueProperty
+            // listener writes AiSettings + persists on every distinct level (drag == persist).
             JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
             assertNotNull(thinkBtn, "composer must contain the thinking-level button");
             WaitForAsyncUtils.asyncFx(thinkBtn::fire).get(10, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
 
-            com.jfoenix.controls.JFXPopup popup =
-                    (com.jfoenix.controls.JFXPopup) getField(page, "thinkingPopup");
-            assertNotNull(popup, "firing the button must open the picker popup");
+            javafx.scene.control.Slider slider =
+                    (javafx.scene.control.Slider) getField(page, "thinkingSlider");
+            assertNotNull(slider, "firing the button must build the effort slider");
 
-            // Rows now display the human-readable effort name (A12); the raw id is tooltip-only.
-            Node row = findLevelRow(popup.getPopupContent(), AIMainPage.reasoningEffortLabel(target));
-            assertNotNull(row, "picker must list the '" + target + "' level");
-            WaitForAsyncUtils.asyncFx(() -> Event.fireEvent(row, syntheticClick(row))).get(10, TimeUnit.SECONDS);
+            java.lang.reflect.Field levelsField = AIMainPage.class.getDeclaredField("EFFORT_LEVELS");
+            levelsField.setAccessible(true);
+            int targetIdx = java.util.Arrays.asList((String[]) levelsField.get(null)).indexOf(target);
+            assertTrue(targetIdx >= 0, "EFFORT_LEVELS must contain the '" + target + "' level");
+
+            WaitForAsyncUtils.asyncFx(() -> slider.setValue(targetIdx)).get(10, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
 
             assertEquals(target, settings.getReasoningEffort(), "in-memory level must switch");
             assertEquals(target, reloadFromDisk().getReasoningEffort(),
-                    "picking a thinking level must persist to disk (P6/C-17)");
+                    "dragging the thinking slider must persist to disk (P6/C-17)");
         } finally {
             WaitForAsyncUtils.asyncFx(() -> {
                 settings.reasoningEffortProperty().set(original);
@@ -169,37 +168,4 @@ public final class ChatDrawerPersistenceFxTest {
         }
     }
 
-    /// Finds the clickable level row — an IconedMenuItem IS a RipplerContainer whose inner
-    /// Label carries the (human-readable) level name.
-    private static Node findLevelRow(Node root, String level) {
-        if (root instanceof org.jackhuang.hmcl.ui.construct.RipplerContainer rippler) {
-            if (containsLabelText(rippler, level)) {
-                return rippler;
-            }
-        }
-        if (root instanceof Parent parent) {
-            for (Node child : parent.getChildrenUnmodifiable()) {
-                Node found = findLevelRow(child, level);
-                if (found != null) return found;
-            }
-        }
-        return null;
-    }
-
-    private static boolean containsLabelText(Node root, String text) {
-        if (root instanceof Label label && text.equals(label.getText())) {
-            return true;
-        }
-        if (root instanceof Parent parent) {
-            for (Node child : parent.getChildrenUnmodifiable()) {
-                if (containsLabelText(child, text)) return true;
-            }
-        }
-        return false;
-    }
-
-    private static MouseEvent syntheticClick(Node target) {
-        return new MouseEvent(MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0, MouseButton.PRIMARY, 1,
-                false, false, false, false, true, false, false, true, false, false, null);
-    }
 }

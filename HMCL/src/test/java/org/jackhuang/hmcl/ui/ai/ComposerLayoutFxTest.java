@@ -37,16 +37,18 @@ import static org.jackhuang.hmcl.ui.ai.AiMainPageFxTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/// Structural gate for the two-row composer redesign (mode/thinking pills + attach/slash on the
-/// left, model selector + Send on the right of a bottom toolbar). Automated tests cannot judge
-/// visual alignment/reflow — that is verified on a real machine — but they CAN pin the invariants
-/// that make the "Send never overflows" guarantee true by construction:
+/// Structural gate for the composer redesign, updated for the v2 精修. Automated tests cannot judge
+/// visual alignment/reflow — that is verified on a real machine — but they CAN pin the structural
+/// invariants:
 ///  ① the Auto pill and the model selector both live INSIDE the composer card (they moved out of
 ///     the header);
-///  ② Send + model sit in the toolbar; the left pill group is a FlowPane (i.e. it can WRAP rather
-///     than push Send out);
-///  ③ after shrinking the window to a very narrow width, Send stays visible and fully within the
-///     scene's horizontal bounds.
+///  ② v2 §7: Send/Stop is a square that lives in the INPUT ROW (`.ai-input-row`), NOT in the bottom
+///     toolbar; the model selector + thinking pill + context ring sit in the toolbar's right group;
+///  ③ v2 §6: the Auto pill sits in the WRAPPING left FlowPane while the thinking pill moved to the
+///     right group (toolbar, not FlowPane);
+///  ④ after shrinking the window to a very narrow width, Send stays visible and fully within the
+///     composer card's horizontal bounds (it is pinned to the input row's right edge);
+///  ⑤ v2 §5: the context ring exists in the toolbar and is clickable.
 public final class ComposerLayoutFxTest {
 
     @BeforeAll
@@ -78,6 +80,7 @@ public final class ComposerLayoutFxTest {
         JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
         Label autoPill = (Label) getField(page, "approvalBadge");
         LineSelectButton<?> modelSelector = (LineSelectButton<?>) getField(page, "modelSelector");
+        Node contextRing = (Node) getField(page, "contextRing");
 
         // ① Auto pill + model selector are inside the composer card (they moved down from the header).
         assertTrue(hasAncestorWithStyleClass(autoPill, "ai-composer"),
@@ -85,46 +88,84 @@ public final class ComposerLayoutFxTest {
         assertTrue(hasAncestorWithStyleClass(modelSelector, "ai-composer"),
                 "the model selector must live inside the composer card (moved out of the header)");
 
-        // ② Send + model are in the bottom toolbar; the pills sit in a WRAPPING FlowPane.
-        assertTrue(hasAncestorWithStyleClass(sendBtn, "ai-composer-toolbar"),
-                "the Send button must live in the composer's bottom toolbar");
+        // ② v2 §7: Send is a square in the INPUT ROW, not the bottom toolbar.
+        assertTrue(hasAncestorWithStyleClass(sendBtn, "ai-input-row"),
+                "the Send square must live in the input row (moved out of the bottom toolbar)");
+        assertFalse(hasAncestorWithStyleClass(sendBtn, "ai-composer-toolbar"),
+                "the Send square must NOT be in the bottom toolbar any more (v2 §7)");
+        assertTrue(sendBtn.getStyleClass().contains("ai-send-square"),
+                "the Send button must wear the compact square style class");
+
+        // ③ v2 §6: model + thinking + ring are in the toolbar; the Auto pill sits in the wrapping
+        //    left FlowPane while thinking moved to the right group (toolbar, NOT a FlowPane child).
         assertTrue(hasAncestorWithStyleClass(modelSelector, "ai-composer-toolbar"),
                 "the model selector must live in the composer's bottom toolbar");
-        assertTrue(hasAncestorOfType(thinkBtn, FlowPane.class),
-                "the thinking pill must sit in the wrapping (FlowPane) left group");
+        assertTrue(hasAncestorWithStyleClass(thinkBtn, "ai-composer-toolbar"),
+                "the thinking pill must live in the composer's bottom toolbar");
+        assertFalse(hasAncestorOfType(thinkBtn, FlowPane.class),
+                "v2 §6: the thinking pill moved OUT of the wrapping left group to the right group");
         assertTrue(hasAncestorOfType(autoPill, FlowPane.class),
                 "the Auto pill must sit in the wrapping (FlowPane) left group");
+
+        // ⑤ v2 §5: the context ring exists in the toolbar and is clickable.
+        assertNotNull(contextRing, "the composer must expose a context ring node");
+        assertTrue(contextRing.getStyleClass().contains("ai-context-ring"),
+                "the context ring must wear the ai-context-ring style class");
+        assertTrue(hasAncestorWithStyleClass(contextRing, "ai-composer-toolbar"),
+                "the context ring must live in the composer's bottom toolbar");
 
         assertTrue(sendBtn.isVisible() && sendBtn.isManaged(), "Send must be visible/managed");
     }
 
     @Test
-    public void sendButtonStaysWithinToolbarWhenWindowIsNarrow() throws Exception {
+    public void sendSquareStaysWithinComposerWhenWindowIsNarrow() throws Exception {
         AIMainPage page = showPage();
         JFXButton sendBtn = (JFXButton) getField(page, "sendBtn");
 
-        // Narrow the window aggressively. The overall page has a sidebar so the whole thing can't
-        // shrink to nothing, but the construction invariant we assert holds at ANY width: the
-        // right-pinned Send never escapes its bottom toolbar to the right (the left pill group is a
-        // FlowPane that wraps instead of shoving Send out). Pixel-accurate reflow/alignment is a
-        // real-machine check per the spec.
+        // Narrow the window aggressively. The Send square is pinned to the input row's right edge
+        // and never enters an overflow — it must stay visible and within the composer card's bounds
+        // at any width. Pixel-accurate reflow/alignment is a real-machine check per the spec.
         Window window = page.getScene().getWindow();
         WaitForAsyncUtils.asyncFx(() -> window.setWidth(560)).get(10, TimeUnit.SECONDS);
         WaitForAsyncUtils.waitForFxEvents();
 
-        Node toolbar = page.lookup(".ai-composer-toolbar");
-        assertNotNull(toolbar, "composer must expose a bottom toolbar node");
+        Node composer = page.lookup(".ai-composer");
+        assertNotNull(composer, "composer must expose a card node");
 
         assertTrue(sendBtn.isVisible() && sendBtn.isManaged(),
                 "Send must remain visible/managed at a narrow width (never folded into an overflow)");
         Bounds send = sendBtn.localToScene(sendBtn.getBoundsInLocal());
-        Bounds bar = toolbar.localToScene(toolbar.getBoundsInLocal());
+        Bounds card = composer.localToScene(composer.getBoundsInLocal());
         assertTrue(send.getWidth() > 0 && send.getHeight() > 0, "Send must have real bounds");
-        // Send stays inside its toolbar's right edge (allow a 1px rounding slack) — it is pinned
-        // right and the wrapping left group yields space before Send ever would.
-        assertTrue(send.getMaxX() <= bar.getMaxX() + 1.0,
-                "Send must stay within the toolbar's right edge (send.maxX=" + send.getMaxX()
-                        + ", toolbar.maxX=" + bar.getMaxX() + ")");
+        // Send stays inside the composer card's right edge (allow a 1px rounding slack).
+        assertTrue(send.getMaxX() <= card.getMaxX() + 1.0,
+                "Send must stay within the composer's right edge (send.maxX=" + send.getMaxX()
+                        + ", card.maxX=" + card.getMaxX() + ")");
+    }
+
+    @Test
+    public void thinkingPillOpensSliderPopupThatDrivesEffort() throws Exception {
+        AIMainPage page = showPage();
+        JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
+
+        // v2 §3: clicking the thinking pill opens a gradient SLIDER (no checkmark menu). The slider
+        // is exposed as a field; driving it must persist the reasoning effort.
+        WaitForAsyncUtils.asyncFx(thinkBtn::fire).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        javafx.scene.control.Slider slider =
+                (javafx.scene.control.Slider) getField(page, "thinkingSlider");
+        assertNotNull(slider, "opening the thinking pill must build the effort slider");
+        assertEquals(0.0, slider.getMin(), "slider domain starts at 0 (none)");
+        assertEquals(5.0, slider.getMax(), "slider domain ends at 5 (max/highest)");
+
+        // Move the handle to index 3 (= "high") and confirm it persisted to reasoning effort.
+        WaitForAsyncUtils.asyncFx(() -> slider.setValue(3)).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        Object aiSettings = getField(page, "aiSettings");
+        String effort = (String) invoke(aiSettings, "getReasoningEffort", new Class<?>[0]);
+        assertEquals("high", effort, "dragging the slider to index 3 must persist effort=high");
     }
 
     private static boolean hasAncestorWithStyleClass(Node node, String styleClass) {

@@ -2487,47 +2487,188 @@
     -fx-padding: 2 4 2 4;
 }
 
-/* Bottom toolbar row: a hairline divider above it separates it from the input area. */
+/* Bottom toolbar row: a hairline divider above it separates it from the input area. Slim, low-
+   profile (v2 §1) — the divider padding is tight so the input area isn't left with dead space. */
 .ai-composer-toolbar {
     -fx-border-color: -monet-outline-variant;
     -fx-border-width: 1 0 0 0;
-    -fx-padding: 8 0 0 0;
+    -fx-padding: 6 0 0 0;
 }
 
-/* Toolbar pills (Auto = primary tint, Thinking = tertiary tint — same colour pairing as the
-   former header badges). Both a Label (Auto) and a JFXButton (Thinking) wear this. */
+/* Toolbar pills (v2 §2 colour convergence): all NEUTRAL chips (grey fill, muted text). Only the
+   Auto pill keeps a hint of colour — its icon alone is primary-tinted — and only Send stays a
+   full accent. ~25px tall, one size smaller, tight padding (v2 §1). Both a Label (Auto) and a
+   JFXButton (Thinking) wear this. */
 .ai-toolbar-pill {
-    -fx-font-size: 12px;
+    -fx-font-size: 11.5px;
     -fx-font-weight: bold;
-    -fx-padding: 4 10 4 10;
-    -fx-background-radius: 9;
-    -fx-border-radius: 9;
+    -fx-padding: 0 8 0 8;
+    -fx-min-height: 25;
+    -fx-pref-height: 25;
+    -fx-background-color: -monet-surface-container-high;
+    -fx-background-radius: 7;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 7;
+    -fx-border-width: 1;
+    -fx-text-fill: -monet-on-surface-variant;
     -fx-cursor: hand;
-    -fx-graphic-text-gap: 6;
+    -fx-graphic-text-gap: 5;
 }
 
-.ai-pill-auto {
-    -fx-background-color: -monet-primary-container;
-    -fx-text-fill: -monet-on-primary-container;
+.ai-toolbar-pill .svg {
+    -fx-fill: -monet-on-surface-variant;
 }
 
+.ai-toolbar-pill:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+/* Auto = neutral chip but with a primary-tinted icon (the "一点点色" hint that it is a mode). */
 .ai-pill-auto .svg {
-    -fx-fill: -monet-on-primary-container;
-}
-
-.ai-pill-think {
-    -fx-background-color: -monet-tertiary-container;
-    -fx-text-fill: -monet-on-tertiary-container;
-}
-
-.ai-pill-think .svg {
-    -fx-fill: -monet-on-tertiary-container;
+    -fx-fill: -monet-primary;
 }
 
 /* Toolbar icon buttons (+ attach, / command) reuse the native .toggle-icon4; keep their tint
    aligned with the surrounding on-surface-variant text. */
 .ai-composer-toolbar .ai-toolbar-icon .svg {
     -fx-fill: -monet-on-surface-variant;
+}
+
+/* ===== Send/Stop square (v2 §7): compact accent square in the input area's top-right ===== */
+.ai-send-square {
+    -fx-min-width: 30;
+    -fx-pref-width: 30;
+    -fx-max-width: 30;
+    -fx-min-height: 30;
+    -fx-pref-height: 30;
+    -fx-max-height: 30;
+    -fx-padding: 0;
+    -fx-background-color: -monet-primary;
+    -fx-background-radius: 8;
+    -fx-cursor: hand;
+}
+
+.ai-send-square .svg {
+    -fx-fill: -monet-on-primary;
+}
+
+/* Stop mode keeps the square shape; the danger fill comes from .jfx-button-raised.ai-stop-btn. */
+.ai-send-square.ai-stop-btn .svg {
+    -fx-fill: -monet-on-error;
+}
+
+/* ===== Context-usage ring (v2 §5): pure arc, no number; turns red near-full ===== */
+.ai-context-ring {
+    -fx-cursor: hand;
+    -fx-background-radius: 7;
+}
+
+.ai-context-ring:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+.ai-ring-track {
+    -fx-stroke: -monet-outline-variant;
+}
+
+.ai-ring-arc {
+    -fx-stroke: -monet-primary;
+}
+
+.ai-ring-arc.ai-ring-hot {
+    -fx-stroke: -monet-error;
+}
+
+/* ===== Thinking-effort slider popup (v2 §3): gradient track, replaces the checkmark menu ===== */
+.ai-effort-popup {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 12;
+    -fx-padding: 16 18 18 18;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
+}
+
+.ai-effort-title {
+    -fx-font-size: 12.5px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-effort-value {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-primary;
+}
+
+/* The slider IS the gradient bar (no→highest); a light thumb rides it. */
+.ai-effort-slider .track {
+    -fx-background-color: linear-gradient(to right, -monet-surface-container-highest 0%, -monet-primary 100%);
+    -fx-background-radius: 5;
+    -fx-pref-height: 8;
+}
+
+.ai-effort-slider .thumb {
+    -fx-background-color: -monet-surface, -monet-primary;
+    -fx-background-insets: 0, 3;
+    -fx-background-radius: 10;
+    -fx-pref-width: 18;
+    -fx-pref-height: 18;
+}
+
+.ai-effort-scale {
+    -fx-padding: 2 0 0 0;
+}
+
+.ai-effort-tick {
+    -fx-font-size: 10px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+/* ===== Context detail popup (v2 §5) ===== */
+.ai-ctx-popup {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 12;
+    -fx-padding: 16 18 16 18;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
+}
+
+.ai-ctx-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface;
+}
+
+.ai-ctx-value {
+    -fx-font-size: 12.5px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-ctx-value.ai-ctx-hot {
+    -fx-text-fill: -monet-error;
+    -fx-font-weight: bold;
+}
+
+.ai-ctx-bar {
+    -fx-pref-height: 8;
+}
+
+.ai-ctx-bar > .track {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-background-radius: 5;
+}
+
+.ai-ctx-bar > .bar {
+    -fx-background-color: -monet-primary;
+    -fx-background-radius: 5;
+    -fx-padding: 4;
+}
+
+.ai-ctx-bar-hot > .bar {
+    -fx-background-color: -monet-error;
+}
+
+.ai-ctx-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -monet-on-surface-variant;
 }
 
 /* ===== Background jobs pull-up + pinned TODO checklist ===== */
