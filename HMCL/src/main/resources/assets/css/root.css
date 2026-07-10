@@ -294,6 +294,17 @@
     -fx-alignment: CENTER_LEFT;
 }
 
+/* Pin the menu-item label colour explicitly. The popup content is reparented into a JFXPopup
+   whose inherited text-fill context depends on the anchor: the thinking-level popup (anchored in
+   the composer/input bar) resolved its #label to a transparent/near-background fill and rendered
+   the effort names invisible, while the identical IconedMenuItem in the session "⋯" menu (anchored
+   on a sidebar row) read fine (B3 regression). Anchoring the fill on the label itself makes both
+   menus read on-surface in every theme, and is idempotent for the already-correct session menu. */
+.iconed-item #label,
+.iconed-menu-item #label {
+    -fx-text-fill: -monet-on-surface;
+}
+
 .menu-container {
     -fx-padding: 8 16 8 16;
 }
@@ -2254,13 +2265,14 @@
 
 /* ===== Inline subordinate cards (reasoning / tool / tool group) ===== */
 
-/* Shared box model of the three inline subordinate cards — reasoning ("思考过程"), tool call
-   (Calling… -> Used/Failed, collapsible result) and tool-call group ("已调用 N 个工具"). One rule
-   keeps them byte-identical (§B B2 constraint); borderless tonal surface, native radius 4. */
+/* The three inline subordinate cards — reasoning ("思考过程"), tool call (Calling… -> Used/Failed,
+   collapsible result) and tool-call group ("已调用 N 个工具") — are now pure layout stacks. The
+   B3 redesign moved the tonal capsule look onto their COMPACT header (.ai-collapse-header-compact),
+   so the card itself is transparent: collapsed it is just the hugging capsule; expanded it drops
+   the body directly beneath the capsule with no second box. */
 .ai-tool-card {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 4;
-    -fx-padding: 6 10 6 10;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
 }
 
 /* Title label inside every CollapseHeader (reasoning/tool/group/todo share the component). */
@@ -2282,6 +2294,26 @@
 
 .ai-collapse-header .svg {
     -fx-fill: -monet-on-surface-variant;
+}
+
+/* Compact "capsule" header used by the inline subordinate cards (B3 redesign): a fit-content pill
+   with a leading icon, title, rich summary and a trailing chevron. Radius 10 = capsule (matches
+   the badges, VS §1.1). Placed AFTER the base rule so its radius wins at equal specificity. */
+.ai-collapse-header-compact {
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 10;
+    -fx-padding: 4 10 4 10;
+    -fx-spacing: 6;
+}
+
+.ai-collapse-header-compact:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+/* Rich summary slot inside the compact header (caption tier, one step down from the title). */
+.ai-collapse-summary {
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 11px;
 }
 
 .ai-tool-card-result {

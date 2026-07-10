@@ -186,6 +186,28 @@ public final class AiSession {
         return Collections.unmodifiableList(new ArrayList<>(messages));
     }
 
+    /// Applies {@code op} to every message's content in place, preserving all other message
+    /// metadata. Returns {@code true} if any content actually changed. Taken under this session's
+    /// monitor so it is consistent with {@link #addMessage} and {@link #copyForStore}. Deliberately
+    /// does NOT bump {@code updatedAt} — materializing a job-progress placeholder is a rendering
+    /// concern, not conversation activity, and must not reorder the sidebar. Used by
+    /// {@link AiSessionStore#materializeJobProgress}.
+    synchronized boolean rewriteContents(java.util.function.UnaryOperator<String> op) {
+        boolean changed = false;
+        for (LlmMessage message : messages) {
+            String old = message.getContent();
+            if (old == null) {
+                continue;
+            }
+            String updated = op.apply(old);
+            if (updated != null && !updated.equals(old)) {
+                message.setContent(updated);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
     /// Returns an independent, point-in-time copy of this session whose message list is a fresh
     /// snapshot, safe to hand to Gson on another thread (e.g. the FX thread during
     /// {@link AiSessionStore#save()}) while this session keeps being mutated by the agent thread.

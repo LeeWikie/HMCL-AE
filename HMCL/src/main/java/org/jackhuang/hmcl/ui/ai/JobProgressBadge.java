@@ -59,7 +59,11 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 /// historical message.
 final class JobProgressBadge extends Label {
 
-    static final String NOT_FOUND_TEXT = i18n("ai.jobs.badge.not_found");
+    /// Graceful fallback for an id absent from {@link AiJobManager} — most often a job that
+    /// finished and was pruned before the message could be materialized (e.g. after a restart).
+    /// Rendered as a QUIET caption ("后台任务已结束"), never the filled error-ish pill, so stale
+    /// history reads calmly instead of alarming (B3 item 2, layer 2).
+    static final String NOT_FOUND_TEXT = i18n("ai.jobs.badge.ended");
     private static final String RUNNING_TEXT = i18n("ai.jobs.badge.running");
     private static final String SINGLE_DONE_TEXT = i18n("ai.jobs.badge.done");
     private static final Duration POLL_INTERVAL = Duration.millis(500);
@@ -122,7 +126,7 @@ final class JobProgressBadge extends Label {
     private void refreshSingle() {
         AiJobManager.Job job = singleJobId.isEmpty() ? null : AiJobManager.getInstance().get(singleJobId);
         if (job == null) {
-            settle(NOT_FOUND_TEXT);
+            settleEnded();
             return;
         }
         if (job.isFinished()) {
@@ -151,7 +155,7 @@ final class JobProgressBadge extends Label {
             if (job.isFinished()) done++;
         }
         if (total == 0) {
-            settle(NOT_FOUND_TEXT);
+            settleEnded();
             return;
         }
         setText(i18n("ai.jobs.badge.completed", done, total));
@@ -160,11 +164,25 @@ final class JobProgressBadge extends Label {
         }
     }
 
-    /// Renders the final text and stops polling permanently — used both for a genuine terminal
-    /// state and for the "not found" fallback (which can never change, so it's equally settled).
+    /// Renders the final text and stops polling permanently — used for a genuine terminal state
+    /// (e.g. the single-job "完成").
     private void settle(String text) {
         setText(text);
         markSettled();
+    }
+
+    /// Settles into the QUIET "后台任务已结束" caption for an id that no longer exists in
+    /// {@link AiJobManager}: drops the filled capsule styling and switches to the plain caption
+    /// tier so a pruned/never-materialized job reads calmly in old history instead of as an
+    /// error-looking pill (B3 item 2, layer 2). Permanent — this state can never change.
+    private void settleEnded() {
+        setText(NOT_FOUND_TEXT);
+        getStyleClass().removeAll("ai-approval-badge", "ai-job-progress-badge", "ai-job-progress-badge-done");
+        if (!getStyleClass().contains("ai-caption")) {
+            getStyleClass().add("ai-caption");
+        }
+        settled = true;
+        timeline.stop();
     }
 
     /// Marks this badge as permanently settled: stops the poll timeline for good and applies the

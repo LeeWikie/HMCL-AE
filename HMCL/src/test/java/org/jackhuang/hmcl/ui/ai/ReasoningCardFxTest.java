@@ -91,4 +91,33 @@ public final class ReasoningCardFxTest {
         WaitForAsyncUtils.asyncFx(header::toggle).get(5, TimeUnit.SECONDS);
         assertFalse(content.isVisible(), "second click collapses again");
     }
+
+    /// B3 redesign: a LIVE reasoning card (constructed empty, then streamed) shows a running
+    /// "思考中…" summary in its compact capsule header and freezes it into a "用时 N 秒" duration
+    /// once finishTiming() runs (the visible answer starts). Event/direct-method injection (A7).
+    @Test
+    public void liveCardShowsThinkingThenDurationSummary() throws Exception {
+        AIMainPage.ReasoningCard[] cardRef = new AIMainPage.ReasoningCard[1];
+        FxToolkit.setupSceneRoot(() -> {
+            cardRef[0] = new AIMainPage.ReasoningCard("", true); // empty → live/timed card
+            StackPane root = new StackPane(cardRef[0]);
+            root.setPrefSize(500, 300);
+            return root;
+        });
+        FxToolkit.showStage();
+        WaitForAsyncUtils.waitForFxEvents();
+        AIMainPage.ReasoningCard card = cardRef[0];
+        FxRobot robot = new FxRobot();
+
+        CollapseHeader header = robot.from(card).lookup(".ai-collapse-header").queryAs(CollapseHeader.class);
+        assertTrue(header.getStyleClass().contains("ai-collapse-header-compact"),
+                "the reasoning card uses the compact capsule header");
+        assertEquals("思考中…", header.getSummaryLabel().getText(),
+                "a live card shows a running summary while streaming");
+
+        WaitForAsyncUtils.asyncFx(card::finishTiming).get(5, TimeUnit.SECONDS);
+        assertTrue(header.getSummaryLabel().getText().matches("用时 \\d+ 秒"),
+                "finishTiming freezes the summary into a 用时 N 秒 duration, got: "
+                        + header.getSummaryLabel().getText());
+    }
 }

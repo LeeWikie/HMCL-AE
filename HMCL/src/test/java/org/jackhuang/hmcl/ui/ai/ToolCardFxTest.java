@@ -107,6 +107,15 @@ public final class ToolCardFxTest {
         assertFalse(result.isVisible(), "a freshly-completed card starts with the result collapsed");
         assertTrue(card.getStyleClass().contains("ai-tool-card-ok"), "success completion tags the ok class");
 
+        // B3 redesign: compact capsule header (fit-content) with a rich summary carrying the ✓ mark.
+        assertTrue(header.getStyleClass().contains("ai-collapse-header-compact"),
+                "the tool card uses the compact capsule header");
+        assertEquals(javafx.scene.layout.Region.USE_PREF_SIZE, header.getMaxWidth(), 0.01,
+                "the compact header hugs its content (fit-content)");
+        assertTrue(header.getSummaryLabel().getText().contains("✓"),
+                "a successful completion shows a ✓ mark in the rich summary, got: "
+                        + header.getSummaryLabel().getText());
+
         onFxAnd(() -> {
             header.toggle();
             return null;
@@ -160,6 +169,9 @@ public final class ToolCardFxTest {
 
         CollapseHeader header = (CollapseHeader) group.getChildren().get(0);
         assertEquals("已调用 3 个工具", header.getTitleLabel().getText(), "summary counts every add()");
+        // B3 rich summary: the three completed tool names + their ✓ marks, joined by " · ".
+        assertEquals("tool0 ✓ · tool1 ✓ · tool2 ✓", header.getSummaryLabel().getText(),
+                "the group's rich summary lists each tool name with its result mark");
 
         VBox body = (VBox) group.getChildren().get(1);
         assertFalse(body.isVisible(), "group starts collapsed");
@@ -174,5 +186,22 @@ public final class ToolCardFxTest {
         CollapseHeader nested = robot.from(body.getChildren().get(0)).lookup(".ai-collapse-header")
                 .queryAs(CollapseHeader.class);
         assertTrue(nested.getChevron().isVisible(), "nested completed card keeps its own chevron");
+    }
+
+    /// A run longer than three tools folds the remainder into a "+N" tail (B3 rich summary).
+    @Test
+    public void groupSummaryFoldsOverflowIntoPlusN() throws Exception {
+        AIMainPage.ToolCallGroupCard group = onFxAnd(() -> {
+            AIMainPage.ToolCallGroupCard g = new AIMainPage.ToolCallGroupCard();
+            for (int i = 0; i < 5; i++) {
+                AIMainPage.ToolCard card = new AIMainPage.ToolCard("t" + i);
+                card.complete(i != 1, "r" + i); // t1 fails → ✗ mark
+                g.add(card);
+            }
+            return g;
+        });
+        CollapseHeader header = (CollapseHeader) group.getChildren().get(0);
+        assertEquals("t0 ✓ · t1 ✗ · t2 ✓ · +2", header.getSummaryLabel().getText(),
+                "the first three tools are named (with marks) and the rest fold into +N");
     }
 }

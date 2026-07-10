@@ -59,6 +59,13 @@ final class CollapseHeader extends HBox {
     private Node trailing;
     private Timeline rotateAnimation;
 
+    /// Leading SVG icon shown at the row's start in compact mode (thinking = lightbulb, tool =
+    /// puzzle piece). Null in the default (todo) layout.
+    private Node leadingIcon;
+    /// Rich-summary label (caption tier) shown between the title and the chevron in compact mode:
+    /// e.g. "instance ✓ · search ✓ · +3" or "用时 3 秒". Created lazily by [#useCompactLayout].
+    private Label summary;
+
     CollapseHeader(String titleText) {
         setSpacing(6);
         setAlignment(Pos.CENTER_LEFT);
@@ -75,6 +82,59 @@ final class CollapseHeader extends HBox {
 
         expanded.addListener((obs, was, is) -> rotateChevron(is));
         FXUtils.onClicked(this, this::toggle);
+    }
+
+    /// Switches this header to the compact "capsule" layout used by the inline subordinate cards
+    /// (reasoning / tool / tool-call group) since the B3 redesign: a leading SVG icon, the title,
+    /// a rich summary slot, and a TRAILING chevron — laid out fit-content (hugging its content)
+    /// instead of the default full-width whole-row form the todo card still uses. Idempotent.
+    ///
+    /// @param icon the 16px leading icon (may be null); mouse-transparent so the whole row stays
+    ///             the click hot zone
+    void useCompactLayout(Node icon) {
+        if (getStyleClass().contains("ai-collapse-header-compact")) {
+            return;
+        }
+        getStyleClass().add("ai-collapse-header-compact");
+        // fit-content: the enclosing card hugs the collapsed capsule and only grows to full width
+        // once the body is revealed (see wrapCard + the .ai-tool-card CSS).
+        setMaxWidth(USE_PREF_SIZE);
+
+        summary = new Label();
+        summary.getStyleClass().add("ai-collapse-summary");
+        summary.setMouseTransparent(true);
+        summary.setManaged(false);
+        summary.setVisible(false);
+
+        // A spacer pushes the chevron to the trailing edge when the header is stretched wide
+        // (expanded state); collapsed, everything simply hugs left with the chevron last.
+        javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
+        spacer.setMouseTransparent(true);
+        HBox.setHgrow(spacer, javafx.scene.layout.Priority.ALWAYS);
+
+        getChildren().clear();
+        if (icon != null) {
+            icon.setMouseTransparent(true);
+            leadingIcon = icon;
+            getChildren().add(icon);
+        }
+        getChildren().addAll(title, summary, spacer, chevron);
+    }
+
+    /// Sets (or clears) the compact-mode rich summary. Blank text hides the slot so it never
+    /// reserves layout space. No-op if [#useCompactLayout] was not called.
+    void setSummary(String text) {
+        if (summary == null) {
+            return;
+        }
+        boolean has = text != null && !text.isBlank();
+        summary.setText(has ? text : "");
+        summary.setManaged(has);
+        summary.setVisible(has);
+    }
+
+    Label getSummaryLabel() {
+        return summary;
     }
 
     BooleanProperty expandedProperty() {

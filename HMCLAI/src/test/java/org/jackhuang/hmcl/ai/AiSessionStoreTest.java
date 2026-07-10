@@ -277,6 +277,48 @@ public final class AiSessionStoreTest {
         }
     }
 
+    /// B3 item 2 (materialization): rewriting a session's job-progress placeholder into frozen
+    /// static text must mutate content in place (preserving other messages), persist, and survive
+    /// a reload — so history no longer depends on the in-memory job registry.
+    @Test
+    public void testMaterializeJobProgressRewritesAndPersists() throws Exception {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-sessions-test-");
+        try {
+            AiSessionStore store = new AiSessionStore(tempDir);
+            AiSession session = store.createSession();
+            session.addMessage(new org.jackhuang.hmcl.ai.llm.LlmMessage("user", "装几个mod"));
+            session.addMessage(new org.jackhuang.hmcl.ai.llm.LlmMessage(
+                    "assistant", "好的，进度 {{job_progress:a,b}}，稍等"));
+
+            boolean changed = store.materializeJobProgress(session.getId(),
+                    content -> content.replace("{{job_progress:a,b}}", "已完成 2/2"));
+            assertTrue(changed, "a matching placeholder must report a change");
+
+            // In-memory rewrite is immediate and leaves sibling messages untouched.
+            List<org.jackhuang.hmcl.ai.llm.LlmMessage> msgs = session.getMessages();
+            assertEquals("装几个mod", msgs.get(0).getContent(), "unrelated messages are untouched");
+            assertEquals("好的，进度 已完成 2/2，稍等", msgs.get(1).getContent(),
+                    "the placeholder is frozen into static text");
+
+            // A second pass with nothing to change reports no change.
+            assertFalse(store.materializeJobProgress(session.getId(),
+                            content -> content.replace("{{job_progress:a,b}}", "x")),
+                    "no matching placeholder → no change");
+
+            // The rewrite is persisted: a fresh store loading the same dir sees the frozen text.
+            AiSessionStore.awaitSaveQueue();
+            AiSessionStore reloaded = new AiSessionStore(tempDir);
+            reloaded.load();
+            AiSession reloadedSession = reloaded.getSession(session.getId());
+            assertNotNull(reloadedSession);
+            assertEquals("好的，进度 已完成 2/2，稍等",
+                    reloadedSession.getMessages().get(1).getContent(),
+                    "the materialized text survives a reload");
+        } finally {
+            cleanup(tempDir);
+        }
+    }
+
     private static void cleanup(Path tempDir) {
         try {
             Files.walk(tempDir)

@@ -399,6 +399,31 @@ public final class AiSessionStore {
         return sessions.size();
     }
 
+    /// Rewrites the content of every message in the given session by applying {@code rewriter},
+    /// then persists asynchronously if anything changed. Used by the UI to "materialize" a
+    /// {@code {{job_progress:…}}} live-badge placeholder into frozen static text (e.g. "已完成 7/9")
+    /// once all its jobs have reached a terminal state, so a reloaded history renders the settled
+    /// result instead of falling back on the (by-then-empty) in-memory job registry.
+    ///
+    /// @param sessionId the session to rewrite; a no-op for an unknown id
+    /// @param rewriter  applied to each message's content; return the same string to leave it
+    ///                  unchanged
+    /// @return {@code true} if at least one message changed (and a save was queued)
+    public boolean materializeJobProgress(String sessionId, java.util.function.UnaryOperator<String> rewriter) {
+        AiSession session;
+        synchronized (this) {
+            session = sessions.get(sessionId);
+        }
+        if (session == null) {
+            return false;
+        }
+        boolean changed = session.rewriteContents(rewriter);
+        if (changed) {
+            saveAsync();
+        }
+        return changed;
+    }
+
     // ---- Gson type adapter for java.time.Instant ----------------------------------
 
     /// Serializes {@link Instant} as epoch milliseconds so Gson does not attempt

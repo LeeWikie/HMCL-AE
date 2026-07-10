@@ -119,6 +119,14 @@ public final class LlmMessage {
         return content;
     }
 
+    /// Replaces the text content, preserving every other field (usage/model/reasoning/turnId/…).
+    /// Used to materialize a {@code {{job_progress:…}}} placeholder into frozen static text once
+    /// its jobs have all reached a terminal state (see {@link AiSession#rewriteContents}), so a
+    /// reloaded history no longer depends on the in-memory job registry.
+    public void setContent(String content) {
+        this.content = content;
+    }
+
     /// Returns the token usage attached to this message, or `null` if none.
     @Nullable
     public LlmUsage getUsage() {

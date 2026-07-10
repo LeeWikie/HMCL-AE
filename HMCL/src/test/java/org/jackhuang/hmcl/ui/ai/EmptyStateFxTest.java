@@ -168,6 +168,32 @@ public final class EmptyStateFxTest {
         }
     }
 
+    /// B3 item 3: the empty state was trimmed from 8 suggestion chips to exactly 4 (semantic
+    /// de-duplication) so they lay out as one tidy centered row instead of a ragged 3/4/1.
+    @Test
+    public void emptyStateShowsExactlyFourChips() throws Exception {
+        AIMainPage page = showPage();
+        VBox suggestionsBox = (VBox) getField(page, "suggestionsBox");
+        java.util.List<JFXButton> chips = new java.util.ArrayList<>();
+        collectButtons(suggestionsBox, chips);
+        assertEquals(4, chips.size(), "the empty state must show exactly four suggestion chips (8→4)");
+        for (JFXButton chip : chips) {
+            assertTrue(chip.getStyleClass().contains("jfx-button-border"),
+                    "each chip is a native border button (C-09)");
+        }
+    }
+
+    private static void collectButtons(Node root, java.util.List<JFXButton> out) {
+        if (root instanceof JFXButton btn) {
+            out.add(btn);
+        }
+        if (root instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                collectButtons(child, out);
+            }
+        }
+    }
+
     /// The first suggestion chip: a JFXButton inside the suggestionsBox's FlowPane.
     private static JFXButton firstChip(AIMainPage page) throws Exception {
         VBox suggestionsBox = (VBox) getField(page, "suggestionsBox");

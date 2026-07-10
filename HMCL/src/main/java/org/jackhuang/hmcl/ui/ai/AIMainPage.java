@@ -412,6 +412,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         private final Label content = new Label();
         private final CollapseHeader header;
         private final StringBuilder text = new StringBuilder();
+        /// Wall-clock start of the reasoning stream, for the "用时 N 秒" summary.
+        private final long startNanos = System.nanoTime();
+        /// True only for the live streaming card (created empty, then fed tokens): it shows a
+        /// running "思考中…" summary and captures a duration on [#finishTiming]. A reloaded card
+        /// (full text handed to the constructor) has no known duration, so it shows no summary.
+        private final boolean timed;
+        private boolean durationCaptured;
 
         ReasoningCard(String initial, boolean expanded) {
             // Shares .ai-tool-card with ToolCard/ToolCallGroupCard: the three inline subordinate
@@ -427,6 +434,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 content.setText(initial);
             }
             header = new CollapseHeader(i18n("ai.reasoning.title"));
+            header.useCompactLayout(SVG.LIGHTBULB.createIcon(16));
+            timed = (initial == null || initial.isEmpty());
+            if (timed) {
+                header.setSummary(i18n("ai.reasoning.summary.thinking"));
+            }
             content.visibleProperty().bind(header.expandedProperty());
             content.managedProperty().bind(header.expandedProperty());
             getChildren().addAll(header, content);
@@ -436,6 +448,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         void append(String token) {
             text.append(token);
             content.setText(text.toString());
+        }
+
+        /// Freezes the running "思考中…" summary into "用时 N 秒" once the reasoning stream ends
+        /// (the visible answer starts). No-op for reloaded cards and idempotent.
+        void finishTiming() {
+            if (!timed || durationCaptured) {
+                return;
+            }
+            durationCaptured = true;
+            long secs = Math.max(1, Math.round((System.nanoTime() - startNanos) / 1_000_000_000.0));
+            header.setSummary(i18n("ai.reasoning.duration", secs));
         }
 
         /// Thin wrapper kept for the streaming path (collapse the card once the visible answer
@@ -1297,25 +1320,23 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label emptyTitle = new Label(i18n("ai.chat.empty.title"));
         emptyTitle.getStyleClass().add("title-label");
 
-        Label emptyText = new Label(i18n("ai.input_placeholder"));
-        emptyText.getStyleClass().add("subtitle-label");
-
+        // Suggestion chips: single centered row when wide, 2×2 in a narrow window (FlowPane wrap).
+        // The middle "输入你的问题…" line was removed — it duplicated the composer placeholder (B3).
         javafx.scene.layout.FlowPane chips = new javafx.scene.layout.FlowPane();
         chips.setHgap(8);
         chips.setVgap(8);
         chips.setAlignment(Pos.CENTER);
-        chips.setMaxWidth(520);
-        chips.setPrefWrapLength(520);
+        chips.setMaxWidth(560);
+        chips.setPrefWrapLength(560);
 
+        // Four chips, semantically de-duplicated (B3): crash report / recommend mods / build a
+        // modpack from scratch / why is the game lagging. The former 8 collapsed the near-synonyms
+        // (optimize≈performance, help≈crash) and low-frequency (logs, config) suggestions.
         String[] suggestions = {
                 i18n("ai.suggestion.crash"),
-                i18n("ai.suggestion.logs"),
-                i18n("ai.suggestion.optimize"),
                 i18n("ai.suggestion.mods"),
-                i18n("ai.suggestion.help"),
                 i18n("ai.suggestion.setup"),
-                i18n("ai.suggestion.performance"),
-                i18n("ai.suggestion.config")
+                i18n("ai.suggestion.performance")
         };
 
         for (String suggestion : suggestions) {
@@ -1348,7 +1369,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         noProviderBox.setVisible(false);
         noProviderBox.setManaged(false);
 
-        emptyState.getChildren().setAll(aiIcon, emptyTitle, emptyText, suggestionsBox, noProviderBox);
+        emptyState.getChildren().setAll(aiIcon, emptyTitle, suggestionsBox, noProviderBox);
         emptyState.setAlignment(Pos.CENTER);
         emptyState.setPadding(new Insets(40));
     }
@@ -1843,7 +1864,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         jobsPane.setVisible(false);
         jobsPane.setManaged(false);
         org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
-                .addChangeListener(() -> Platform.runLater(this::refreshJobsPane));
+                .addChangeListener(() -> Platform.runLater(() -> {
+                    refreshJobsPane();
+                    // Freeze any {{job_progress:…}} placeholder whose jobs have all finished into
+                    // static text on disk, so a later reload no longer depends on the live registry
+                    // (B3 item 2, layer 1).
+                    materializeSettledJobBadges();
+                }));
         // Auto-continue: when a background job of the current session finishes while idle, feed its
         // result back so the AI carries on (the chosen "auto-continue" behaviour).
         org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance()
@@ -3352,6 +3379,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         // Text resumed after a tool call (or first text): start a new segment.
                         // The visible answer is starting, so collapse the reasoning card out of the way.
                         if (reasoningLiveCard != null) {
+                            reasoningLiveCard.finishTiming();
                             reasoningLiveCard.setExpanded(false);
                         }
                         streamingBubble = createAiBubble("");
@@ -4236,6 +4264,66 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         sessionStore.saveAsync();
     }
 
+    /// Regex for the {@code {{job_progress:<id>[,<id>...]}}} placeholder, mirroring
+    /// {@link MarkdownMessageView}'s own pattern. Used by {@link #materializeSettledJobBadges}.
+    private static final java.util.regex.Pattern JOB_PROGRESS_MARKER =
+            java.util.regex.Pattern.compile("\\{\\{job_progress:([^}]*)}}");
+
+    /// Freezes every {@code {{job_progress:…}}} placeholder in the CURRENT session whose jobs have
+    /// ALL reached a terminal state into static text (e.g. "已完成 7/9" / "完成"), persisting the
+    /// rewrite through {@link AiSessionStore#materializeJobProgress}. A placeholder with any
+    /// still-running or already-unknown id is left untouched — the former is still live, the latter
+    /// is handled at render time by {@link JobProgressBadge}'s quiet fallback (B3 item 2). FX thread.
+    private void materializeSettledJobBadges() {
+        AiSession session = sessionStore.getCurrentSession();
+        if (session == null) {
+            return;
+        }
+        sessionStore.materializeJobProgress(session.getId(), content -> {
+            if (content == null || content.indexOf("{{job_progress:") < 0) {
+                return content;
+            }
+            java.util.regex.Matcher m = JOB_PROGRESS_MARKER.matcher(content);
+            StringBuffer out = new StringBuffer();
+            while (m.find()) {
+                String frozen = freezeJobProgressIfSettled(m.group(1));
+                m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement(
+                        frozen != null ? frozen : m.group(0)));
+            }
+            m.appendTail(out);
+            return out.toString();
+        });
+    }
+
+    /// Returns the frozen static text for a job-progress marker whose EVERY listed id is a known,
+    /// terminal job; {@code null} otherwise (so the caller leaves the live marker in place). Single
+    /// id → the "完成" text; multiple → "已完成 <succeeded>/<total>".
+    @Nullable
+    private static String freezeJobProgressIfSettled(String rawIds) {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (String part : rawIds.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) ids.add(trimmed);
+        }
+        if (ids.isEmpty()) {
+            return null;
+        }
+        int succeeded = 0;
+        for (String id : ids) {
+            org.jackhuang.hmcl.ai.tools.AiJobManager.Job job =
+                    org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().get(id);
+            if (job == null || !job.isFinished()) {
+                return null; // unknown or still running → cannot freeze yet
+            }
+            if (job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.SUCCEEDED) {
+                succeeded++;
+            }
+        }
+        return ids.size() == 1
+                ? i18n("ai.jobs.badge.done")
+                : i18n("ai.jobs.badge.completed_final", succeeded, ids.size());
+    }
+
     /// Mirrors {@link #persistStore()} for {@code aiSettings}: a silently swallowed save here
     /// left the user believing a settings/model change had stuck when it only lived in memory.
     private void persistAiSettings() {
@@ -4296,17 +4384,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     /// Wraps an inline subordinate card (reasoning / tool / tool group) in a left-aligned row
-    /// mirroring {@link #wrapBubble}, with two deliberate differences that express the card's
-    /// subordination to the adjacent AI answer (VS §3.3): the card grows to fill the column
-    /// width (up to its own 704px max, so all three card types render equally wide instead of
-    /// shrinking to content), and the left inset is 16px deeper than the bubble column.
-    /// Deliberately NO `.ai-bubble-wrapper` style class — that class is the marker
+    /// mirroring {@link #wrapBubble}, indented 16px deeper than the bubble column (VS §3.3).
+    /// Since the B3 redesign the card is fit-content (no {@code Hgrow ALWAYS}): collapsed it hugs
+    /// its compact capsule header, and it only grows toward the 704px max once the body is
+    /// revealed. Deliberately NO `.ai-bubble-wrapper` style class — that class is the marker
     /// {@link #setWrapperCache} climbs for, and card wrappers manage their own cache here.
     private static HBox wrapCard(Region card) {
         HBox wrapper = new HBox(card);
         wrapper.setAlignment(Pos.CENTER_LEFT);
         wrapper.setPadding(new Insets(2, 16, 2, 32));
-        HBox.setHgrow(card, Priority.ALWAYS);
         wrapper.setCache(true); // same rasterise-once treatment as wrapBubble
         return wrapper;
     }
@@ -4653,6 +4739,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         private final Label progressLabel = new Label();
         private final VBox progressBox = new VBox(2, progressLabel, progressBar);
         private boolean finished = false;
+        /// Terminal success, valid once [#finished]; drives the group card's rich summary marks.
+        private boolean success = false;
+        /// Wall-clock start of the call, for the "· N 秒" elapsed suffix on the summary.
+        private final long startNanos = System.nanoTime();
 
         ToolCard(String toolName) {
             super(2);
@@ -4664,6 +4754,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             // The chevron stays hidden until complete() delivers an expandable result, so a
             // running/plain card doesn't advertise a toggle it does not have.
             header = new CollapseHeader(i18n("ai.tool.calling", toolName));
+            header.useCompactLayout(SVG.EXTENSION.createIcon(16));
             header.getTitleLabel().setWrapText(true);
             header.getChevron().setVisible(false);
             header.getChevron().setManaged(false);
@@ -4701,13 +4792,42 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             progressLabel.setText((message == null || message.isBlank() ? "" : message.strip()) + pct);
         }
 
+        String getToolName() {
+            return toolName;
+        }
+
+        /// Terminal success flag — only meaningful after [#complete]. Read by the group card to
+        /// build its per-tool "name ✓ / ✗" summary marks.
+        boolean isSuccess() {
+            return success;
+        }
+
+        boolean isFinished() {
+            return finished;
+        }
+
+        /// Set by the enclosing {@link ToolCallGroupCard} so it can refresh its rich summary the
+        /// moment a grouped child reaches its terminal state (add() happens at call time, before
+        /// the result is known). Null for standalone cards.
+        @Nullable
+        private Runnable completionListener;
+
+        void setCompletionListener(@Nullable Runnable listener) {
+            this.completionListener = listener;
+        }
+
         /// Updates the card once its tool finishes; stores the (collapsible) result text.
         void complete(boolean success, @Nullable String summary) {
             finished = true;
+            this.success = success;
             progressBox.setVisible(false);
             progressBox.setManaged(false);
             header.getTitleLabel().setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
             getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
+            // Compact-mode rich summary: the result mark (✓/✗) plus elapsed seconds if non-trivial.
+            long secs = Math.round((System.nanoTime() - startNanos) / 1_000_000_000.0);
+            String mark = success ? "✓" : "✗";
+            header.setSummary(secs >= 1 ? i18n("ai.tool.summary.timed", mark, secs) : mark);
             if (summary != null && !summary.isBlank()) {
                 String text = summary.strip();
                 // UI-side hard cap (BF 2-3): a Label with hundreds of KB stalls layout. The full
@@ -4724,6 +4844,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 header.getChevron().setVisible(true);
                 header.getChevron().setManaged(true);
             }
+            if (completionListener != null) {
+                completionListener.run();
+            }
         }
     }
 
@@ -4737,7 +4860,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     static final class ToolCallGroupCard extends VBox {
         private final CollapseHeader header;
         private final VBox body = new VBox(2);
-        private int count = 0;
+        private final java.util.List<ToolCard> cards = new java.util.ArrayList<>();
 
         ToolCallGroupCard() {
             super(2);
@@ -4745,6 +4868,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
 
             header = new CollapseHeader(i18n("ai.tool.group.summary", 0)); // placeholder, overwritten by the 1st add()
+            header.useCompactLayout(SVG.EXTENSION.createIcon(16));
             body.visibleProperty().bind(header.expandedProperty()); // starts collapsed (default false)
             body.managedProperty().bind(header.expandedProperty());
             getChildren().addAll(header, body);
@@ -4752,8 +4876,35 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         void add(ToolCard card) {
             body.getChildren().add(card);
-            count++;
-            header.getTitleLabel().setText(i18n("ai.tool.group.summary", count));
+            cards.add(card);
+            header.getTitleLabel().setText(i18n("ai.tool.group.summary", cards.size()));
+            // A card is added at call time (result unknown), so refresh the rich summary now AND
+            // again when it completes — that's when its ✓/✗ mark becomes known.
+            card.setCompletionListener(this::rebuildSummary);
+            rebuildSummary();
+        }
+
+        /// Builds the compact rich summary "instance ✓ · search ✓ · +3": the first up to three
+        /// finished tool names with their result marks, then a "+N" remainder. Still-running cards
+        /// are shown by name without a mark.
+        private void rebuildSummary() {
+            int shown = Math.min(3, cards.size());
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < shown; i++) {
+                ToolCard c = cards.get(i);
+                if (i > 0) {
+                    sb.append(" · ");
+                }
+                sb.append(c.getToolName());
+                if (c.isFinished()) {
+                    sb.append(' ').append(c.isSuccess() ? "✓" : "✗");
+                }
+            }
+            int remaining = cards.size() - shown;
+            if (remaining > 0) {
+                sb.append(" · ").append(i18n("ai.tool.group.more", remaining));
+            }
+            header.setSummary(sb.toString());
         }
     }
 
