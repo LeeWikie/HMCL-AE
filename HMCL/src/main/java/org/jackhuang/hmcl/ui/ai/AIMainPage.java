@@ -1371,25 +1371,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private Node buildHeaderNode() {
         headerTitle.getStyleClass().add("ai-header-title"); // 15px bold lives in the CSS rule now
         headerSubtitle.getStyleClass().add("subtitle-label"); // native variant-text tier (VS §2.2)
-        approvalBadge.getStyleClass().add("ai-approval-badge");
-        approvalBadge.setVisible(false);
-        approvalBadge.setManaged(false);
+        // The Auto approval badge and the model selector both MOVED OUT of the header into the
+        // composer's bottom toolbar (composer redesign) — the header now only carries the title,
+        // search and chat-settings. The plan-mode badge stays here (it is a per-turn read-only
+        // indicator, not a control).
         planBadge.getStyleClass().addAll("ai-approval-badge", "ai-plan-mode-badge");
         planBadge.setVisible(false);
         planBadge.setManaged(false);
 
-        HBox subtitleRow = new HBox(6, headerSubtitle, approvalBadge, planBadge);
+        HBox subtitleRow = new HBox(6, headerSubtitle, planBadge);
         subtitleRow.setAlignment(Pos.CENTER_LEFT);
 
         VBox titleBox = new VBox(2, headerTitle, subtitleRow);
         titleBox.setAlignment(Pos.CENTER_LEFT);
-
-        // Model selector — shows alias only; full "Provider / Model" in dropdown
-        // Size to the model name within sensible bounds instead of a hard 190px cap.
-        modelSelector.setMinWidth(120);
-        modelSelector.setMaxWidth(280);
-        modelSelector.getStyleClass().add("ai-header-selector");
-        setupModelSelector();
 
         JFXButton searchBtn = FXUtils.newToggleButton4(SVG.SEARCH, 16);
         FXUtils.installFastTooltip(searchBtn, i18n("ai.session.search"));
@@ -1399,7 +1393,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         FXUtils.installFastTooltip(chatSettingsBtn, i18n("ai.chat.settings"));
         chatSettingsBtn.setOnAction(e -> showChatSettingsDrawer());
 
-        HBox toolbarControls = new HBox(6, modelSelector, searchBtn, chatSettingsBtn);
+        HBox toolbarControls = new HBox(6, searchBtn, chatSettingsBtn);
         toolbarControls.setAlignment(Pos.CENTER_RIGHT);
 
         StackPane headerAvatar = new StackPane(SVG.AI.createIcon(18));
@@ -1721,7 +1715,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     // ---- Composer ----
 
-    private HBox buildComposer() {
+    private Node buildComposer() {
         inputField.setPromptText(i18n("ai.input_placeholder"));
         inputField.getStyleClass().add("ai-input-field");
         HBox.setHgrow(inputField, Priority.ALWAYS);
@@ -1781,9 +1775,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         sendBtn.setDefaultButton(true);
 
-        JFXButton attachBtn = FXUtils.newToggleButton4(SVG.FILE_OPEN, 16);
+        JFXButton attachBtn = FXUtils.newToggleButton4(SVG.ADD, 16);
+        attachBtn.getStyleClass().add("ai-toolbar-icon");
         attachBtn.setOnAction(e -> handleFileUpload());
         FXUtils.installFastTooltip(attachBtn, i18n("ai.attach"));
+
+        // "/" slash-command entry — a toolbar affordance for the same autocomplete you get by
+        // typing "/" in the field: it focuses the input, inserts a "/" at the caret (with a
+        // leading space when mid-line so the trigger rule fires) and pops the command list.
+        JFXButton slashBtn = FXUtils.newToggleButton4(SVG.SCRIPT, 16);
+        slashBtn.getStyleClass().add("ai-toolbar-icon");
+        slashBtn.setOnAction(e -> openSlashCommandEntry());
+        FXUtils.installFastTooltip(slashBtn, i18n("ai.composer.command_entry"));
 
         // Attachment chip area (shown above the input while files are attached). One chip per
         // file, each with its own remove button — attachments live in `attachedFiles`, NOT in
@@ -1843,24 +1846,36 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 .addCompletionListener(job -> Platform.runLater(() -> onBackgroundJobComplete(job)));
         refreshJobsPane();
 
-        VBox composerInner = new VBox(4, jobsPane, askPanel, fileChipArea, inputField);
-        composerInner.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(inputField, Priority.NEVER);
 
-        HBox inputBar = new HBox(8);
-        // Bottom-align so the think / attach / send buttons stay level with the input
-        // even when the file-chip row appears above it.
-        inputBar.setAlignment(Pos.BOTTOM_LEFT);
-        inputBar.setPadding(new Insets(8, 16, 12, 16));
-        inputBar.getStyleClass().add("ai-input-bar");
-        // The composer must never be squeezed away in a short window.
-        inputBar.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        // ---- Auto (permission mode) pill ----
+        // Reuses the former header `approvalBadge` Label, restyled as a clickable toolbar pill.
+        // There is a single approval mode today (Auto — see AiApprovalMode's doc); the click shows
+        // the mode list so it reads as "view / switch mode" and stays future-proof. The unattended
+        // hard-block / dangerous-confirm semantics are unchanged (enforced in AiExecutionPolicy).
+        approvalBadge.getStyleClass().setAll("ai-toolbar-pill", "ai-pill-auto");
+        approvalBadge.setGraphic(SVG.ROCKET_LAUNCH.createIcon(14));
+        approvalBadge.setText(i18n("ai.settings.approval_badge_auto"));
+        approvalBadge.setVisible(true);
+        approvalBadge.setManaged(true);
+        FXUtils.installFastTooltip(approvalBadge, i18n("ai.composer.auto.tooltip"));
+        FXUtils.onClicked(approvalBadge, this::showApprovalModePopup);
 
-        // Thinking level popup button — circular, left of the input
-        thinkBtn = FXUtils.newToggleButton4(SVG.LIGHTBULB, 16);
-
+        // ---- Thinking-level pill ----
+        // Was a bare lightbulb icon button; now a pill that also shows the current effort label.
+        thinkBtn = new JFXButton();
+        thinkBtn.getStyleClass().addAll("ai-toolbar-pill", "ai-pill-think");
+        thinkBtn.setGraphic(SVG.LIGHTBULB.createIcon(14));
         String currentThink = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
+        thinkBtn.setText(reasoningEffortLabel(currentThink));
         FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(currentThink)));
+        // Keep the pill text/tooltip in lockstep with the persisted effort no matter WHERE it is
+        // changed (this popup, or the settings page's "默认推理强度" row).
+        aiSettings.reasoningEffortProperty().addListener((o, ov, nv) -> {
+            String lvl = (nv == null || nv.isEmpty()) ? "none" : nv;
+            thinkBtn.setText(reasoningEffortLabel(lvl));
+            FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(lvl)));
+        });
         thinkBtn.setOnAction(e -> {
             // Toggle: if the popup is already open, close it instead of stacking another.
             if (thinkingPopup != null && thinkingPopup.isShowing()) {
@@ -1879,9 +1894,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                         reasoningEffortLabel(level), () -> {
                     aiSettings.reasoningEffortProperty().set(level);
                     // AiSettings has no auto-save — without this the picked level silently
-                    // reverted on restart (P6/C-17).
+                    // reverted on restart (P6/C-17). The pill text/tooltip update via the
+                    // reasoningEffortProperty listener installed above.
                     persistAiSettings();
-                    FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(level)));
                 }, popup).addTooltip("reasoning_effort: " + level));
             }
             thinkingPopup = popup;
@@ -1892,9 +1907,86 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     true);
         });
 
-        inputBar.getChildren().setAll(thinkBtn, composerInner, attachBtn, sendBtn);
-        HBox.setHgrow(composerInner, Priority.ALWAYS);
-        return inputBar;
+        // ---- Model selector (moved down from the header) ----
+        // Shows the model alias only; the dropdown reveals the full "Provider / Model". Lets it
+        // shrink so the toolbar can get narrow without ever pushing the Send button out of view.
+        modelSelector.setMinWidth(90);
+        modelSelector.setMaxWidth(180);
+        modelSelector.getStyleClass().add("ai-header-selector");
+        setupModelSelector();
+
+        // ---- Bottom toolbar (two-row composer) ----
+        // Left group = pills + icon entries in a FlowPane that WRAPS to more rows when the window
+        // narrows. Right group = model + Send, pinned right and never allowed to shrink, so Send is
+        // always visible and clickable no matter how narrow the window gets (overflow fix).
+        javafx.scene.layout.FlowPane leftGroup = new javafx.scene.layout.FlowPane(6, 6,
+                approvalBadge, thinkBtn, attachBtn, slashBtn);
+        leftGroup.setAlignment(Pos.CENTER_LEFT);
+        leftGroup.setMinWidth(0); // may squeeze to nothing (its children wrap) before Send yields
+
+        HBox rightGroup = new HBox(6, modelSelector, sendBtn);
+        rightGroup.setAlignment(Pos.CENTER_RIGHT);
+        rightGroup.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE); // Send never enters overflow
+
+        HBox toolbar = new HBox(8, leftGroup, rightGroup);
+        toolbar.setAlignment(Pos.TOP_LEFT);
+        toolbar.getStyleClass().add("ai-composer-toolbar");
+        HBox.setHgrow(leftGroup, Priority.ALWAYS);
+
+        // ---- Composer card: input area (top) + toolbar (bottom), one rounded bordered box ----
+        VBox composerCard = new VBox(8, jobsPane, askPanel, fileChipArea, inputField, toolbar);
+        composerCard.getStyleClass().add("ai-composer");
+        composerCard.setMaxWidth(Double.MAX_VALUE);
+        // The composer must never be squeezed away in a short window.
+        composerCard.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        // Focus feedback moves to the whole card (JavaFX CSS has no :focus-within), toggled from
+        // the input's focus so the card border highlights while typing.
+        inputField.focusedProperty().addListener((o, ov, nv) -> {
+            if (nv) {
+                if (!composerCard.getStyleClass().contains("ai-composer-focused"))
+                    composerCard.getStyleClass().add("ai-composer-focused");
+            } else {
+                composerCard.getStyleClass().remove("ai-composer-focused");
+            }
+        });
+
+        VBox composerArea = new VBox(composerCard);
+        composerArea.getStyleClass().add("ai-composer-area");
+        composerArea.setPadding(new Insets(10, 16, 12, 16));
+        composerArea.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        return composerArea;
+    }
+
+    /// Focuses the input and pops the slash-command autocomplete, as if the user typed "/". Backs
+    /// the composer toolbar's "/" entry — routed through the SAME autocomplete path key presses use.
+    private void openSlashCommandEntry() {
+        inputField.requestFocus();
+        String text = inputField.getText() == null ? "" : inputField.getText();
+        int caret = Math.min(inputField.getCaretPosition(), text.length());
+        boolean atStart = caret == 0 || text.charAt(caret - 1) == ' ' || text.charAt(caret - 1) == '\n';
+        String insert = atStart ? "/" : " /";
+        inputField.insertText(caret, insert);
+        handleSlashAutocomplete("/");
+    }
+
+    /// Shows the approval-mode list from the Auto pill. One mode exists today (Auto — see
+    /// AiApprovalMode's doc for the SAFE/ASK/YOLO merge); the checked row makes the current mode
+    /// legible and keeps the surface future-proof if more modes ever return. Selecting the (only)
+    /// mode is a no-op — the unattended hard-block / dangerous-confirm semantics live in
+    /// AiExecutionPolicy and are not user-switchable here.
+    private void showApprovalModePopup() {
+        PopupMenu menu = new PopupMenu();
+        JFXPopup popup = new JFXPopup(menu);
+        for (AiApprovalMode mode : AiApprovalMode.values()) {
+            boolean active = AiApprovalMode.fromId(aiSettings.getApprovalMode()) == mode;
+            menu.getContent().add(new IconedMenuItem(active ? SVG.CHECK : null,
+                    i18n("ai.settings.approval_badge_auto"), popup::hide, popup)
+                    .addTooltip(i18n("ai.composer.auto.tooltip")));
+        }
+        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
+        popup.show(approvalBadge, vPosition, JFXPopup.PopupHPosition.LEFT,
+                0,
+                vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
     }
 
     // ---- Search dialog ----

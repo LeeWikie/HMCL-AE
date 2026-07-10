@@ -2405,13 +2405,8 @@
 
 /* ===== Input area ===== */
 
-.ai-input-bar {
-    /* No -fx-background-color: a Region with a (even transparent) background is mouse-pickable across
-       its whole bounds, so the bar's tall padding/gutters would eat clicks over the conversation above
-       the field. A null background is click-through; the top divider border still paints. */
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1 0 0 0;
-}
+/* (The former .ai-input-bar single-row container is gone — the composer is now a two-row card;
+   see the "Two-row composer" section below for .ai-composer / .ai-composer-toolbar.) */
 
 .ai-input-field {
     -fx-font-size: 13px;
@@ -2456,6 +2451,83 @@
     -fx-padding: 2 8 2 8;
     -fx-background-radius: 10;
     -fx-max-width: 300;
+}
+
+/* ===== Two-row composer (input area + bottom toolbar) =====
+   The composer is one rounded, bordered card (Claude-Code style): the input area sits on top and
+   a bottom toolbar below it carries the mode / thinking pills + attach / slash entries on the left
+   and the model selector + Send button on the right. The toolbar's left group WRAPS (FlowPane) so
+   the window can get arbitrarily narrow without ever pushing Send out of view. */
+.ai-composer-area {
+    /* Padding-only wrapper; a null background keeps clicks over the conversation click-through. */
+    -fx-background-color: transparent;
+}
+
+.ai-composer {
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-background-radius: 12;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 12;
+    -fx-border-width: 1.5;
+    -fx-padding: 8 10 8 10;
+}
+
+/* Colour-only focus feedback (border width stays 1.5 so nothing shifts, VS §3.6). Toggled from
+   the input's focus since JavaFX CSS has no :focus-within. */
+.ai-composer-focused {
+    -fx-border-color: -monet-primary;
+}
+
+/* The input field blends INTO the card — strip its own surface/border so only the card paints. */
+.ai-composer .ai-input-field,
+.ai-composer .ai-input-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 2 4 2 4;
+}
+
+/* Bottom toolbar row: a hairline divider above it separates it from the input area. */
+.ai-composer-toolbar {
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 8 0 0 0;
+}
+
+/* Toolbar pills (Auto = primary tint, Thinking = tertiary tint — same colour pairing as the
+   former header badges). Both a Label (Auto) and a JFXButton (Thinking) wear this. */
+.ai-toolbar-pill {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 10 4 10;
+    -fx-background-radius: 9;
+    -fx-border-radius: 9;
+    -fx-cursor: hand;
+    -fx-graphic-text-gap: 6;
+}
+
+.ai-pill-auto {
+    -fx-background-color: -monet-primary-container;
+    -fx-text-fill: -monet-on-primary-container;
+}
+
+.ai-pill-auto .svg {
+    -fx-fill: -monet-on-primary-container;
+}
+
+.ai-pill-think {
+    -fx-background-color: -monet-tertiary-container;
+    -fx-text-fill: -monet-on-tertiary-container;
+}
+
+.ai-pill-think .svg {
+    -fx-fill: -monet-on-tertiary-container;
+}
+
+/* Toolbar icon buttons (+ attach, / command) reuse the native .toggle-icon4; keep their tint
+   aligned with the surrounding on-surface-variant text. */
+.ai-composer-toolbar .ai-toolbar-icon .svg {
+    -fx-fill: -monet-on-surface-variant;
 }
 
 /* ===== Background jobs pull-up + pinned TODO checklist ===== */
