@@ -109,4 +109,79 @@ public final class ToolRegistryTest {
         assertTrue(registry.list().isEmpty(),
                 "list() should be empty for a fresh registry");
     }
+
+    /// A well-formed rewrite-#17 envelope for a fictional failed server, reused across the
+    /// placeholder tests below.
+    private static String failedServerEnvelope() {
+        return ToolFailures.failureEnvelope(
+                "MCP server 'srv-1' is not connected (connection or tool-discovery failed)",
+                ToolFailures.Retryable.LATER,
+                "this tool is unavailable until the user reconnects it");
+    }
+
+    /// After a server is marked failed, get() on an unregistered `mcp.<serverId>.*` name returns a
+    /// placeholder whose execution is the registered failure envelope (rewrite #17), NOT null.
+    @Test
+    public void testFailedMcpServerLeavesPlaceholder() {
+        ToolRegistry registry = new ToolRegistry();
+        String envelope = failedServerEnvelope();
+        registry.markMcpServerFailed("srv-1", envelope);
+
+        Tool placeholder = registry.get("mcp.srv-1.some_tool");
+        assertNotNull(placeholder, "a call to a failed server's tool must resolve to a placeholder");
+        ToolResult result = placeholder.execute(Map.of());
+        ToolFailureAssertions.assertFailureEnvelope(result);
+        assertEquals(envelope, result.getError(),
+                "the placeholder must return exactly the registered failure envelope");
+    }
+
+    /// Clearing the marker (successful reconnect / clean disconnect) restores the plain
+    /// "unknown name → null" behaviour.
+    @Test
+    public void testClearMcpServerFailedRemovesPlaceholder() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.markMcpServerFailed("srv-1", failedServerEnvelope());
+        assertNotNull(registry.get("mcp.srv-1.some_tool"), "placeholder should exist while marked");
+
+        registry.clearMcpServerFailed("srv-1");
+        assertNull(registry.get("mcp.srv-1.some_tool"),
+                "after clearing, an unregistered mcp.* name should return null again");
+    }
+
+    /// The placeholder is scoped to the failed server: an unrelated name (different serverId, or a
+    /// non-mcp name) is unaffected even while some server is marked failed.
+    @Test
+    public void testPlaceholderOnlyMatchesFailedServerPrefix() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.markMcpServerFailed("srv-1", failedServerEnvelope());
+
+        assertNull(registry.get("mcp.srv-2.some_tool"),
+                "a different server's tool must not resolve to srv-1's placeholder");
+        assertNull(registry.get("some_local_tool"),
+                "a non-mcp name must be unaffected by failed-server markers");
+        assertNull(registry.get("mcp.srv-1."),
+                "a bare prefix with no tool segment must not match");
+    }
+
+    /// A really-registered tool always wins over the failure placeholder, even for a failed server.
+    @Test
+    public void testRegisteredToolTakesPrecedenceOverPlaceholder() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.markMcpServerFailed("srv-1", failedServerEnvelope());
+        Tool real = new StubTool("mcp.srv-1.some_tool", "real MCP tool");
+        registry.register(real);
+
+        assertSame(real, registry.get("mcp.srv-1.some_tool"),
+                "a registered tool must take precedence over the failure placeholder");
+    }
+
+    /// The placeholder is invisible to the model: it is never in list()/listAll().
+    @Test
+    public void testPlaceholderNotListed() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.markMcpServerFailed("srv-1", failedServerEnvelope());
+
+        assertTrue(registry.list().isEmpty(), "placeholder must not appear in list()");
+        assertTrue(registry.listAll().isEmpty(), "placeholder must not appear in listAll()");
+    }
 }

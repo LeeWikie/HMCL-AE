@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /// A registry that stores and looks up AI [`Tool`] instances by name,
 /// with optional metadata (permission, source, enabled/disabled).
@@ -51,8 +52,16 @@ import java.util.Map;
 @NotNullByDefault
 public final class ToolRegistry {
 
+    private static final String MCP_PREFIX = "mcp.";
+
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     private final java.util.Set<String> disabledTools = new java.util.HashSet<>();
+
+    /// MCP servers that most recently failed to connect (or connected but whose tool discovery
+    /// failed): serverId → the model-visible "not connected" envelope to answer with. Concurrent
+    /// because {@code McpClientManager} may (auto-)connect off the UI thread while the model thread
+    /// reads via {@link #get}. See {@link #markMcpServerFailed}.
+    private final Map<String, String> failedMcpServers = new ConcurrentHashMap<>();
 
     /// Registers a tool. If a tool with the same name exists, it is replaced.
     public void register(Tool tool) {
@@ -60,9 +69,52 @@ public final class ToolRegistry {
     }
 
     /// Looks up a tool by name.
+    ///
+    /// If no tool is registered under {@code name} but the name refers to a tool on an MCP server
+    /// currently marked failed (see {@link #markMcpServerFailed}), returns a synthetic READ_ONLY
+    /// placeholder whose execution yields that server's "not connected" envelope (borrow-list B8 /
+    /// rewrite #17) — so the model learns the server is down instead of getting a generic
+    /// "tool not found". This placeholder is never in {@link #list}/{@link #listAll} (the model is
+    /// never offered it) and never stored; it exists only to answer a call the model makes from a
+    /// tool name it remembers from before the server went down.
     @Nullable
     public Tool get(String name) {
-        return tools.get(name);
+        Tool tool = tools.get(name);
+        if (tool != null) {
+            return tool;
+        }
+        return failedMcpPlaceholder(name);
+    }
+
+    /// Records that {@code serverId} failed to connect/discover, so a later call to any unregistered
+    /// {@code mcp.<serverId>.*} tool resolves (via {@link #get}) to a placeholder that returns
+    /// {@code placeholderEnvelope}. Overwrites any prior entry for the same server.
+    public void markMcpServerFailed(String serverId, String placeholderEnvelope) {
+        failedMcpServers.put(serverId, placeholderEnvelope);
+    }
+
+    /// Clears the failed-server marker for {@code serverId} (on a successful (re)connection or a
+    /// clean disconnect). No-op if the server was not marked.
+    public void clearMcpServerFailed(String serverId) {
+        failedMcpServers.remove(serverId);
+    }
+
+    /// Returns a synthetic placeholder for a call to an {@code mcp.<serverId>.*} tool whose server
+    /// is currently marked failed, or {@code null} otherwise. Kept off the hot path for the common
+    /// case (no failed servers, or a non-MCP name) by the two cheap guards up front. Matches by full
+    /// {@code mcp.<serverId>.} prefix so a serverId that itself contains dots is handled correctly.
+    @Nullable
+    private Tool failedMcpPlaceholder(String name) {
+        if (failedMcpServers.isEmpty() || !name.startsWith(MCP_PREFIX)) {
+            return null;
+        }
+        for (Map.Entry<String, String> entry : failedMcpServers.entrySet()) {
+            String prefix = MCP_PREFIX + entry.getKey() + ".";
+            if (name.startsWith(prefix) && name.length() > prefix.length()) {
+                return new FailedMcpToolPlaceholder(name, entry.getValue());
+            }
+        }
+        return null;
     }
 
     /// Returns the tool's WORST-CASE permission (see {@link ToolSpec#getMaxPermission()}) for
@@ -111,5 +163,50 @@ public final class ToolRegistry {
     /// Returns all registered tools (including disabled) in insertion order.
     public List<Tool> listAll() {
         return List.copyOf(new ArrayList<>(tools.values()));
+    }
+
+    /// Synthetic stand-in returned by {@link #get} for a call to an {@code mcp.<serverId>.*} tool
+    /// whose server is marked failed. It is deliberately classified {@link ToolPermission#READ_ONLY}
+    /// and {@link ToolSource#LOCAL} so the executor runs it straight through to its failure result
+    /// — no confirm dialog, no MCP force-confirm gate — turning the call into the precise
+    /// "server not connected" envelope (rewrite #17) rather than the generic "tool not found".
+    private static final class FailedMcpToolPlaceholder implements ToolSpec {
+        private final String name;
+        private final String envelope;
+
+        FailedMcpToolPlaceholder(String name, String envelope) {
+            this.name = name;
+            this.envelope = envelope;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public String getDescription() {
+            return envelope;
+        }
+
+        @Override
+        public ToolResult execute(Map<String, Object> parameters) {
+            return ToolResult.failure(envelope);
+        }
+
+        @Override
+        public ToolPermission getPermission() {
+            return ToolPermission.READ_ONLY;
+        }
+
+        @Override
+        public ToolPermission getMaxPermission() {
+            return ToolPermission.READ_ONLY;
+        }
+
+        @Override
+        public ToolSource getSource() {
+            return ToolSource.LOCAL;
+        }
     }
 }

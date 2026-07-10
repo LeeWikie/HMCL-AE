@@ -20,7 +20,9 @@ package org.jackhuang.hmcl.ai.mcp;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
+import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -34,7 +36,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import static org.jackhuang.hmcl.ai.tools.ToolFailureAssertions.assertEnvelope;
+import static org.jackhuang.hmcl.ai.tools.ToolFailureAssertions.assertFailureEnvelope;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// End-to-end proof that {@link McpClientManager#connectAndRegister} really launches the stdio
@@ -92,8 +98,8 @@ class McpClientManagerTest {
         McpClientManager manager = new McpClientManager(new ToolRegistry());
         managers.add(manager);
 
-        boolean connected = manager.connectAndRegister(config);
-        assertTrue(connected, "the fake stdio MCP server should have started and completed the "
+        McpClientManager.ConnectResult connected = manager.connectAndRegister(config);
+        assertTrue(connected.success(), "the fake stdio MCP server should have started and completed the "
                 + "MCP initialize handshake");
 
         JsonObject marker = readMarker(markerFile);
@@ -110,6 +116,57 @@ class McpClientManagerTest {
         JsonObject observedEnv = marker.getAsJsonObject("env");
         assertEquals("hello-mcp-env-42", observedEnv.get("MCP_TEST_KEY").getAsString());
         assertEquals("second-value", observedEnv.get("MCP_TEST_OTHER").getAsString());
+    }
+
+    /// A misconfigured stdio server (no launch command) must not vanish into a silent failure
+    /// (borrow-list B8 / rewrite #16): the returned {@link McpClientManager.ConnectResult} carries a
+    /// well-formed host-facing envelope, AND the server is left marked failed so a later model call
+    /// to any {@code mcp.<serverId>.*} tool resolves to the "not connected" placeholder (#17) rather
+    /// than a generic "tool not found".
+    @Test
+    void connectFailureWithNoCommandPreservesReasonAndRegistersPlaceholder() {
+        ToolRegistry registry = new ToolRegistry();
+        McpClientManager manager = new McpClientManager(registry);
+        managers.add(manager);
+
+        AiMcpServerConfig config = new AiMcpServerConfig();
+        config.setTransport("stdio");
+        config.setCommand(""); // misconfigured: no launch command
+
+        McpClientManager.ConnectResult result = manager.connectAndRegister(config);
+
+        assertFalse(result.success(), "a server with no launch command must not report success");
+        assertNotNull(result.failureReason(), "the failure reason must be preserved, not swallowed");
+        assertEnvelope(result.failureReason());
+
+        Tool placeholder = registry.get("mcp." + config.getId() + ".do_something");
+        assertNotNull(placeholder, "a failed MCP server must leave an mcp.* placeholder in the registry");
+        ToolResult call = placeholder.execute(Map.of());
+        assertFailureEnvelope(call);
+        assertTrue(call.getError().contains("is not connected"),
+                () -> "the placeholder must state the server is not connected: " + call.getError());
+    }
+
+    /// Same contract as above for the HTTP transport with no URL configured.
+    @Test
+    void connectHttpFailureWithNoUrlPreservesReasonAndRegistersPlaceholder() {
+        ToolRegistry registry = new ToolRegistry();
+        McpClientManager manager = new McpClientManager(registry);
+        managers.add(manager);
+
+        AiMcpServerConfig config = new AiMcpServerConfig();
+        config.setTransport("http");
+        config.setUrl(""); // misconfigured: no server URL
+
+        McpClientManager.ConnectResult result = manager.connectHttpAndRegister(config);
+
+        assertFalse(result.success(), "a server with no URL must not report success");
+        assertNotNull(result.failureReason(), "the failure reason must be preserved, not swallowed");
+        assertEnvelope(result.failureReason());
+
+        Tool placeholder = registry.get("mcp." + config.getId() + ".do_something");
+        assertNotNull(placeholder, "a failed HTTP MCP server must leave an mcp.* placeholder");
+        assertFailureEnvelope(placeholder.execute(Map.of()));
     }
 
     @Test

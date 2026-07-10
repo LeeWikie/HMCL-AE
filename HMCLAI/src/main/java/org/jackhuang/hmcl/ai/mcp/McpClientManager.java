@@ -12,8 +12,10 @@ import dev.langchain4j.model.chat.request.json.JsonNumberSchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolRegistry;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.jackhuang.hmcl.ai.util.AiLog;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -39,13 +41,36 @@ public final class McpClientManager {
         this.registry = registry;
     }
 
+    /// Outcome of a connect-and-register attempt. Replaces the old bare {@code boolean} so a
+    /// failure no longer vanishes into a silent {@code return false} (borrow-list B8 / rewrite #16):
+    /// the host can surface {@link #failureReason} in AI 设置 (e.g. as the server's {@code lastStatus}),
+    /// and the model — should it later call a tool from this server — gets the precise
+    /// "not connected" envelope registered as an {@code mcp.*} placeholder (rewrite #17), not a
+    /// generic "tool not found".
+    ///
+    /// @param success       whether the server connected AND its tools were discovered/registered
+    /// @param failureReason a host-facing failure envelope when {@link #success} is false; null otherwise
+    public record ConnectResult(boolean success, @Nullable String failureReason) {
+        /// A successful connect+discovery.
+        public static ConnectResult ok() {
+            return new ConnectResult(true, null);
+        }
+
+        /// A failed attempt carrying a host-facing failure envelope (never blank).
+        public static ConnectResult failed(String failureReason) {
+            return new ConnectResult(false, failureReason);
+        }
+    }
+
     /// Connects to a local MCP server via stdio and discovers tools.
-    public boolean connectAndRegister(AiMcpServerConfig config) {
+    public ConnectResult connectAndRegister(AiMcpServerConfig config) {
         String serverId = config.getId();
-        if (clients.containsKey(serverId)) return false;
+        if (clients.containsKey(serverId)) return ConnectResult.ok();
+        String cmd = config.getCommand();
+        if (cmd == null || cmd.isEmpty()) {
+            return fail(serverId, connectFailureEnvelope(serverId, "no launch command configured"));
+        }
         try {
-            String cmd = config.getCommand();
-            if (cmd == null || cmd.isEmpty()) return false;
             McpClient client = DefaultMcpClient.builder()
                     .transport(StdioMcpTransport.builder()
                             .command(buildCommandLine(cmd, config.getArgs()))
@@ -54,10 +79,14 @@ public final class McpClientManager {
                             .build())
                     .build();
             clients.put(serverId, client);
-            discoverAndRegister(serverId, config.getAllowedTools());
-            return true;
+            String discoveryFailure = discoverAndRegister(serverId, config.getAllowedTools());
+            if (discoveryFailure != null) {
+                return fail(serverId, discoveryFailure);
+            }
+            registry.clearMcpServerFailed(serverId);
+            return ConnectResult.ok();
         } catch (Exception e) {
-            return false;
+            return fail(serverId, connectFailureEnvelope(serverId, describe(e)));
         }
     }
 
@@ -81,12 +110,14 @@ public final class McpClientManager {
     }
 
     /// Connects to a remote MCP server via HTTP and discovers tools.
-    public boolean connectHttpAndRegister(AiMcpServerConfig config) {
+    public ConnectResult connectHttpAndRegister(AiMcpServerConfig config) {
         String serverId = config.getId();
-        if (clients.containsKey(serverId)) return false;
+        if (clients.containsKey(serverId)) return ConnectResult.ok();
+        String url = config.getUrl();
+        if (url == null || url.isEmpty()) {
+            return fail(serverId, connectFailureEnvelope(serverId, "no server URL configured"));
+        }
         try {
-            String url = config.getUrl();
-            if (url == null || url.isEmpty()) return false;
             McpClient client = DefaultMcpClient.builder()
                     .transport(StreamableHttpMcpTransport.builder()
                             .url(url)
@@ -95,16 +126,69 @@ public final class McpClientManager {
                             .build())
                     .build();
             clients.put(serverId, client);
-            discoverAndRegister(serverId, config.getAllowedTools());
-            return true;
+            String discoveryFailure = discoverAndRegister(serverId, config.getAllowedTools());
+            if (discoveryFailure != null) {
+                return fail(serverId, discoveryFailure);
+            }
+            registry.clearMcpServerFailed(serverId);
+            return ConnectResult.ok();
         } catch (Exception e) {
-            return false;
+            return fail(serverId, connectFailureEnvelope(serverId, describe(e)));
         }
     }
 
-    private void discoverAndRegister(String serverId, List<String> allowlist) {
+    /// Records the failed server so a later {@code mcp.<serverId>.*} call returns the rewrite-#17
+    /// placeholder envelope, and returns the host-facing {@code failureReason} for the UI.
+    private ConnectResult fail(String serverId, String hostReason) {
+        registry.markMcpServerFailed(serverId, unavailableToolEnvelope(serverId));
+        return ConnectResult.failed(hostReason);
+    }
+
+    /// Model-visible placeholder (rewrite #17) registered against a failed MCP server: a call to any
+    /// unregistered {@code mcp.<serverId>.*} tool resolves to this instead of the generic
+    /// "tool not found", so the model learns the server is down rather than that it misremembered a name.
+    private static String unavailableToolEnvelope(String serverId) {
+        return ToolFailures.failureEnvelope(
+                "MCP server '" + serverId + "' is not connected (connection or tool-discovery failed)",
+                ToolFailures.Retryable.LATER,
+                "this tool is unavailable until the user reconnects it in AI 设置");
+    }
+
+    /// Host/UI-facing failure envelope (rewrite #16) for a connection failure, carrying the concrete
+    /// cause ({@code detail}) so the reason is no longer swallowed by a bare {@code return false}.
+    private static String connectFailureEnvelope(String serverId, String detail) {
+        return ToolFailures.failureEnvelope(
+                "MCP server '" + serverId + "' failed to connect: " + detail,
+                ToolFailures.Retryable.LATER,
+                "check whether the server command/URL/auth is correct, then reconnect in AI 设置",
+                "this server's tools are unavailable until reconnected");
+    }
+
+    /// Host/UI-facing failure envelope for a server whose transport connected but whose tool
+    /// discovery (`listTools`) failed — the socket is up but no tools could be registered.
+    private static String discoveryFailureEnvelope(String serverId, String detail) {
+        return ToolFailures.failureEnvelope(
+                "MCP server '" + serverId + "' connected but tool discovery failed: " + detail,
+                ToolFailures.Retryable.LATER,
+                "check whether the server command/URL/auth is correct, then reconnect in AI 设置",
+                "this server's tools are unavailable until reconnected");
+    }
+
+    /// {@code SimpleClassName: message} (or just the class name when the throwable has no message).
+    private static String describe(Throwable e) {
+        String msg = e.getMessage();
+        return e.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+    }
+
+    /// Discovers the server's tools and registers them as HMCL tool stubs.
+    ///
+    /// @return {@code null} on success; otherwise a host-facing failure envelope describing why
+    ///         discovery failed (previously this swallowed the exception with a bare
+    ///         {@code catch (Exception ignored)} that did not even log — borrow-list B8 / rewrite #17).
+    @Nullable
+    private String discoverAndRegister(String serverId, List<String> allowlist) {
         McpClient client = clients.get(serverId);
-        if (client == null) return;
+        if (client == null) return discoveryFailureEnvelope(serverId, "no active client for this server");
 
         // Remove previously registered stubs for this server
         List<Tool> old = serverTools.getOrDefault(serverId, List.of());
@@ -113,6 +197,7 @@ public final class McpClientManager {
         }
 
         List<Tool> registered = new ArrayList<>();
+        String failure = null;
         try {
             var specs = client.listTools();
             Set<String> allowed = allowlist.isEmpty() ? null : new HashSet<>(allowlist);
@@ -134,10 +219,14 @@ public final class McpClientManager {
                 registry.enable(prefixed);
                 registered.add(stub);
             }
-        } catch (Exception ignored) {
-            // discovery failed, leave stubs unregistered
+        } catch (Exception e) {
+            // Do NOT swallow silently: at least warn, and hand the reason back to the caller so the
+            // server is marked failed (the model then gets rewrite #17 instead of "tool not found").
+            AiLog.warn("MCP server '" + serverId + "' connected but tool discovery failed: " + e);
+            failure = discoveryFailureEnvelope(serverId, describe(e));
         }
         serverTools.put(serverId, registered);
+        return failure;
     }
 
     /// Serializes a discovered MCP tool's top-level input parameters into the flat JSON-Schema
@@ -188,6 +277,9 @@ public final class McpClientManager {
                 registry.disable(t.getName());
             }
         }
+        // A deliberate disconnect is not a failure: drop any stale rewrite-#17 placeholder so a
+        // future mcp.* call for this id is not answered as "connection failed".
+        registry.clearMcpServerFailed(serverId);
     }
 
     public int connectedCount() {
