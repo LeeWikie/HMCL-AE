@@ -97,65 +97,82 @@ public final class MessageActionsHoverFxTest {
     public void actionBarFadesInOnBlockHoverWithoutLayoutShift() throws Exception {
         AIMainPage page = showStyledPage();
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
+        // Root cause of the historical flakiness: `sessionStore` is backed by the REAL,
+        // per-workspace `ai-sessions.json` (SettingsManager.localConfigDirectory()), which every
+        // other AI FX test class that constructs an AIMainPage also reads/writes in the same
+        // suite run (and across separate test runs, via each AIMainPage's JVM-shutdown-hook
+        // save() racing at JVM exit). `getCurrentSession()` could therefore return a session that
+        // already carried leftover messages from an unrelated test/run, so "add 2 messages" did
+        // not reliably mean "2 messages total" — createSession() always hands back a brand-new,
+        // guaranteed-empty session, isolating this test from that ambient/shared state.
+        AiSession session = store.createSession();
         assertNotNull(session);
+        assertTrue(session.getMessages().isEmpty(), "a freshly created session must start empty");
 
-        session.addMessage(new LlmMessage("user", "帮我看看这份日志"));
-        session.addMessage(new LlmMessage("assistant", "日志里没有发现崩溃。"));
-
-        WaitForAsyncUtils.asyncFx(() -> {
-            try {
-                invoke(page, "loadSessionMessages", new Class<?>[]{AiSession.class}, session);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }).get(10, TimeUnit.SECONDS);
-        WaitForAsyncUtils.waitForFxEvents();
-
-        VBox messageList = (VBox) getField(page, "messageList");
-        List<Node> blocks = messageList.getChildren().stream()
-                .filter(n -> n.getStyleClass().contains("ai-msg-block"))
-                .toList();
-        assertEquals(2, blocks.size(), "user + assistant message must each render as one .ai-msg-block");
-
-        for (Node node : blocks) {
-            VBox block = assertInstanceOf(VBox.class, node, "a .ai-msg-block is a VBox[wrapper, actions row]");
-
-            // C-04 red-line clause: exactly bubble wrapper + action row, and no subordinate card.
-            assertEquals(2, block.getChildren().size(), ".ai-msg-block must hold exactly bubble + action row");
-            assertTrue(block.getChildren().get(0).getStyleClass().contains("ai-bubble-wrapper"),
-                    "first block child must be the bubble wrapper");
-            assertNull(findDescendant(block, n -> n.getStyleClass().contains("ai-tool-card")),
-                    "subordinate cards must never be pulled into a .ai-msg-block (red line A1)");
-
-            Node bar = findDescendant(block.getChildren().get(1),
-                    n -> n.getStyleClass().contains("ai-bubble-actions"));
-            assertNotNull(bar, "second block child must contain the .ai-bubble-actions bar");
+        try {
+            session.addMessage(new LlmMessage("user", "帮我看看这份日志"));
+            session.addMessage(new LlmMessage("assistant", "日志里没有发现崩溃。"));
 
             WaitForAsyncUtils.asyncFx(() -> {
-                block.applyCss();
-                assertEquals(0.0, bar.getOpacity(), 0.001, "action bar must be invisible until hover");
-                assertTrue(bar.isVisible() && bar.isManaged(),
-                        "hover reveal is opacity-only — visible/managed stay true so layout never shifts");
-
-                block.pseudoClassStateChanged(HOVER, true);
-                block.applyCss();
-                assertEquals(1.0, bar.getOpacity(), 0.001, "action bar must fade in while the block is hovered");
-
-                block.pseudoClassStateChanged(HOVER, false);
-                block.applyCss();
-                assertEquals(0.0, bar.getOpacity(), 0.001, "action bar must fade back out when hover ends");
+                try {
+                    invoke(page, "loadSessionMessages", new Class<?>[]{AiSession.class}, session);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             }).get(10, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
-        }
 
-        // VS §1.4 turn rhythm: the user block carries the extra 8px top margin (transferred from
-        // the wrapper when the block was fused), the assistant block carries none.
-        assertEquals(new Insets(8, 0, 0, 0), VBox.getMargin(blocks.get(0)),
-                "user message block must carry the 8px turn-separator top margin");
-        assertNull(VBox.getMargin(((VBox) blocks.get(0)).getChildren().get(0)),
-                "the margin must move OFF the inner wrapper when it is fused into the block");
-        assertNull(VBox.getMargin(blocks.get(1)), "assistant block must not carry a turn margin");
+            VBox messageList = (VBox) getField(page, "messageList");
+            List<Node> blocks = messageList.getChildren().stream()
+                    .filter(n -> n.getStyleClass().contains("ai-msg-block"))
+                    .toList();
+            assertEquals(2, blocks.size(), "user + assistant message must each render as one .ai-msg-block");
+
+            for (Node node : blocks) {
+                VBox block = assertInstanceOf(VBox.class, node, "a .ai-msg-block is a VBox[wrapper, actions row]");
+
+                // C-04 red-line clause: exactly bubble wrapper + action row, and no subordinate card.
+                assertEquals(2, block.getChildren().size(), ".ai-msg-block must hold exactly bubble + action row");
+                assertTrue(block.getChildren().get(0).getStyleClass().contains("ai-bubble-wrapper"),
+                        "first block child must be the bubble wrapper");
+                assertNull(findDescendant(block, n -> n.getStyleClass().contains("ai-tool-card")),
+                        "subordinate cards must never be pulled into a .ai-msg-block (red line A1)");
+
+                Node bar = findDescendant(block.getChildren().get(1),
+                        n -> n.getStyleClass().contains("ai-bubble-actions"));
+                assertNotNull(bar, "second block child must contain the .ai-bubble-actions bar");
+
+                WaitForAsyncUtils.asyncFx(() -> {
+                    block.applyCss();
+                    assertEquals(0.0, bar.getOpacity(), 0.001, "action bar must be invisible until hover");
+                    assertTrue(bar.isVisible() && bar.isManaged(),
+                            "hover reveal is opacity-only — visible/managed stay true so layout never shifts");
+
+                    block.pseudoClassStateChanged(HOVER, true);
+                    block.applyCss();
+                    assertEquals(1.0, bar.getOpacity(), 0.001, "action bar must fade in while the block is hovered");
+
+                    block.pseudoClassStateChanged(HOVER, false);
+                    block.applyCss();
+                    assertEquals(0.0, bar.getOpacity(), 0.001, "action bar must fade back out when hover ends");
+                }).get(10, TimeUnit.SECONDS);
+                WaitForAsyncUtils.waitForFxEvents();
+            }
+
+            // VS §1.4 turn rhythm: the user block carries the extra 8px top margin (transferred from
+            // the wrapper when the block was fused), the assistant block carries none.
+            assertEquals(new Insets(8, 0, 0, 0), VBox.getMargin(blocks.get(0)),
+                    "user message block must carry the 8px turn-separator top margin");
+            assertNull(VBox.getMargin(((VBox) blocks.get(0)).getChildren().get(0)),
+                    "the margin must move OFF the inner wrapper when it is fused into the block");
+            assertNull(VBox.getMargin(blocks.get(1)), "assistant block must not carry a turn margin");
+        } finally {
+            // Don't leave this test's throwaway session sitting in the real, shared
+            // ai-sessions.json for the next test class/run to trip over (see the createSession()
+            // comment above) — delete it back out of the in-memory store. No explicit save() here:
+            // AIMainPage's own JVM-shutdown hook flushes the store's final state on exit anyway.
+            store.deleteSession(session.getId());
+        }
     }
 
     private static Node findDescendant(Node root, Predicate<Node> matcher) {

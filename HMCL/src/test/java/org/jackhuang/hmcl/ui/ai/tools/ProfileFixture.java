@@ -18,7 +18,11 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.ObjectPropertyBase;
 import javafx.collections.ObservableList;
+import org.jackhuang.hmcl.event.EventBus;
+import org.jackhuang.hmcl.event.EventManager;
+import org.jackhuang.hmcl.event.RefreshedVersionsEvent;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.GameDirectories;
 import org.jackhuang.hmcl.setting.GameDirectoryID;
@@ -38,7 +42,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 /// Test-only fixture that stands up a real, throwaway [Profiles] singleton backed by a single
 /// local [Profile] pointing at a fresh temp directory on disk — so AI-tool tests can exercise
@@ -60,6 +67,17 @@ import java.util.List;
 /// ```
 final class ProfileFixture implements AutoCloseable {
 
+    /// Maximum time to wait for [Profiles#init()]'s background version refresh(es) to settle.
+    /// See the big comment in the constructor for why this wait exists at all.
+    private static final Duration REFRESH_SETTLE_TIMEOUT = Duration.ofSeconds(10);
+
+    /// How long the repository's [RefreshedVersionsEvent] stream must stay quiet before we
+    /// consider every refresh Profiles.init() triggered to be done, rather than just the first one.
+    private static final Duration REFRESH_QUIET_WINDOW = Duration.ofMillis(100);
+
+    /// Poll granularity while waiting for [#REFRESH_QUIET_WINDOW] to elapse.
+    private static final Duration REFRESH_POLL_INTERVAL = Duration.ofMillis(15);
+
     private final Path tempDir;
     private final Profile profile;
 
@@ -70,6 +88,20 @@ final class ProfileFixture implements AutoCloseable {
     private final Field localGameDirectoriesAccessField;
     private final Field userGameDirectoriesAccessField;
     private final Field initializedField;
+
+    /// Reflected `ObjectPropertyBase.helper` field of [Profiles]'s `selectedProfile` property --
+    /// this is where JavaFX stores the property's registered listeners. Saved/restored so that
+    /// this fixture's call to [Profiles#init()] (which unconditionally does
+    /// `selectedProfile.addListener(...)`) never leaves a permanent listener behind on this
+    /// shared static property; see the constructor's comment for why that matters.
+    private final Field selectedProfileHelperField;
+    private final Object previousSelectedProfileHelper;
+
+    /// The [RefreshedVersionsEvent] channel's per-priority handler lists (reflected out of
+    /// [EventManager]) and a snapshot of their contents before [Profiles#init()] runs, so the
+    /// weak listener `Profiles.init()` registers on this shared static channel can be undone too.
+    private final CopyOnWriteArrayList<?>[] refreshedVersionsHandlers;
+    private final List<?>[] previousRefreshedVersionsHandlerSnapshots;
 
     private final ObjectProperty<Profile> selectedProfileProp;
     private final ObservableList<Profile> mergedProfiles;
@@ -144,7 +176,101 @@ final class ProfileFixture implements AutoCloseable {
         initializedField.setBoolean(null, false);
         mergedProfiles.clear();
 
+        // Profiles.init() (below) does two things that are harmless in the real app -- which only
+        // ever calls it once per process -- but become a correctness hazard when a test harness
+        // calls it once per test, as every ProfileFixture construction does:
+        //
+        //  1. It unconditionally does `selectedProfile.addListener(...)`, permanently attaching a
+        //     new listener to this *static, shared* property, and unconditionally registers a new
+        //     weak handler on the *static, shared* RefreshedVersionsEvent channel. Nothing ever
+        //     removes either. After N ProfileFixture constructions in one test JVM, the *next*
+        //     `selectedProfile.set(...)` call (a few lines into Profiles.init()) re-fires all N
+        //     stale listeners plus the new one -- every one of which independently calls
+        //     `newValue.getRepository().refreshVersionsAsync().start()` against this fixture's own,
+        //     brand-new repository.
+        //  2. `refreshVersionsAsync().start()` schedules `HMCLGameRepository#refreshVersionsImpl()`
+        //     onto a background thread pool (Schedulers.defaultScheduler()), not the calling
+        //     thread. refreshVersionsImpl() mutates this repository's plain (non-thread-safe)
+        //     instanceGameSettings/loadedInstanceGameSettings maps.
+        //
+        // Put together, Profiles.init() can leave anywhere from one to N background threads racing
+        // to refresh this fixture's repository. If the test's own code (createInstance(),
+        // InstallLoaderTool.applyPostInstallDefaults(), ...) then calls repository().refreshVersions()
+        // again on the calling thread before those stragglers finish, they race on the same maps --
+        // the actual root cause of the historical "per-instance settings null"-style flakes seen in
+        // tests that share this fixture. Whether that race is won or lost depends on unrelated
+        // thread-scheduling noise, which is exactly why the failures looked random and combination-
+        // dependent instead of always-on or always-off.
+        //
+        // Fixed in two parts, both scoped to this fixture:
+        //  a) Undo the leak at its source: snapshot the two pieces of shared listener state
+        //     Profiles.init() mutates, and restore them in close() -- exactly like every other
+        //     piece of static state this class already saves/restores -- so this fixture never
+        //     leaves more listeners behind than it found, and the "next" fixture construction is
+        //     never racing against more than the one refresh *it* triggers.
+        //  b) Make the wait itself deterministic: register for this repository's
+        //     RefreshedVersionsEvent *before* calling Profiles.init(), then block in the
+        //     constructor until no further completion has arrived for a short quiet window --
+        //     instead of returning after the first event (which, before (a) is applied elsewhere,
+        //     or for stragglers from other Profiles.init() callers such as GameDirectoriesTest's
+        //     own helper, does not guarantee every triggered refresh is done) or, worse, not
+        //     waiting at all.
+        selectedProfileHelperField = field(ObjectPropertyBase.class, "helper");
+        Object previousSelectedProfileHelper = selectedProfileHelperField.get(selectedProfileProp);
+        this.previousSelectedProfileHelper = previousSelectedProfileHelper;
+
+        EventManager<RefreshedVersionsEvent> refreshedVersionsChannel = EventBus.EVENT_BUS.channel(RefreshedVersionsEvent.class);
+        Field allHandlersField = field(EventManager.class, "allHandlers");
+        @SuppressWarnings("unchecked")
+        CopyOnWriteArrayList<?>[] refreshedVersionsHandlers = (CopyOnWriteArrayList<?>[]) allHandlersField.get(refreshedVersionsChannel);
+        this.refreshedVersionsHandlers = refreshedVersionsHandlers;
+        List<?>[] previousRefreshedVersionsHandlerSnapshots = new List<?>[refreshedVersionsHandlers.length];
+        for (int i = 0; i < refreshedVersionsHandlers.length; i++) {
+            if (refreshedVersionsHandlers[i] != null) {
+                previousRefreshedVersionsHandlerSnapshots[i] = List.copyOf(refreshedVersionsHandlers[i]);
+            }
+        }
+        this.previousRefreshedVersionsHandlerSnapshots = previousRefreshedVersionsHandlerSnapshots;
+
+        HMCLGameRepository repository = profile.getRepository();
+        AtomicLong lastRefreshCompletionNanos = new AtomicLong(-1);
+        refreshedVersionsChannel.register(event -> {
+            if (event.getSource() == repository) {
+                lastRefreshCompletionNanos.set(System.nanoTime());
+            }
+        });
+
         Profiles.init();
+
+        awaitVersionsRefreshQuiescence(lastRefreshCompletionNanos);
+    }
+
+    /// Blocks until no [RefreshedVersionsEvent] completion has been observed for
+    /// [#REFRESH_QUIET_WINDOW], so the constructor never returns while a Profiles.init()-triggered
+    /// background refresh (see the constructor's comment) might still be touching this fixture's
+    /// repository. Throws rather than silently returning early if nothing ever completes, since a
+    /// hang here means Profiles.init() stopped triggering a refresh at all -- a bug worth failing
+    /// loudly on, not masking.
+    private static void awaitVersionsRefreshQuiescence(AtomicLong lastCompletionNanos) {
+        long deadline = System.nanoTime() + REFRESH_SETTLE_TIMEOUT.toNanos();
+        for (;;) {
+            long last = lastCompletionNanos.get();
+            long now = System.nanoTime();
+            if (last >= 0 && now - last >= REFRESH_QUIET_WINDOW.toNanos()) {
+                return;
+            }
+            if (now >= deadline) {
+                throw new IllegalStateException("ProfileFixture: Profiles.init()'s background version "
+                        + "refresh(es) never " + (last >= 0 ? "settled" : "completed even once")
+                        + " within " + REFRESH_SETTLE_TIMEOUT + "; the background task executor may be stuck");
+            }
+            try {
+                Thread.sleep(REFRESH_POLL_INTERVAL.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while waiting for Profiles.init()'s background version refresh(es)", e);
+            }
+        }
     }
 
     /// The single profile this fixture selected.
@@ -188,6 +314,24 @@ final class ProfileFixture implements AutoCloseable {
     @Override
     public void close() throws ReflectiveOperationException, IOException {
         try {
+            // Undo Profiles.init()'s permanent listener registrations *first*, before restoring
+            // the previous selected-profile value below -- otherwise that restoration would
+            // re-fire (and therefore re-trigger a background refresh through) a listener this
+            // fixture is about to discard anyway. See the constructor's comment for the full story.
+            selectedProfileHelperField.set(selectedProfileProp, previousSelectedProfileHelper);
+            for (int i = 0; i < refreshedVersionsHandlers.length; i++) {
+                List<?> previous = previousRefreshedVersionsHandlerSnapshots[i];
+                if (previous == null) {
+                    refreshedVersionsHandlers[i] = null;
+                } else {
+                    @SuppressWarnings({"unchecked", "rawtypes"})
+                    List rawHandlers = refreshedVersionsHandlers[i];
+                    rawHandlers.clear();
+                    //noinspection unchecked
+                    rawHandlers.addAll(previous);
+                }
+            }
+
             if (previousSelectedProfile != null) {
                 selectedProfileProp.set(previousSelectedProfile);
             }
