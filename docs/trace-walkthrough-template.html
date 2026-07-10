@@ -1,200 +1,261 @@
 <!--
   ============================================================================
-  HMCL-AE 诊断 Trace 走查模板 (HTML 版)
+  HMCL-AE 诊断 Trace 走查模板 (HTML v2)
   ----------------------------------------------------------------------------
-  用途:每次用户真机测试后,拉取云端诊断 trace,按本模板填充,用 Artifact 工具发布供共同审阅。
-  发布方式:把本文件另存为 docs/trace-walkthrough-<反馈ID>.html,填内容后 Artifact 发布(favicon 用 🔬)。
-  设计语言与「夜间交接报告」一致:主题感知(明暗双色)、语义徽章、数据对齐。
+  用法:另存为 docs/trace-walkthrough-<反馈ID>.html,把全部【示例】内容替换为真实
+  trace 内容,然后用 Artifact 工具发布(favicon 用 🔬)。
+  本文件自带一套完整示例填充,发布出来即是成品观感;所有需要替换的内容都以
+  【示例】语义存在,正文中没有空槽位。
 
   填充约定:
-   1. 所有 <!-- FILL: ... --> 注释标出需替换的位置,填完可删注释。
-   2. 五类状态徽章用 <span class="b b-fixed|b-todo|b-new|b-check|b-ok">…</span>:
-        b-fixed  ✅ 已修复    b-todo ⏳ 仍待处理   b-new 🆕 新发现
-        b-check  ❓ 待确认    b-ok   ✔️ 无问题
-   3. 对话一律用 .dialog 表格呈现(角色 | 内容),真实按时间顺序,不要折叠成模糊摘要。
-   4. 每个发现用 .note 块,顶部挂对应徽章 + 一句话结论,正文给「文件:行号」证据,禁止凭印象。
-   5. 引用代码/日志原文用 <code> / <pre>,保持原文不翻译。
-   6. 截图走查按页面分组;修改意见汇总放文末表格。
+   1. 五类状态徽章,用对应 class 的 span.b:
+        b-fixed = 已修复   b-todo = 仍待处理   b-new = 新发现
+        b-check = 待确认   b-ok = 无问题
+   2. 对话一律用 .dialog 表格(角色胶囊 + 内容),按真实时间顺序展开每一次调用,
+      禁止折叠成"共N次调用(详见下表)"式摘要;补充证据表只能是加法。
+   3. [Dev] 自定义回答是用户写给分析者的一手信号:原文照录,并针对其【实质内容】
+      给出分析,不要只分析 Dev 功能本身是否触发。
+   4. 每个发现 = 一个 .note 块:徽章 + 一句话结论 + 「文件:行号」证据,禁止凭印象。
+   5. 代码/日志引用用 code 或 pre,保持原文。
+   6. 体检总览的徽章计数与进度条宽度按实际统计更新(绿=已修复,黄=待处理,蓝=新发现)。
+   7. 注意:HTML 注释不可嵌套,不要在注释里书写注释语法本身。
   ============================================================================
 -->
 <style>
   :root {
-    --bg:#f6f7f9; --surface:#fff; --surface-2:#eef1f5; --ink:#1a2230; --ink-2:#55627a; --ink-3:#8593aa; --line:#dde3ec;
+    --bg:#f5f6f8; --surface:#ffffff; --surface-2:#edf0f4; --ink:#1a2230; --ink-2:#54617a; --ink-3:#8492a9; --line:#dce2eb;
     --accent:#1f9d76; --amber:#b7791f; --blue:#2f6db3; --violet:#7a5cc0; --red:#c0392b;
-    --fixed-s:#e2f4ee; --todo-s:#fbf1dd; --new-s:#e4eefb; --check-s:#efe8fb; --ok-s:#eef1f5;
+    --fixed-s:#e0f3ec; --todo-s:#faf0da; --new-s:#e2edfa; --check-s:#eee7fa; --ok-s:#eaedf2;
+    --user-s:#e2edfa; --ai-s:#e0f3ec; --tool-s:#eee7fa; --dev-s:#fae4e0; --sys-s:#eaedf2;
     --mono:ui-monospace,"Cascadia Code",Consolas,"SFMono-Regular",monospace;
     --sans:system-ui,"Segoe UI",-apple-system,"Microsoft YaHei UI",sans-serif;
+    --shadow:0 1px 2px rgba(15,23,42,.05), 0 4px 14px rgba(15,23,42,.05);
   }
   @media (prefers-color-scheme:dark){:root{
-    --bg:#10141b;--surface:#171d27;--surface-2:#1e2632;--ink:#e8edf4;--ink-2:#a7b4c8;--ink-3:#6f7d94;--line:#29323f;
-    --accent:#3fc79a;--amber:#e0a94a;--blue:#6aa7e0;--violet:#a98be0;--red:#e06a5c;
-    --fixed-s:#143026;--todo-s:#2e2513;--new-s:#16273a;--check-s:#221a33;--ok-s:#1e2632;
+    --bg:#0f131a; --surface:#161c26; --surface-2:#1d2531; --ink:#e9edf4; --ink-2:#a8b5c9; --ink-3:#6e7c93; --line:#28303d;
+    --accent:#41c99c; --amber:#e0a94a; --blue:#6fa9e2; --violet:#ab8ee2; --red:#e06a5c;
+    --fixed-s:#143026; --todo-s:#2e2513; --new-s:#16273a; --check-s:#221a33; --ok-s:#1e2632;
+    --user-s:#16273a; --ai-s:#143026; --tool-s:#221a33; --dev-s:#331a17; --sys-s:#1e2632;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
   }}
-  :root[data-theme="light"]{--bg:#f6f7f9;--surface:#fff;--surface-2:#eef1f5;--ink:#1a2230;--ink-2:#55627a;--ink-3:#8593aa;--line:#dde3ec;--accent:#1f9d76;--amber:#b7791f;--blue:#2f6db3;--violet:#7a5cc0;--red:#c0392b;--fixed-s:#e2f4ee;--todo-s:#fbf1dd;--new-s:#e4eefb;--check-s:#efe8fb;--ok-s:#eef1f5;}
-  :root[data-theme="dark"]{--bg:#10141b;--surface:#171d27;--surface-2:#1e2632;--ink:#e8edf4;--ink-2:#a7b4c8;--ink-3:#6f7d94;--line:#29323f;--accent:#3fc79a;--amber:#e0a94a;--blue:#6aa7e0;--violet:#a98be0;--red:#e06a5c;--fixed-s:#143026;--todo-s:#2e2513;--new-s:#16273a;--check-s:#221a33;--ok-s:#1e2632;}
+  :root[data-theme="light"]{
+    --bg:#f5f6f8; --surface:#ffffff; --surface-2:#edf0f4; --ink:#1a2230; --ink-2:#54617a; --ink-3:#8492a9; --line:#dce2eb;
+    --accent:#1f9d76; --amber:#b7791f; --blue:#2f6db3; --violet:#7a5cc0; --red:#c0392b;
+    --fixed-s:#e0f3ec; --todo-s:#faf0da; --new-s:#e2edfa; --check-s:#eee7fa; --ok-s:#eaedf2;
+    --user-s:#e2edfa; --ai-s:#e0f3ec; --tool-s:#eee7fa; --dev-s:#fae4e0; --sys-s:#eaedf2;
+    --shadow:0 1px 2px rgba(15,23,42,.05), 0 4px 14px rgba(15,23,42,.05);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f131a; --surface:#161c26; --surface-2:#1d2531; --ink:#e9edf4; --ink-2:#a8b5c9; --ink-3:#6e7c93; --line:#28303d;
+    --accent:#41c99c; --amber:#e0a94a; --blue:#6fa9e2; --violet:#ab8ee2; --red:#e06a5c;
+    --fixed-s:#143026; --todo-s:#2e2513; --new-s:#16273a; --check-s:#221a33; --ok-s:#1e2632;
+    --user-s:#16273a; --ai-s:#143026; --tool-s:#221a33; --dev-s:#331a17; --sys-s:#1e2632;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
 
-  *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.62;-webkit-font-smoothing:antialiased;}
-  .wrap{max-width:940px;margin:0 auto;padding:38px 22px 80px;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.66;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:44px 22px 90px}
 
-  header.hero{border-bottom:2px solid var(--line);padding-bottom:24px;margin-bottom:28px;}
-  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:11px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;}
-  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);}
-  h1{font-size:clamp(24px,4vw,34px);line-height:1.16;margin:0 0 16px;letter-spacing:-.01em;text-wrap:balance;}
-  .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;}
-  .meta div{background:var(--surface);padding:11px 14px;}
-  .meta .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px;}
-  .meta .v{font-size:14px;font-weight:600;font-family:var(--mono);color:var(--ink);}
+  /* ---------- hero ---------- */
+  .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);font-weight:650;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .eyebrow .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--fixed-s)}
+  h1{font-size:clamp(26px,4.4vw,40px);line-height:1.14;margin:0 0 10px;letter-spacing:-.015em;text-wrap:balance;font-weight:750}
+  h1 code{font-size:.82em;background:var(--surface-2);border:1px solid var(--line);padding:2px 10px;border-radius:8px}
+  .sub{color:var(--ink-2);font-size:15.5px;margin:0 0 24px;max-width:66ch}
+  .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:6px}
+  .meta div{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:12px 15px;box-shadow:var(--shadow)}
+  .meta .k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin-bottom:4px}
+  .meta .v{font-size:15px;font-weight:650;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  header.hero{padding-bottom:30px;border-bottom:2px solid var(--line);margin-bottom:34px}
 
-  .callout{border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:14px 18px;margin:18px 0;background:var(--surface);}
-  .callout.warn{border-left-color:var(--red);}
-  .callout.decide{border-left-color:var(--violet);}
-  .callout .ct{font-weight:650;margin-bottom:4px;display:flex;gap:8px;align-items:center;}
-  .callout p{margin:0;font-size:14px;color:var(--ink-2);}
+  /* ---------- callouts ---------- */
+  .callout{border:1px solid var(--line);border-left:4px solid var(--ink-3);border-radius:11px;padding:15px 19px;margin:16px 0;background:var(--surface);box-shadow:var(--shadow)}
+  .callout.warn{border-left-color:var(--red)}
+  .callout.decide{border-left-color:var(--violet)}
+  .callout .ct{font-weight:700;margin-bottom:5px;display:flex;gap:9px;align-items:center;font-size:15px}
+  .callout p{margin:0;font-size:14px;color:var(--ink-2)}
 
-  h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin:42px 0 16px;padding-bottom:9px;border-bottom:1px solid var(--line);}
+  /* ---------- section headers ---------- */
+  h2{display:flex;align-items:center;gap:12px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:750;margin:52px 0 18px}
+  h2::after{content:"";flex:1;height:1px;background:var(--line)}
 
-  .tally{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;}
-  .tally .b{font-size:13px;}
-  .progress{height:9px;border-radius:6px;background:var(--surface-2);overflow:hidden;display:flex;margin:8px 0 4px;}
-  .progress i{display:block;height:100%;}
-  .progress .pf{background:var(--accent);}
-  .progress .pt{background:var(--amber);}
-  .progress .pn{background:var(--blue);}
-  .progress-cap{font-size:12.5px;color:var(--ink-3);}
+  /* ---------- badges ---------- */
+  .b{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:650;padding:3px 11px;border-radius:20px;white-space:nowrap;line-height:1.5}
+  .b .n{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:700}
+  .b-fixed{background:var(--fixed-s);color:var(--accent)}
+  .b-todo{background:var(--todo-s);color:var(--amber)}
+  .b-new{background:var(--new-s);color:var(--blue)}
+  .b-check{background:var(--check-s);color:var(--violet)}
+  .b-ok{background:var(--ok-s);color:var(--ink-3)}
 
-  .b{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;padding:2px 10px;border-radius:20px;white-space:nowrap;}
-  .b-fixed{background:var(--fixed-s);color:var(--accent);}
-  .b-todo{background:var(--todo-s);color:var(--amber);}
-  .b-new{background:var(--new-s);color:var(--blue);}
-  .b-check{background:var(--check-s);color:var(--violet);}
-  .b-ok{background:var(--ok-s);color:var(--ink-3);}
+  /* ---------- tally + progress ---------- */
+  .tally-card{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:20px 22px;box-shadow:var(--shadow)}
+  .tally{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .tally .b{font-size:13.5px;padding:5px 14px}
+  .progress{height:10px;border-radius:6px;background:var(--surface-2);overflow:hidden;display:flex}
+  .progress i{display:block;height:100%}
+  .progress .pf{background:var(--accent)}
+  .progress .pt{background:var(--amber)}
+  .progress .pn{background:var(--blue)}
+  .progress-cap{font-size:12.5px;color:var(--ink-3);margin-top:8px}
 
-  .round{margin:26px 0;}
-  .round h3{font-size:17px;margin:0 0 12px;letter-spacing:-.01em;}
-  table.dialog{width:100%;border-collapse:collapse;font-size:14px;border:1px solid var(--line);border-radius:10px;overflow:hidden;}
-  table.dialog td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top;}
-  table.dialog tr:last-child td{border-bottom:none;}
-  table.dialog .role{width:88px;font-weight:600;color:var(--ink-3);font-size:12.5px;white-space:nowrap;}
-  table.dialog .role.user{color:var(--blue);}
-  table.dialog .role.ai{color:var(--accent);}
-  table.dialog .role.tool{color:var(--violet);font-family:var(--mono);}
-  table.dialog .role.dev{color:var(--red);}
-  .dwrap{overflow-x:auto;}
+  /* ---------- dialogue rounds ---------- */
+  .round{background:var(--surface);border:1px solid var(--line);border-radius:13px;margin:18px 0;box-shadow:var(--shadow);overflow:hidden}
+  .round-head{display:flex;align-items:center;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+  .round-head .no{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);background:var(--fixed-s);border-radius:7px;padding:3px 9px;white-space:nowrap}
+  .round-head .t{font-weight:700;font-size:16px;letter-spacing:-.01em}
+  .round-body{padding:8px 20px 18px}
+  table.dialog{width:100%;border-collapse:collapse;font-size:14px}
+  table.dialog td{padding:12px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.dialog tr:last-child td{border-bottom:none}
+  table.dialog td.who{width:104px;padding-right:14px;white-space:nowrap}
+  .chip{display:inline-block;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:6px;letter-spacing:.02em}
+  .chip.user{background:var(--user-s);color:var(--blue)}
+  .chip.ai{background:var(--ai-s);color:var(--accent)}
+  .chip.tool{background:var(--tool-s);color:var(--violet);font-family:var(--mono);font-size:11px}
+  .chip.dev{background:var(--dev-s);color:var(--red);font-family:var(--mono)}
+  .chip.sys{background:var(--sys-s);color:var(--ink-3)}
+  td.msg{color:var(--ink-2)}
+  td.msg b{color:var(--ink)}
+  .dwrap{overflow-x:auto}
 
-  .note{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin:12px 0;}
-  .note .nh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
-  .note .nh .title{font-weight:650;font-size:15px;}
-  .note p{margin:0 0 8px;font-size:14px;color:var(--ink-2);}
-  .note p:last-child{margin-bottom:0;}
-  code{font-family:var(--mono);font-size:.87em;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--ink);}
-  pre{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;color:var(--ink);line-height:1.5;}
+  /* ---------- finding notes ---------- */
+  .note{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:17px 20px;margin:14px 0;box-shadow:var(--shadow)}
+  .round .note{margin:14px 0 0;background:var(--surface-2);box-shadow:none}
+  .note .nh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:9px}
+  .note .nh .title{font-weight:700;font-size:15px;letter-spacing:-.01em}
+  .note p{margin:0 0 9px;font-size:14px;color:var(--ink-2)}
+  .note p:last-child{margin-bottom:0}
+  code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);border:1px solid var(--line);padding:1px 6px;border-radius:5px}
+  .note code,.round code{background:var(--bg)}
+  pre{font-family:var(--mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:13px 15px;overflow-x:auto;line-height:1.55;margin:10px 0}
+  .loc{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
 
-  table.summary{width:100%;border-collapse:collapse;font-size:13.5px;}
-  table.summary th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;border-bottom:2px solid var(--line);}
-  table.summary td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);}
-  table.summary td .num{font-family:var(--mono);color:var(--ink-3);}
-  .summary-wrap{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:4px 14px;overflow-x:auto;}
+  /* ---------- summary table ---------- */
+  .summary-wrap{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:6px 16px;overflow-x:auto;box-shadow:var(--shadow)}
+  table.summary{width:100%;border-collapse:collapse;font-size:13.5px}
+  table.summary th{text-align:left;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);padding:11px 10px;border-bottom:2px solid var(--line)}
+  table.summary td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2)}
+  table.summary tr:last-child td{border-bottom:none}
+  table.summary .num{font-family:var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
 
-  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3);}
+  footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+  footer b{color:var(--ink-2)}
 </style>
 
 <div class="wrap">
+
+  <!-- ═══════════ 头部:标题 + 元信息(替换全部【示例】值) ═══════════ -->
   <header class="hero">
-    <div class="eyebrow"><span class="dot"></span>HMCL-AE · 诊断 Trace 走查 · <!-- FILL:日期 -->2026-XX-XX</div>
-    <h1><!-- FILL:一句话主标题,概括本轮体检最关键的发现 -->某整合包会话:mods_install 反复装错版本的根因走查</h1>
+    <div class="eyebrow"><span class="dot"></span>HMCL-AE · 诊断 Trace 走查 · 2026-07-09 · 模板示例</div>
+    <h1>某整合包会话:<code>mods_install</code> 反复装错版本的根因走查</h1>
+    <p class="sub">真实用户会话回放 + 源码交叉验证。本文件是模板自带的示例填充——替换为真实 trace 内容后发布。</p>
     <div class="meta">
-      <div><div class="k">反馈 ID</div><div class="v"><!-- FILL -->F-XXXXXX</div></div>
-      <div><div class="k">模型</div><div class="v"><!-- FILL -->deepseek-chat</div></div>
-      <div><div class="k">回合数</div><div class="v"><!-- FILL -->5</div></div>
-      <div><div class="k">trace 时间</div><div class="v"><!-- FILL -->2026-XX-XX HH:MM</div></div>
+      <div><div class="k">反馈 ID</div><div class="v">F-481GP2</div></div>
+      <div><div class="k">模型</div><div class="v">deepseek-chat</div></div>
+      <div><div class="k">回合数</div><div class="v">5</div></div>
+      <div><div class="k">Trace 时间</div><div class="v">07-09 23:21</div></div>
     </div>
   </header>
 
-  <!-- 可选:安全/待拍板提醒块。无则整段删除。 -->
+  <!-- ═══════════ 可选提醒块(无则删除整块) ═══════════ -->
   <div class="callout warn">
     <div class="ct">🔒 安全提醒</div>
-    <p><!-- FILL:如截图/日志中出现明文 API Key、路径泄露等 -->截图 QQXXXX.png 含明文 Tavily API Key,建议轮换并处理该文件。</p>
+    <p>【示例】截图 QQ20260709-234054.png 含明文 Tavily API Key,建议立即轮换并处理该文件后再入库。</p>
   </div>
   <div class="callout decide">
     <div class="ct">❓ 待你拍板</div>
-    <p><!-- FILL:需要用户决策的架构/产品问题;已讨论完则改为「✔️ 已讨论,决定X」 --></p>
+    <p>【示例】trace 中用户提出"技能检索改硬编码+自报场景"的架构提案——值得慎重讨论,本文只呈现证据不擅自实施。(讨论定案后把本块改为「✔️ 已讨论,决定不做」)</p>
   </div>
 
+  <!-- ═══════════ 体检总览:徽章计数 + 三色进度条 ═══════════ -->
   <h2>本轮体检总览</h2>
-  <div class="tally">
-    <span class="b b-fixed">✅ 已修复 <!-- FILL -->2</span>
-    <span class="b b-todo">⏳ 仍待处理 <!-- FILL -->9</span>
-    <span class="b b-new">🆕 新发现 <!-- FILL -->6</span>
-    <span class="b b-check">❓ 待确认 <!-- FILL -->1</span>
-    <span class="b b-ok">✔️ 无问题 <!-- FILL -->3</span>
+  <div class="tally-card">
+    <div class="tally">
+      <span class="b b-fixed">✅ 已修复 <span class="n">2</span></span>
+      <span class="b b-todo">⏳ 仍待处理 <span class="n">9</span></span>
+      <span class="b b-new">🆕 新发现 <span class="n">6</span></span>
+      <span class="b b-check">❓ 待确认 <span class="n">1</span></span>
+      <span class="b b-ok">✔️ 无问题 <span class="n">3</span></span>
+    </div>
+    <div class="progress"><i class="pf" style="width:12%"></i><i class="pt" style="width:53%"></i><i class="pn" style="width:35%"></i></div>
+    <div class="progress-cap">绿 = 已修复 · 黄 = 仍待处理 · 蓝 = 新发现(宽度按各自数量占比调整)</div>
   </div>
-  <!-- 修复进度条:各段宽度按数量占比设 flex-basis 或 width -->
-  <div class="progress">
-    <i class="pf" style="width:12%"></i>
-    <i class="pt" style="width:53%"></i>
-    <i class="pn" style="width:35%"></i>
-  </div>
-  <div class="progress-cap">绿=已修复 · 黄=仍待处理 · 蓝=新发现</div>
 
-  <!-- ===================== 对话回合 ===================== -->
+  <!-- ═══════════ 对话回放:每回合一个 .round,内容按真实时间顺序展开 ═══════════ -->
   <h2>对话回放</h2>
 
   <div class="round">
-    <h3>🎬 回合 1 — <!-- FILL:该回合的用户诉求摘要 -->「我想装些模组」</h3>
-    <div class="dwrap"><table class="dialog">
-      <tr><td class="role user">用户</td><td><!-- FILL:原话 --></td></tr>
-      <tr><td class="role ai">AI</td><td><!-- FILL:回复要点 --></td></tr>
-      <tr><td class="role tool">search(mods)</td><td><!-- FILL:工具调用与结果要点 --></td></tr>
-      <tr><td class="role dev">[Dev]</td><td><!-- FILL:若用户留了 [Dev] 自定义选项,原文照录——这是给你看的一手信号,务必逐字对待 --></td></tr>
-    </table></div>
+    <div class="round-head"><span class="no">回合 4</span><span class="t">「我想安装些不影响原版内容的模组」</span></div>
+    <div class="round-body">
+      <div class="dwrap"><table class="dialog">
+        <tr><td class="who"><span class="chip user">用户</span></td><td class="msg">我想安装些不影响原版内容的模组</td></tr>
+        <tr><td class="who"><span class="chip ai">AI</span></td><td class="msg">推荐了 Sodium、Lithium 等 8 个优化类模组,发起多选确认。</td></tr>
+        <tr><td class="who"><span class="chip tool">ask</span></td><td class="msg">多选面板返回 6 项勾选 + 一条自定义文本(见下行)。</td></tr>
+        <tr><td class="who"><span class="chip dev">[Dev]</span></td><td class="msg"><b>「[Dev]这里怎么又查了一遍最新版?失忆了?」</b> —— 用户对模型重复搜索行为的一手质询,原文照录。</td></tr>
+        <tr><td class="who"><span class="chip tool">instance</span></td><td class="msg"><code>mods_install(id="sodium", source="modrinth")</code> → 安装了 <b>Fabric 版</b> 到 NeoForge 实例(版本失配,游戏内崩溃)。</td></tr>
+      </table></div>
 
-    <!-- 该回合的发现 -->
-    <div class="note">
-      <div class="nh"><span class="b b-new">🆕 新发现</span><span class="title"><!-- FILL:发现一句话 --></span></div>
-      <p><!-- FILL:证据,给 文件:行号 --> 根因在 <code>ContentToolSupport.resolveVersion()</code>(<code>ContentToolSupport.java:501</code>)……</p>
+      <div class="note">
+        <div class="nh"><span class="b b-new">🆕 新发现</span><span class="title">mods_install 无法指定 loader/gameVersion —— 本次事故根因</span></div>
+        <p>门面工具的 schema 只有 <code>(id, source, instance)</code>,模型即使已经从 search 得知目标是 NeoForge 1.21.1,也<b>没有参数可以把这个结论传下去</b>;底层 <code>resolveVersion()</code> 于是退化成「挑全网发布时间最新的文件」。</p>
+        <p class="loc">InstanceTool.java:150 (schema 缺参) · ContentToolSupport.java:501 (退化逻辑) · 技能 mods-install/SKILL.md 自相矛盾:要求检查 loader 却没给传递通道</p>
+      </div>
+      <div class="note">
+        <div class="nh"><span class="b b-todo">⏳ 仍待处理</span><span class="title">失败后模型转向 shell 直接下载 —— 明知故犯黄金法则</span></div>
+        <p>版本反复失配后,模型尝试 <code>Invoke-WebRequest</code> 从 Modrinth CDN 直接下载到 <code>mods/</code>——系统提示词的 GOLDEN RULE 明令 shell 是最后手段。此次被确认弹窗拦下纯属「shell 一律确认」的副作用,<b>没有针对性检测</b>。</p>
+        <p class="loc">AiPromptBuilder.java:58 (GOLDEN RULE 原文) · ShellTool.getPermission() 内容盲判</p>
+      </div>
     </div>
   </div>
 
   <div class="round">
-    <h3>🎬 回合 2 — <!-- FILL --></h3>
-    <div class="dwrap"><table class="dialog">
-      <tr><td class="role user">用户</td><td><!-- FILL --></td></tr>
-      <tr><td class="role ai">AI</td><td><!-- FILL --></td></tr>
-    </table></div>
-    <div class="note">
-      <div class="nh"><span class="b b-todo">⏳ 仍待处理</span><span class="title"><!-- FILL --></span></div>
-      <p><!-- FILL --></p>
+    <div class="round-head"><span class="no">回合 5</span><span class="t">「你自我诊断一下刚才为什么翻车」</span></div>
+    <div class="round-body">
+      <div class="dwrap"><table class="dialog">
+        <tr><td class="who"><span class="chip user">用户</span></td><td class="msg">你自我诊断一下,刚才为什么会装错版本?</td></tr>
+        <tr><td class="who"><span class="chip ai">AI</span></td><td class="msg">给出了大体正确的自我归因(工具没有版本参数),但未输出 [Dev 诊断] 结构块。</td></tr>
+        <tr><td class="who"><span class="chip sys">event</span></td><td class="msg">用户在 cycle 1 中途停止了生成(stream aborted)。</td></tr>
+      </table></div>
+      <div class="note">
+        <div class="nh"><span class="b b-check">❓ 待确认</span><span class="title">[Dev 诊断] 块缺席——注入已生效,但回复被中途停止</span></div>
+        <p>raw trace 证实 cycle 0 的请求含完整 dev-mode SKILL 正文(注入生效);cycle 1 有请求无响应——用户手动停止,模型没跑到「决定是否附加诊断块」的位置。<b>无法据此判定功能缺陷</b>,留待下轮复测。</p>
+        <p class="loc">ai-trace.jsonl turnId=…-05 · cycle 0 request / cycle 1 no-response</p>
+      </div>
     </div>
   </div>
-  <!-- …按实际回合数复制 .round … -->
 
-  <!-- ===================== 截图走查 ===================== -->
+  <!-- ═══════════ 截图走查:按页面分组 ═══════════ -->
   <h2>📸 UI 截图走查</h2>
-  <!-- 按页面分组,每页一组发现 -->
   <div class="note">
-    <div class="nh"><span class="b b-ok">✔️ 无问题</span><span class="title">AI 聊天页 — <!-- FILL --></span></div>
-    <p><!-- FILL:对照截图逐条,附 文件:行号 --></p>
+    <div class="nh"><span class="b b-todo">⏳ 仍待处理</span><span class="title">AI 聊天页 — 思考气泡「不合并,但要美观」</span></div>
+    <p>【示例】结构性合并已否决(红线);剩余为纯视觉:统一宽度策略、左缩进表达从属、header 形态与工具组卡一致化。对应截图 QQ20260709-232253.png。</p>
+  </div>
+  <div class="note">
+    <div class="nh"><span class="b b-ok">✔️ 无问题</span><span class="title">AI 设置页 — 版本隔离默认值联动</span></div>
+    <p>【示例】截图意见基于旧版;预设侧联动已于 e9a9efd0c 实现。顺带发现的相邻缺口「设为默认预设入口缺失」另立条目。</p>
   </div>
 
-  <!-- ===================== 小结 ===================== -->
+  <!-- ═══════════ 小结 ═══════════ -->
   <h2>🏁 小结</h2>
   <div class="note">
-    <p><!-- FILL:本轮最重要的 1-3 条结论,以及建议的下一步 --></p>
+    <p>【示例】本轮最重要的三件事:① <code>mods_install</code> 参数透传是必须立刻修的根因;② shell 越权是一类需要针对性检测的行为,不能继续依赖「一律确认」的副作用兜底;③ 用户在 [Dev] 里的两条质询(重复搜索、装错版本定性为 skill 设计问题)已逐字对待并转化为上面两个条目。</p>
   </div>
 
-  <!-- ===================== 修改意见汇总 ===================== -->
+  <!-- ═══════════ 修改意见汇总:文末总表 ═══════════ -->
   <h2>📝 修改意见汇总</h2>
   <div class="summary-wrap"><table class="summary">
-    <thead><tr><th style="width:44px">#</th><th>意见</th><th style="width:96px">状态</th><th>出处 / 证据</th></tr></thead>
+    <thead><tr><th style="width:40px">#</th><th>意见</th><th style="width:120px">状态</th><th style="width:220px">出处 / 证据</th></tr></thead>
     <tbody>
-      <tr><td class="num">1</td><td><!-- FILL --></td><td><span class="b b-fixed">✅ 已修复</span></td><td class="num"><!-- FILL:文件:行号 或 截图名 --></td></tr>
-      <tr><td class="num">2</td><td><!-- FILL --></td><td><span class="b b-todo">⏳ 待处理</span></td><td class="num"><!-- FILL --></td></tr>
-      <!-- …逐条… -->
+      <tr><td class="num">1</td><td>mods_install 补 loader/gameVersion/version 参数并透传</td><td><span class="b b-todo">⏳ 待处理</span></td><td class="num">InstanceTool.java:150</td></tr>
+      <tr><td class="num">2</td><td>推理强度下拉框全部选项文字对比度</td><td><span class="b b-fixed">✅ 已修复</span></td><td class="num">root.css .ai-model-picker</td></tr>
+      <tr><td class="num">3</td><td>shell 下载与专属工具重叠时针对性提醒</td><td><span class="b b-new">🆕 新发现</span></td><td class="num">AiPromptBuilder.java:58</td></tr>
+      <tr><td class="num">4</td><td>[Dev 诊断] 块缺席是否为缺陷</td><td><span class="b b-check">❓ 待确认</span></td><td class="num">turnId …-05 / 下轮复测</td></tr>
     </tbody>
   </table></div>
 
   <footer>
-    HMCL-AE 诊断 Trace 走查 · 反馈 <!-- FILL -->F-XXXXXX · 生成于 <!-- FILL -->2026-XX-XX。所有结论以真实 trace 与「文件:行号」证据为准。
+    HMCL-AE 诊断 Trace 走查 · 反馈 <b>F-481GP2(模板示例)</b> · 所有结论以真实 trace 与「文件:行号」证据为准 · 生成于 2026-07-10
   </footer>
 </div>
