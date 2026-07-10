@@ -1,3 +1,20 @@
+/*
+ * Hello Minecraft! Launcher
+ * Copyright (C) 2026 huangyuhui <huanghongxun2008@126.com> and contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package org.jackhuang.hmcl.ai.tools;
 
 import org.jackhuang.hmcl.ai.AiApprovalMode;
@@ -10,20 +27,21 @@ import org.jetbrains.annotations.Nullable;
 /// # The three approval modes
 ///
 /// See {@link AiApprovalMode}'s own doc for the full SAFE/ASK/YOLO -> single-AUTO ->
-/// restored-Auto/Ask/yolo history. Two gates run BEFORE mode is even consulted and apply
-/// identically no matter which mode is selected (see the paragraph below the table). Once past
-/// those, the remaining decision is:
+/// restored-Auto/Ask/yolo -> Ask-renamed-to-Manual history. Two gates run BEFORE mode is even
+/// consulted and apply identically no matter which mode is selected (see the paragraph below the
+/// table). Once past those, the remaining decision is:
 ///
-/// | Permission        | `AUTO` (default)                                                                          | `ASK`                               | `yolo`                                                        |
+/// | Permission        | `AUTO` (default)                                                                          | `MANUAL`                            | `yolo`                                                        |
 /// |-------------------|--------------------------------------------------------------------------------------------|--------------------------------------|----------------------------------------------------------------|
 /// | READ_ONLY         | allow                                                                                      | **ask**                             | allow                                                          |
 /// | EXTERNAL_NETWORK  | allow                                                                                      | **ask**                             | allow                                                          |
 /// | CONTROLLED_WRITE  | allow, unless the create-vs-edit/remove split (see {@link EditOrRemoveActions}) says ask   | **ask** (no exceptions)             | allow (the edit/remove split does not apply here)              |
 /// | DANGEROUS_WRITE   | ask, unless the dangerous-confirmation toggle is off, in which case allow                  | **ask** (regardless of the toggle)  | **allow** (regardless of the toggle -- the old YOLO semantics) |
 ///
-/// `ASK` is deliberately the most conservative pick -- nearly everything asks, which is the entire
-/// point of choosing it over `AUTO`. `yolo` is deliberately the most permissive pick -- nearly
-/// everything auto-runs without asking, which is the entire point of choosing it over `AUTO`.
+/// `MANUAL` (named `ASK` before a later pure-rename pass — see {@link AiApprovalMode}'s own doc) is
+/// deliberately the most conservative pick -- nearly everything asks, which is the entire point of
+/// choosing it over `AUTO`. `yolo` is deliberately the most permissive pick -- nearly everything
+/// auto-runs without asking, which is the entire point of choosing it over `AUTO`.
 ///
 /// ## The two gates that run before mode is consulted, and that NO mode can relax
 ///
@@ -32,7 +50,7 @@ import org.jetbrains.annotations.Nullable;
 /// - **Unattended DANGEROUS_WRITE** (the load-bearing safety fix — see {@link AiApprovalMode}'s
 ///   own doc): whenever the current turn may be running unattended, a DANGEROUS_WRITE call is
 ///   hard-BLOCKed outright — never merely asked, and never merely allowed — no matter which mode
-///   is selected. `yolo`'s "allow dangerous operations without asking" and `ASK`'s
+///   is selected. `yolo`'s "allow dangerous operations without asking" and `MANUAL`'s
 ///   toggle-independent asking both explicitly do NOT reach this case: this gate runs first and
 ///   wins regardless. Previously, picking a more permissive mode (or just flipping the
 ///   dangerous-confirmation toggle off) could make a destructive command auto-run with genuinely
@@ -180,10 +198,11 @@ public final class AiExecutionPolicy {
             return Verdict.block(BlockReason.UNATTENDED_DANGEROUS);
         }
         return switch (mode) {
-            // ASK is deliberately the most conservative pick: every call asks, full stop — that is
-            // the entire reason a user would choose it over AUTO. No exceptions for read-only or
-            // network calls, and no exception for the dangerous-confirmation toggle either.
-            case ASK -> Verdict.ASK;
+            // MANUAL (named ASK before a later pure-rename pass) is deliberately the most
+            // conservative pick: every call asks, full stop — that is the entire reason a user
+            // would choose it over AUTO. No exceptions for read-only or network calls, and no
+            // exception for the dangerous-confirmation toggle either.
+            case MANUAL -> Verdict.ASK;
             // yolo is deliberately the most permissive pick: everything left standing after the two
             // non-negotiable gates above auto-runs, including DANGEROUS_WRITE while attended and the
             // create-vs-edit/remove split that AUTO enforces for CONTROLLED_WRITE — restoring the old
@@ -212,8 +231,8 @@ public final class AiExecutionPolicy {
     }
 
     /// Returns a copy of this policy with {@code newMode} substituted for the approval mode, every
-    /// other flag unchanged — e.g. for switching between `AUTO`/`ASK`/`yolo` without discarding the
-    /// dangerous-confirmation / dangerously-skip-permissions flags already configured on this
+    /// other flag unchanged — e.g. for switching between `AUTO`/`MANUAL`/`yolo` without discarding
+    /// the dangerous-confirmation / dangerously-skip-permissions flags already configured on this
     /// instance.
     public AiExecutionPolicy withMode(AiApprovalMode newMode) {
         return new AiExecutionPolicy(newMode, dangerousConfirmationEnabled, dangerouslySkipPermissions);

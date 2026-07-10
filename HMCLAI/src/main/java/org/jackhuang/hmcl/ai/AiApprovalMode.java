@@ -61,14 +61,41 @@ import org.jetbrains.annotations.Nullable;
 /// {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy#check(String, String, org.jackhuang.hmcl.ai.tools.ToolPermission, boolean, boolean)}
 /// for where it's enforced, and that class's own doc for the full per-mode decision table.
 ///
+/// ## History, part 3: `ASK` renamed to `MANUAL`
+///
+/// Purely a UI/naming pass (no enforcement change): the composer's mode selector was reshaped into
+/// a single-choice list mirroring Claude Code's own `Mode` picker (`Manual` / `Plan` / `Auto` /
+/// `Bypass permissions`, of which HMCL-AE only adopts `Manual`/`Auto`/a `Plan` entry and keeps its
+/// own `yolo` in place of `Bypass permissions`). The enum constant and its display name were renamed
+/// from `ASK`/`"Ask"` to `MANUAL`/`"Manual"` to match; everything else about the mode — including
+/// its enforcement table in {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy} — is byte-for-byte
+/// unchanged, and `YOLO`/`"yolo"` was NOT touched by this pass (it is not a rename target — the
+/// lowercase `"yolo"` label stays exactly as-is). The persisted id also moved from `"ask"` to
+/// `"manual"` for the same clarity reason, but {@link #fromId(String)} still accepts the legacy
+/// `"ask"` id (alongside the older `"safe"` alias from part 1) so settings files written before this
+/// rename keep loading correctly.
+///
+/// Plan Mode itself (the investigate-only write-blocking gate — see
+/// {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s own doc for its two non-negotiable gates)
+/// is a SEPARATE, orthogonal piece of state (a plain boolean toggled by the composer's `/plan`
+/// command) and was deliberately NOT folded into this enum: Auto/Manual/yolo decide HOW a dangerous
+/// operation is gated, while Plan Mode is "block every write outright regardless of mode" — mixing
+/// the two into one enum would have muddied {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s
+/// already-tested decision table. The composer's mode popup merges the two orthogonal states into
+/// one single-choice list purely as a UI presentation choice; see `AIMainPage.showApprovalModePopup`
+/// for how the popup reconciles "Plan Mode is active" vs. "which of Auto/Manual/yolo is persisted"
+/// into a single highlighted row.
+///
 /// ## Serialization
 ///
 /// The mode is serialized/deserialized via its `id` string (lowercase). Use {@link #fromId(String)}
 /// to look up a mode and {@link #getId()} to persist it. The legacy persisted value `"safe"` (from
 /// before the original SAFE/ASK/YOLO merge) is still accepted by {@link #fromId(String)} and
-/// resolves to {@link #ASK} — `SAFE` and `ASK` had already converged to the same enforcement back
-/// then, so there is nothing to distinguish them by. The ids `"auto"`, `"ask"`, and `"yolo"` all
-/// round-trip to their own same-named mode.
+/// resolves to {@link #MANUAL} — `SAFE` and `ASK` had already converged to the same enforcement back
+/// then, so there is nothing to distinguish them by. The legacy persisted value `"ask"` (this enum
+/// constant's own id before the part-3 rename above) is likewise still accepted and also resolves to
+/// {@link #MANUAL}. The ids `"auto"`, `"manual"`, and `"yolo"` all round-trip to their own
+/// same-named mode.
 @NotNullByDefault
 public enum AiApprovalMode {
 
@@ -79,13 +106,15 @@ public enum AiApprovalMode {
 
     /// The maximally conservative pick: nearly every call asks for confirmation, regardless of how
     /// low-risk it looks. See {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s class doc for
-    /// the full decision table.
-    ASK("ask", "Ask"),
+    /// the full decision table. Named `ASK`/`"Ask"` before the part-3 rename in this class's own
+    /// doc; enforcement is unchanged, only the name is new.
+    MANUAL("manual", "Manual"),
 
     /// The permissive pick: nearly everything auto-runs without asking, including dangerous
     /// operations while attended — the old YOLO semantics. Still subject to the non-negotiable
     /// unattended DANGEROUS_WRITE hard-BLOCK; see
-    /// {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s class doc.
+    /// {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s class doc. NOT a rename target — the
+    /// lowercase `"yolo"` label is deliberate and unchanged.
     YOLO("yolo", "yolo");
 
     private final String id;
@@ -96,7 +125,7 @@ public enum AiApprovalMode {
         this.displayName = displayName;
     }
 
-    /// Returns the short identifier string (`"auto"`, `"ask"`, or `"yolo"`).
+    /// Returns the short identifier string (`"auto"`, `"manual"`, or `"yolo"`).
     public String getId() {
         return id;
     }
@@ -110,16 +139,17 @@ public enum AiApprovalMode {
     /// Looks up an approval mode by its id string.
     ///
     /// @param id the id string (case-insensitive); may be {@code null}, in which case {@link #AUTO}
-    ///           is returned. The legacy id `"safe"` (which predates this enum's own id space, from
-    ///           before the original SAFE/ASK/YOLO merge) is accepted for backward compatibility and
-    ///           resolves to {@link #ASK}, since `SAFE` and `ASK` were already enforced identically.
+    ///           is returned. The legacy ids `"safe"` (which predates this enum's own id space, from
+    ///           before the original SAFE/ASK/YOLO merge) and `"ask"` (this mode's own id before the
+    ///           part-3 `ASK` &rarr; `MANUAL` rename) are both accepted for backward compatibility
+    ///           and resolve to {@link #MANUAL}.
     /// @return the matching mode, or {@link #AUTO} if {@code id} is {@code null} or unrecognized
     public static AiApprovalMode fromId(@Nullable String id) {
         if (id == null) {
             return AUTO;
         }
-        if ("safe".equalsIgnoreCase(id)) {
-            return ASK;
+        if ("safe".equalsIgnoreCase(id) || "ask".equalsIgnoreCase(id)) {
+            return MANUAL;
         }
         for (AiApprovalMode mode : values()) {
             if (mode.id.equalsIgnoreCase(id)) {

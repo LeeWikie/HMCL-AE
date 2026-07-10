@@ -1568,29 +1568,41 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         refreshContextRing();
     }
 
-    /// Refreshes the approval badge to match the CURRENTLY PERSISTED {@link AiApprovalMode} (Auto /
-    /// Ask / yolo — see its own doc for the SAFE/ASK/YOLO merge-then-restore history): swaps the
-    /// pill's tint style class, label text and tooltip. Called on session/header refresh and right
-    /// after {@link #setApprovalMode(AiApprovalMode)} persists a new mode, so the pill never shows a
-    /// stale mode.
+    /// Refreshes the approval badge to match the CURRENTLY ACTIVE selection: Plan Mode (see
+    /// {@link #isPlanMode()}) wins the display outright whenever it's on — the pill shows "Plan"
+    /// regardless of which {@link AiApprovalMode} (Auto / Manual / yolo — see that enum's own doc
+    /// for the SAFE/ASK/YOLO merge-then-restore-then-rename history) is persisted underneath, since
+    /// that mode is simply parked, not discarded, for when Plan Mode is turned back off — otherwise
+    /// the pill shows the persisted mode as before. Swaps the pill's tint style class, label text and
+    /// tooltip. Called on session/header refresh, right after {@link #setApprovalMode(AiApprovalMode)}
+    /// persists a new mode, and right after Plan Mode is toggled (from `/plan` or the popup's Plan
+    /// row), so the pill never shows a stale selection.
     private void updateApprovalBadge() {
-        AiApprovalMode mode = AiApprovalMode.fromId(aiSettings.getApprovalMode());
-        approvalBadge.getStyleClass().setAll("ai-toolbar-pill", approvalModePillStyleClass(mode));
-        approvalBadge.setText(i18n(approvalModeLabelKey(mode)));
-        FXUtils.installFastTooltip(approvalBadge, i18n(approvalModeTooltipKey(mode)));
+        if (isPlanMode()) {
+            approvalBadge.getStyleClass().setAll("ai-toolbar-pill", "ai-pill-plan");
+            approvalBadge.setText(i18n("ai.settings.approval_badge_plan"));
+            FXUtils.installFastTooltip(approvalBadge, i18n("ai.composer.plan.tooltip"));
+        } else {
+            AiApprovalMode mode = AiApprovalMode.fromId(aiSettings.getApprovalMode());
+            approvalBadge.getStyleClass().setAll("ai-toolbar-pill", approvalModePillStyleClass(mode));
+            approvalBadge.setText(i18n(approvalModeLabelKey(mode)));
+            FXUtils.installFastTooltip(approvalBadge, i18n(approvalModeTooltipKey(mode)));
+        }
         approvalBadge.setVisible(true);
         approvalBadge.setManaged(true);
     }
 
-    /// Style class carrying each {@link AiApprovalMode}'s pill/icon tint (root.css's new
-    /// `.ai-pill-ask`/`.ai-pill-yolo` `.svg` rules, added alongside the pre-existing `.ai-pill-auto`
-    /// one): Auto keeps its established primary tint, Ask reads as a cautious/neutral tint, and
-    /// yolo — the mode that skips confirmations, including dangerous ones while attended — reads as
-    /// the error/danger tint.
+    /// Style class carrying each {@link AiApprovalMode}'s pill/icon tint (root.css's
+    /// `.ai-pill-manual`/`.ai-pill-yolo` `.svg` rules, added alongside the pre-existing
+    /// `.ai-pill-auto` one — `.ai-pill-plan` is the fourth, Plan-Mode-specific tint, applied directly
+    /// by {@link #updateApprovalBadge()} rather than through this method since Plan isn't a member of
+    /// this enum): Auto keeps its established primary tint, Manual reads as a cautious/neutral tint,
+    /// and yolo — the mode that skips confirmations, including dangerous ones while attended — reads
+    /// as the error/danger tint.
     private static String approvalModePillStyleClass(AiApprovalMode mode) {
         return switch (mode) {
             case AUTO -> "ai-pill-auto";
-            case ASK -> "ai-pill-ask";
+            case MANUAL -> "ai-pill-manual";
             case YOLO -> "ai-pill-yolo";
         };
     }
@@ -1602,7 +1614,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private static String approvalModeLabelKey(AiApprovalMode mode) {
         return switch (mode) {
             case AUTO -> "ai.settings.approval_badge_auto";
-            case ASK -> "ai.settings.approval_badge_ask";
+            case MANUAL -> "ai.settings.approval_badge_manual";
             case YOLO -> "ai.settings.approval_badge_yolo";
         };
     }
@@ -1611,7 +1623,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private static String approvalModeTooltipKey(AiApprovalMode mode) {
         return switch (mode) {
             case AUTO -> "ai.composer.auto.tooltip";
-            case ASK -> "ai.composer.ask.tooltip";
+            case MANUAL -> "ai.composer.manual.tooltip";
             case YOLO -> "ai.composer.yolo.tooltip";
         };
     }
@@ -1680,6 +1692,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void updatePlanBadge() {
         planBadge.setVisible(planMode);
         planBadge.setManaged(planMode);
+    }
+
+    /// Single choke point for changing {@link #planMode}: updates both the header
+    /// {@link #planBadge} (via {@link #updatePlanBadge()}) and the composer toolbar's approval
+    /// pill (via {@link #updateApprovalBadge()}, which shows "Plan" whenever {@link #isPlanMode()}
+    /// is true — see that method's doc) so the two never disagree. Shared by the `/plan` slash
+    /// command (which flips {@link #planMode}) and {@link #showApprovalModePopup()}'s Plan/
+    /// Manual/Auto/yolo rows (which set it explicitly rather than toggle it).
+    private void setPlanMode(boolean enabled) {
+        planMode = enabled;
+        updatePlanBadge();
+        updateApprovalBadge();
     }
 
     /// Merged domain facades whose actions span MULTIPLE permission levels (e.g. `instance`'s
@@ -1930,12 +1954,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         // ---- Approval-mode (permission mode) pill ----
         // Reuses the former header `approvalBadge` Label, restyled as a clickable toolbar pill.
-        // AiApprovalMode is a three-way pick again (Auto / Ask / yolo — see its own doc for the
-        // SAFE/ASK/YOLO merge-then-restore history); clicking pops the mode list
-        // (showApprovalModePopup) so the user can actually switch, not just view it.
-        // updateApprovalBadge() owns the per-mode text/style/tooltip and is also what refreshes the
-        // pill right after a switch. The unattended hard-block / dangerous-confirm semantics live in
-        // AiExecutionPolicy and do not depend on how many modes are offered here.
+        // AiApprovalMode is a three-way pick (Auto / Manual / yolo — see its own doc for the
+        // SAFE/ASK/YOLO merge-then-restore-then-rename history); the popup ALSO merges in the
+        // orthogonal Plan Mode toggle as a fourth row (showApprovalModePopup), so clicking the pill
+        // pops a single Manual/Plan/Auto/yolo list the user can switch from, not just view.
+        // updateApprovalBadge() owns the per-mode (and Plan) text/style/tooltip and is also what
+        // refreshes the pill right after a switch. The unattended hard-block / dangerous-confirm
+        // semantics live in AiExecutionPolicy and do not depend on how many modes are offered here.
         approvalBadge.setGraphic(SVG.ROCKET_LAUNCH.createIcon(14));
         updateApprovalBadge();
         FXUtils.onClicked(approvalBadge, this::showApprovalModePopup);
@@ -2071,6 +2096,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// menu). Header shows "思考强度 · <current>"; a 6-stop slider (无/低/中/高/扩展/最高) drives the
     /// effort live; dragging/clicking persists it (AiSettings has no auto-save — P6/C-17) and the
     /// pill text/tooltip follow via the reasoningEffortProperty listener installed in buildComposer.
+    /// Both {@link #openThinkingSlider()} and {@link #showContextPopup()} hand their own already
+    /// rounded/shadowed content {@link VBox} (`.ai-effort-popup` / `.ai-ctx-popup`) straight to
+    /// {@code new JFXPopup(content)}. {@code JFXPopupSkin} wraps that content in its OWN StackPane
+    /// (style class `.jfx-popup-container`) painted with a flatter 4px corner radius — and that
+    /// class is shared by EVERY JFXPopup in the app, including plain {@link PopupMenu}-based ones
+    /// like {@link #showApprovalModePopup()} / {@link #showModelSelectorPopup()}, which have no
+    /// background of their own and rely entirely on this shared container for their surface. Since
+    /// our two contents draw their OWN, larger 12px-radius rounded background right on top of it,
+    /// the shared container's flatter corners peek out past the tighter ones at all four corners —
+    /// the "square grey edges poking out from behind the rounded card" glitch. The shared
+    /// `.jfx-popup-container` class itself must NOT change (root.css) — the other, background-less
+    /// popups above would lose their only surface — so this instead blanks the background on THIS
+    /// ONE popup instance's own container, reached via {@code content}'s parent (exactly the
+    /// StackPane {@code JFXPopupSkin} built around it), leaving {@code content}'s own background /
+    /// radius / drop-shadow as the sole visible surface. Must be called AFTER {@code popup.show(...)}
+    /// — the container does not exist until the popup's skin is realized.
+    private static void detachSharedPopupContainerBackground(Region content) {
+        Node container = content.getParent();
+        if (container != null) {
+            container.setStyle("-fx-background-color: transparent;");
+        }
+    }
+
     private void openThinkingSlider() {
         // Toggle: a second click while the popup is open closes it instead of stacking another.
         if (thinkingPopup != null && thinkingPopup.isShowing()) {
@@ -2133,6 +2181,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         popup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
                 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
+        detachSharedPopupContainerBackground(content);
     }
 
     /// Builds the composer's context-usage ring (v2 §5): a pure arc (no number) whose sweep = the
@@ -2257,6 +2306,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         popup.show(contextRing, vPosition, JFXPopup.PopupHPosition.RIGHT,
                 contextRing.getWidth(),
                 vPosition == JFXPopup.PopupVPosition.TOP ? contextRing.getHeight() : -contextRing.getHeight());
+        detachSharedPopupContainerBackground(content);
     }
 
     /// Focuses the input and pops the slash-command autocomplete, as if the user typed "/". Backs
@@ -2299,12 +2349,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 vPosition == JFXPopup.PopupVPosition.TOP ? modelSelectorBtn.getHeight() : -modelSelectorBtn.getHeight());
     }
 
-    /// Shows the approval-mode list from the pill: Auto / Ask / yolo (see AiApprovalMode's doc for
-    /// the SAFE/ASK/YOLO merge-then-restore history). A second click while showing closes it instead
-    /// of stacking another (mirrors {@link #openThinkingSlider()} / {@link #showContextPopup()} /
-    /// {@link #showModelSelectorPopup()}'s toggle behaviour). The checked row marks the
-    /// currently-persisted mode; picking a different row persists it via
-    /// {@link #setApprovalMode(AiApprovalMode)} and refreshes the pill. The unattended hard-block /
+    /// Shows the mode list from the pill: Manual / Plan / Auto / yolo, in that fixed order —
+    /// mirroring Claude Code's own `Mode` picker's row order (which also has `Accept edits` and
+    /// `Bypass permissions` rows HMCL-AE deliberately does not offer). This is a PRESENTATION-ONLY
+    /// merge of two orthogonal pieces of state: the persisted {@link AiApprovalMode} (Auto / Manual /
+    /// yolo — see its own doc for the SAFE/ASK/YOLO merge-then-restore-then-rename history) and the
+    /// separate Plan Mode boolean ({@link #planMode}, normally toggled by `/plan`); neither
+    /// {@link AiApprovalMode} nor {@link org.jackhuang.hmcl.ai.tools.AiExecutionPolicy}'s decision
+    /// table gained a fourth member — see {@link #selectApprovalMode(AiApprovalMode)} /
+    /// {@link #selectPlanMode()} below for how the two states are kept independent while only ONE
+    /// row is ever checked at a time. A second click while showing closes it instead of stacking
+    /// another (mirrors {@link #openThinkingSlider()} / {@link #showContextPopup()} /
+    /// {@link #showModelSelectorPopup()}'s toggle behaviour). The unattended hard-block /
     /// dangerous-confirm semantics live in AiExecutionPolicy and are unaffected by this switch (yolo
     /// cannot relax them either — see that class's doc).
     private void showApprovalModePopup() {
@@ -2316,27 +2372,56 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup popup = new JFXPopup(menu);
         approvalModePopup = popup;
         AiApprovalMode current = AiApprovalMode.fromId(aiSettings.getApprovalMode());
-        for (AiApprovalMode mode : AiApprovalMode.values()) {
-            boolean active = current == mode;
-            menu.getContent().add(new IconedMenuItem(active ? SVG.CHECK : null,
-                    i18n(approvalModeLabelKey(mode)), () -> setApprovalMode(mode), popup)
-                    .addTooltip(i18n(approvalModeTooltipKey(mode))));
-        }
+        boolean planActive = isPlanMode();
+        // Manual, Plan, Auto, yolo — fixed order (not AiApprovalMode.values() order), since Plan
+        // is not a member of that enum and must be interleaved at this specific position.
+        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.MANUAL) ? SVG.CHECK : null,
+                i18n(approvalModeLabelKey(AiApprovalMode.MANUAL)), () -> selectApprovalMode(AiApprovalMode.MANUAL), popup)
+                .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.MANUAL))));
+        menu.getContent().add(new IconedMenuItem(planActive ? SVG.CHECK : null,
+                i18n("ai.settings.approval_badge_plan"), this::selectPlanMode, popup)
+                .addTooltip(i18n("ai.composer.plan.tooltip")));
+        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.AUTO) ? SVG.CHECK : null,
+                i18n(approvalModeLabelKey(AiApprovalMode.AUTO)), () -> selectApprovalMode(AiApprovalMode.AUTO), popup)
+                .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.AUTO))));
+        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.YOLO) ? SVG.CHECK : null,
+                i18n(approvalModeLabelKey(AiApprovalMode.YOLO)), () -> selectApprovalMode(AiApprovalMode.YOLO), popup)
+                .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.YOLO))));
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
         popup.show(approvalBadge, vPosition, JFXPopup.PopupHPosition.LEFT,
                 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
     }
 
-    /// Persists a newly-picked {@link AiApprovalMode} (from {@link #showApprovalModePopup()}'s rows)
-    /// into {@link AiSettings} and refreshes the pill. A no-op if the mode picked is already the
-    /// persisted one, so re-clicking the current row doesn't re-fire a redundant save.
-    private void setApprovalMode(AiApprovalMode mode) {
-        if (AiApprovalMode.fromId(aiSettings.getApprovalMode()) == mode) {
-            return;
+    /// Picks one of {@link AiApprovalMode#MANUAL}/{@link AiApprovalMode#AUTO}/
+    /// {@link AiApprovalMode#YOLO} from {@link #showApprovalModePopup()}'s rows: turns Plan Mode OFF
+    /// (Plan and the three approval modes are mutually exclusive in the popup's single-choice
+    /// presentation) and persists {@code mode} via {@link #setApprovalMode(AiApprovalMode)}.
+    private void selectApprovalMode(AiApprovalMode mode) {
+        if (isPlanMode()) {
+            setPlanMode(false);
         }
-        aiSettings.approvalModeProperty().set(mode.getId());
-        persistAiSettings();
+        setApprovalMode(mode);
+    }
+
+    /// Picks the Plan row from {@link #showApprovalModePopup()}: turns Plan Mode ON WITHOUT touching
+    /// the persisted {@link AiApprovalMode} — it stays exactly as it was, parked underneath, so
+    /// leaving Plan Mode (via `/plan` or picking Manual/Auto/yolo again) resumes that same mode
+    /// instead of silently resetting it.
+    private void selectPlanMode() {
+        setPlanMode(true);
+    }
+
+    /// Persists a newly-picked {@link AiApprovalMode} (from {@link #selectApprovalMode(AiApprovalMode)})
+    /// into {@link AiSettings} and refreshes the pill. Skips the redundant settings write if
+    /// {@code mode} is already the persisted one, but ALWAYS refreshes the pill regardless — the
+    /// caller may have just turned Plan Mode off with the mode otherwise unchanged, and the pill
+    /// must stop showing "Plan" even though the persisted mode string didn't need rewriting.
+    private void setApprovalMode(AiApprovalMode mode) {
+        if (AiApprovalMode.fromId(aiSettings.getApprovalMode()) != mode) {
+            aiSettings.approvalModeProperty().set(mode.getId());
+            persistAiSettings();
+        }
         updateApprovalBadge();
     }
 
@@ -3556,8 +3641,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             case "/plan" -> {
                 inputField.clear();
-                planMode = !planMode;
-                updatePlanBadge();
+                setPlanMode(!planMode);
                 addSystemMessage(planMode
                         ? i18n("ai.chat.plan.on")
                         : i18n("ai.chat.plan.off"));

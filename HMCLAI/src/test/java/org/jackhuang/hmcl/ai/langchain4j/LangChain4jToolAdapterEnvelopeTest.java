@@ -103,6 +103,49 @@ public final class LangChain4jToolAdapterEnvelopeTest {
         assertEnvelope(result.text());
     }
 
+    /// Full-path check, YOLO edition: with Plan Mode off, `yolo`'s whole purpose is to auto-run
+    /// dangerous operations while attended — but an unattended DANGEROUS_WRITE must still come back
+    /// BLOCKed with the UNATTENDED text specifically (never the ALLOW an attended `yolo` call would
+    /// get, and never mistaken for the Plan Mode gate, which isn't in play here).
+    @Test
+    public void executeUnattendedDangerousUnderYoloStillReturnsTheUnattendedEnvelope() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new DangerousStubTool());
+        LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(
+                registry, new AiExecutionPolicy(AiApprovalMode.YOLO, true, false),
+                null, null, null, () -> false, () -> true);
+
+        ToolExecutionResultMessage result = adapter.execute(ToolExecutionRequest.builder()
+                .name("danger").arguments("{}").build());
+        assertTrue(result.text().contains("unattended"), result.text());
+        assertFalse(result.text().contains("Plan Mode"), result.text());
+        assertEnvelope(result.text());
+    }
+
+    /// Full-path check, YOLO-parked-under-Plan edition: AIMainPage's composer popup lets a user
+    /// pick `yolo` (the persisted AiApprovalMode) and THEN turn the separate Plan Mode boolean on
+    /// via the popup's Plan row — {@code selectPlanMode()} deliberately leaves the parked mode
+    /// untouched (see AIMainPage's own doc) — so it is entirely realistic for `yolo` to be parked
+    /// underneath a UI showing "Plan" highlighted. Whatever the reason label ends up being (Plan
+    /// Mode's own gate fires first and also covers DANGEROUS_WRITE — see
+    /// AiExecutionPolicyVerdictTest#planModeWinsWhenBothGatesWouldFire), the decision reaching the
+    /// model must be BLOCK, never ALLOW: the composer showing "Plan" instead of "yolo" must not be
+    /// read as making the underlying judgment call any LESS safe than "yolo alone, unattended, Plan
+    /// off" already is (locked down by the test above).
+    @Test
+    public void executeUnattendedDangerousUnderYoloWithPlanModeAlsoActiveStillBlocks() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new DangerousStubTool());
+        LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(
+                registry, new AiExecutionPolicy(AiApprovalMode.YOLO, true, false),
+                null, null, null, () -> true, () -> true);
+
+        ToolExecutionResultMessage result = adapter.execute(ToolExecutionRequest.builder()
+                .name("danger").arguments("{}").build());
+        assertTrue(result.text().contains("Error: blocked"), result.text());
+        assertEnvelope(result.text());
+    }
+
     // ---- factory-wired failure texts ----
 
     @Test

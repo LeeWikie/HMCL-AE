@@ -533,21 +533,24 @@ public final class AiSettingsTest {
         }
     }
 
-    /// Verifies that the current three-way ("auto"/"ask"/"yolo") AND the legacy pre-merge ("safe")
-    /// approval mode ids all still deserialize correctly — see {@link AiApprovalMode}'s own doc for
-    /// the SAFE/ASK/YOLO &rarr; single-AUTO &rarr; restored-Auto/Ask/yolo history — so existing
-    /// users' settings files keep loading fine no matter which era they were written in.
+    /// Verifies that the current three-way ("auto"/"manual"/"yolo") AND both legacy ids ("safe" from
+    /// before the original SAFE/ASK/YOLO merge, "ask" from before the later ASK &rarr; MANUAL
+    /// pure-rename pass) all still deserialize correctly — see {@link AiApprovalMode}'s own doc for
+    /// the full history — so existing users' settings files keep loading fine no matter which era
+    /// they were written in.
     @Test
     public void testApprovalModeSerialization() throws IOException {
         Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
         try {
             java.util.Map<String, AiApprovalMode> idToExpectedMode = new java.util.LinkedHashMap<>();
             idToExpectedMode.put("auto", AiApprovalMode.AUTO);
-            idToExpectedMode.put("ask", AiApprovalMode.ASK);
+            idToExpectedMode.put("manual", AiApprovalMode.MANUAL);
             idToExpectedMode.put("yolo", AiApprovalMode.YOLO);
             // Legacy id from before the original SAFE/ASK/YOLO merge: SAFE and ASK had already
-            // converged to the same enforcement back then, so "safe" resolves to ASK, not AUTO.
-            idToExpectedMode.put("safe", AiApprovalMode.ASK);
+            // converged to the same enforcement back then, so "safe" resolves to MANUAL, not AUTO.
+            idToExpectedMode.put("safe", AiApprovalMode.MANUAL);
+            // Legacy id: this mode's own id before the later ASK -> MANUAL pure-rename pass.
+            idToExpectedMode.put("ask", AiApprovalMode.MANUAL);
 
             for (java.util.Map.Entry<String, AiApprovalMode> entry : idToExpectedMode.entrySet()) {
                 String id = entry.getKey();

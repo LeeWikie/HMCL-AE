@@ -21,32 +21,42 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/// Unit tests for {@link AiApprovalMode}: covers the restored three-way `auto`/`ask`/`yolo` id
-/// space, the legacy `"safe"` compatibility alias (from before the original SAFE/ASK/YOLO merge),
-/// and the deliberately-lowercase `yolo` display name.
+/// Unit tests for {@link AiApprovalMode}: covers the restored three-way `auto`/`manual`/`yolo` id
+/// space, the legacy `"safe"` AND `"ask"` compatibility aliases (`"safe"` from before the original
+/// SAFE/ASK/YOLO merge, `"ask"` from before the later `ASK` &rarr; `MANUAL` pure-rename pass — see
+/// that enum's own doc for the full history), and the deliberately-lowercase `yolo` display name.
 public final class AiApprovalModeTest {
 
     @Test
     void fromIdResolvesTheThreeCurrentIds() {
         assertEquals(AiApprovalMode.AUTO, AiApprovalMode.fromId("auto"));
-        assertEquals(AiApprovalMode.ASK, AiApprovalMode.fromId("ask"));
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("manual"));
         assertEquals(AiApprovalMode.YOLO, AiApprovalMode.fromId("yolo"));
     }
 
     @Test
     void fromIdIsCaseInsensitive() {
         assertEquals(AiApprovalMode.AUTO, AiApprovalMode.fromId("AUTO"));
-        assertEquals(AiApprovalMode.ASK, AiApprovalMode.fromId("Ask"));
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("Manual"));
         assertEquals(AiApprovalMode.YOLO, AiApprovalMode.fromId("YOLO"));
     }
 
     @Test
-    void fromIdResolvesTheLegacySafeIdToAsk() {
+    void fromIdResolvesTheLegacySafeIdToManual() {
         // "safe" predates this enum's own id space entirely, from before the original
         // SAFE/ASK/YOLO merge. SAFE and ASK had already converged to the same enforcement back
-        // then, so an old settings file that persisted "safe" must load as ASK, not AUTO.
-        assertEquals(AiApprovalMode.ASK, AiApprovalMode.fromId("safe"));
-        assertEquals(AiApprovalMode.ASK, AiApprovalMode.fromId("SAFE"));
+        // then, so an old settings file that persisted "safe" must load as MANUAL, not AUTO.
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("safe"));
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("SAFE"));
+    }
+
+    @Test
+    void fromIdResolvesTheLegacyAskIdToManual() {
+        // "ask" was this mode's OWN id before the later ASK -> MANUAL pure-rename pass (see
+        // AiApprovalMode's own doc, "History part 3"). A settings file persisted before that
+        // rename must still load as MANUAL, not fall back to AUTO.
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("ask"));
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId("ASK"));
     }
 
     @Test
@@ -66,14 +76,14 @@ public final class AiApprovalModeTest {
     @Test
     void idsAreTheExpectedLowercaseStrings() {
         assertEquals("auto", AiApprovalMode.AUTO.getId());
-        assertEquals("ask", AiApprovalMode.ASK.getId());
+        assertEquals("manual", AiApprovalMode.MANUAL.getId());
         assertEquals("yolo", AiApprovalMode.YOLO.getId());
     }
 
     @Test
     void displayNamesMatchTheProductSpec() {
         assertEquals("Auto", AiApprovalMode.AUTO.getDisplayName());
-        assertEquals("Ask", AiApprovalMode.ASK.getDisplayName());
+        assertEquals("Manual", AiApprovalMode.MANUAL.getDisplayName());
         // Deliberately the lowercase string "yolo" -- a stylistic label, not a typo.
         assertEquals("yolo", AiApprovalMode.YOLO.getDisplayName());
     }

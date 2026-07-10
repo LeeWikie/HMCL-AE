@@ -2528,9 +2528,21 @@
     -fx-fill: -monet-primary;
 }
 
-/* Ask = the maximally conservative mode (nearly everything asks first); icon reads as a cautious,
-   neutral-warm tint distinct from Auto's primary tint. */
-.ai-pill-ask .svg {
+/* Manual (named Ask before a pure rename pass — see AiApprovalMode's own doc) = the maximally
+   conservative mode (nearly everything asks first); icon reads as a cautious, neutral tint
+   distinct from Auto's primary tint. */
+.ai-pill-manual .svg {
+    -fx-fill: -monet-secondary;
+}
+
+/* Plan = the investigate-only gate (AiExecutionPolicy BLOCKs every CONTROLLED_WRITE/
+   DANGEROUS_WRITE outright while it's active, regardless of Auto/Manual/yolo — see that class's
+   doc). Reuses the same tertiary tint as the header .ai-plan-mode-badge so Plan reads as one
+   consistent identity wherever it shows up in the composer. Not an AiApprovalMode member — this
+   class is applied directly by AIMainPage#updateApprovalBadge() whenever Plan Mode is active,
+   which wins the pill's display outright regardless of which Auto/Manual/yolo mode is parked
+   underneath. */
+.ai-pill-plan .svg {
     -fx-fill: -monet-tertiary;
 }
 

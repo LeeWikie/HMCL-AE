@@ -35,23 +35,30 @@ import org.junit.jupiter.api.Test;
 import org.testfx.api.FxToolkit;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.jackhuang.hmcl.ui.ai.AiMainPageFxTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/// Covers the composer's approval-mode pill/popup after {@link AiApprovalMode} was restored from a
-/// single fixed `Auto` mode back to a three-way pick (Auto / Ask / yolo — see that enum's own doc
-/// for the SAFE/ASK/YOLO merge-then-restore history). Drives the REAL popup {@code
+/// Covers the composer's mode pill/popup after it grew a fourth, Claude-Code-mirroring `Plan` row
+/// alongside the restored {@link AiApprovalMode} three-way pick (Auto / Manual / yolo — see that
+/// enum's own doc for the SAFE/ASK/YOLO merge-then-restore-then-rename history; `Manual` was named
+/// `Ask` before a pure rename pass). Plan Mode itself ({@code AIMainPage#planMode}, normally toggled
+/// by `/plan`) is a SEPARATE boolean, deliberately NOT folded into the {@link AiApprovalMode} enum —
+/// the popup only merges the two orthogonal states into one single-choice PRESENTATION (see
+/// {@code AIMainPage#showApprovalModePopup}'s own doc). Drives the REAL popup {@code
 /// showApprovalModePopup()} builds (reached via {@link JFXPopup#getPopupContent()}, which returns
 /// the exact {@link PopupMenu} instance passed to the popup's constructor) and fires genuine
 /// {@code MOUSE_CLICKED} events at its {@link IconedItem} rows (event injection, no physical robot —
 /// same technique as {@code CollapseHeaderFxTest}), so this exercises the same code path a real
-/// click would: all three rows must be listed and clickable, picking one must persist the mode to
-/// {@link AiSettings} and refresh the pill's text, the checked row must always track the
-/// currently-persisted mode, and — the one detail explicitly called out by the restore — the yolo
-/// row/pill text must render as the literal lowercase string `"yolo"`, never `"Yolo"`/`"YOLO"`.
+/// click would: all four rows must be listed in the fixed Manual/Plan/Auto/yolo order and clickable,
+/// picking Manual/Auto/yolo must persist the mode to {@link AiSettings} AND turn Plan Mode off,
+/// picking Plan must flip Plan Mode on WITHOUT touching the persisted mode, the checked row must
+/// always track "Plan Mode if active, else the persisted mode" (never both at once), and — the one
+/// detail explicitly called out by the restore — the yolo row/pill text must render as the literal
+/// lowercase string `"yolo"`, never `"Yolo"`/`"YOLO"`.
 public final class ApprovalModePopupFxTest {
 
     @BeforeAll
@@ -77,21 +84,34 @@ public final class ApprovalModePopupFxTest {
     }
 
     @Test
-    public void allThreeModesAreListedAndClickablePersistingToAiSettings() throws Exception {
+    public void fourRowsAreListedInFixedManualPlanAutoYoloOrder() throws Exception {
+        AIMainPage page = showPage();
+
+        PopupMenu menu = openPopup(page);
+        assertEquals(4, menu.getContent().size(), "the popup must list exactly Manual/Plan/Auto/yolo");
+
+        List<String> labels = menu.getContent().stream()
+                .map(n -> ((IconedItem) n).getLabel().getText())
+                .toList();
+        assertEquals(List.of("Manual", "Plan", "Auto", "yolo"), labels,
+                "rows must appear in the fixed Manual/Plan/Auto/yolo order (mirrors Claude Code's own "
+                        + "Mode picker's row order)");
+    }
+
+    @Test
+    public void clickingManualAutoYoloPersistsModeAndRefreshesPill() throws Exception {
         AIMainPage page = showPage();
         AiSettings aiSettings = (AiSettings) getField(page, "aiSettings");
         Label badge = (Label) getField(page, "approvalBadge");
 
+        // Auto (default) -> Manual.
         PopupMenu menu = openPopup(page);
-        assertEquals(3, menu.getContent().size(), "the popup must list exactly the three approval modes");
+        clickRow(menu, "Manual");
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId(aiSettings.getApprovalMode()),
+                "clicking the Manual row must persist AiApprovalMode.MANUAL to AiSettings");
+        assertEquals("Manual", badge.getText(), "the pill text must refresh to the newly-picked Manual mode");
 
-        // Auto (default) -> Ask.
-        clickRow(menu, "Ask");
-        assertEquals(AiApprovalMode.ASK, AiApprovalMode.fromId(aiSettings.getApprovalMode()),
-                "clicking the Ask row must persist AiApprovalMode.ASK to AiSettings");
-        assertEquals("Ask", badge.getText(), "the pill text must refresh to the newly-picked Ask mode");
-
-        // Ask -> yolo: the row/pill text must be the literal LOWERCASE string, not "Yolo"/"YOLO".
+        // Manual -> yolo: the row/pill text must be the literal LOWERCASE string, not "Yolo"/"YOLO".
         menu = openPopup(page);
         clickRow(menu, "yolo");
         assertEquals(AiApprovalMode.YOLO, AiApprovalMode.fromId(aiSettings.getApprovalMode()),
@@ -108,20 +128,72 @@ public final class ApprovalModePopupFxTest {
     }
 
     @Test
-    public void checkedRowAlwaysMarksTheCurrentlyPersistedMode() throws Exception {
+    public void clickingPlanActivatesItWithoutTouchingThePersistedApprovalMode() throws Exception {
+        AIMainPage page = showPage();
+        AiSettings aiSettings = (AiSettings) getField(page, "aiSettings");
+        Label badge = (Label) getField(page, "approvalBadge");
+
+        // Switch off the Auto default first so we can tell "untouched" apart from "coincidentally
+        // still the default".
+        PopupMenu menu = openPopup(page);
+        clickRow(menu, "Manual");
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId(aiSettings.getApprovalMode()));
+
+        menu = openPopup(page);
+        clickRow(menu, "Plan");
+        assertEquals(Boolean.TRUE, getField(page, "planMode"), "clicking Plan must flip Plan Mode on");
+        assertEquals(AiApprovalMode.MANUAL, AiApprovalMode.fromId(aiSettings.getApprovalMode()),
+                "picking Plan must NOT touch the persisted AiApprovalMode — Manual stays parked "
+                        + "underneath for when Plan Mode is turned back off");
+        assertEquals("Plan", badge.getText(),
+                "the pill must show \"Plan\" while Plan Mode is active, regardless of the parked mode");
+
+        // Leaving Plan by picking Manual again (the SAME mode that was already parked) must still
+        // refresh the pill away from "Plan" even though the persisted mode string doesn't change —
+        // setApprovalMode's persistence no-op must not suppress the badge refresh.
+        menu = openPopup(page);
+        clickRow(menu, "Manual");
+        assertEquals(Boolean.FALSE, getField(page, "planMode"), "picking Manual again must turn Plan Mode back off");
+        assertEquals("Manual", badge.getText(), "the pill must go back to showing the parked Manual mode");
+    }
+
+    @Test
+    public void checkedRowIsPlanWheneverPlanModeIsActiveRegardlessOfPersistedMode() throws Exception {
         AIMainPage page = showPage();
 
         PopupMenu menu = openPopup(page);
-        clickRow(menu, "Ask"); // switch away from the default Auto
+        clickRow(menu, "yolo"); // switch away from the default Auto, parked mode = yolo
 
-        // Re-open after the switch: exactly the Ask row must carry the check icon now.
+        menu = openPopup(page);
+        clickRow(menu, "Plan"); // Plan Mode on; yolo stays parked underneath
+
+        // Re-open after activating Plan: exactly the Plan row must carry the check icon now, NOT
+        // the yolo row the persisted AiApprovalMode still resolves to.
         menu = openPopup(page);
         for (Node n : menu.getContent()) {
             IconedItem item = (IconedItem) n;
-            boolean expectChecked = "Ask".equals(item.getLabel().getText());
+            boolean expectChecked = "Plan".equals(item.getLabel().getText());
             assertEquals(expectChecked, hasCheckIcon(item),
                     "row \"" + item.getLabel().getText() + "\" checked-state mismatch (expected checked="
-                            + expectChecked + ") after switching to Ask");
+                            + expectChecked + ") while Plan Mode is active");
+        }
+    }
+
+    @Test
+    public void checkedRowAlwaysMarksTheCurrentlyPersistedModeWhenPlanIsInactive() throws Exception {
+        AIMainPage page = showPage();
+
+        PopupMenu menu = openPopup(page);
+        clickRow(menu, "Manual"); // switch away from the default Auto
+
+        // Re-open after the switch: exactly the Manual row must carry the check icon now.
+        menu = openPopup(page);
+        for (Node n : menu.getContent()) {
+            IconedItem item = (IconedItem) n;
+            boolean expectChecked = "Manual".equals(item.getLabel().getText());
+            assertEquals(expectChecked, hasCheckIcon(item),
+                    "row \"" + item.getLabel().getText() + "\" checked-state mismatch (expected checked="
+                            + expectChecked + ") after switching to Manual");
         }
     }
 

@@ -24,13 +24,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /// Unit tests for {@link AiExecutionPolicy}, covering:
 /// - The Auto model (unchanged across the SAFE/ASK/YOLO &rarr; single-AUTO &rarr;
-///   restored-Auto/Ask/yolo history — see {@link AiApprovalMode}'s own doc): everyday operations
-///   stay low-friction, dangerous operations ask while attended, and a dangerous operation is
-///   hard-BLOCKed — never merely asked — whenever the turn may be unattended.
-/// - The restored Ask and yolo modes: Ask is the maximally conservative pick (nearly everything
-///   asks), yolo is the maximally permissive pick (nearly everything auto-runs, dangerous
-///   operations included while attended) — and, critically, the unattended DANGEROUS_WRITE
-///   hard-BLOCK applies identically under all three modes, including yolo.
+///   restored-Auto/Ask/yolo &rarr; Ask-renamed-to-Manual history — see {@link AiApprovalMode}'s own
+///   doc): everyday operations stay low-friction, dangerous operations ask while attended, and a
+///   dangerous operation is hard-BLOCKed — never merely asked — whenever the turn may be unattended.
+/// - The restored Manual and yolo modes (Manual was named Ask before a later pure-rename pass):
+///   Manual is the maximally conservative pick (nearly everything asks), yolo is the maximally
+///   permissive pick (nearly everything auto-runs, dangerous operations included while attended) —
+///   and, critically, the unattended DANGEROUS_WRITE hard-BLOCK applies identically under all three
+///   modes, including yolo.
 /// - Part C: the create-vs-edit/remove split ({@link EditOrRemoveActions}) — file-write
 ///   confirmation is policy-decided (no user toggle anymore) under Auto: pure creation runs
 ///   automatically, an action that edits or removes something that already existed always asks.
@@ -111,14 +112,15 @@ public final class AiExecutionPolicyTest {
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, true));
     }
 
-    // ---- Restored three-way mode: Ask (the maximally conservative pick) ----
+    // ---- Restored three-way mode: Manual (the maximally conservative pick, named Ask before a
+    // later pure-rename pass) ----
 
     @Test
-    void askAsksForReadOnlyAndExternalNetwork() {
-        // Ask exists precisely because some users want to be prompted for literally everything,
+    void manualAsksForReadOnlyAndExternalNetwork() {
+        // Manual exists precisely because some users want to be prompted for literally everything,
         // not just the dangerous stuff Auto already gates — this is what makes it meaningfully
         // stricter than Auto rather than a re-skinned copy of it.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.MANUAL, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("read", null, ToolPermission.READ_ONLY, false, false));
         assertEquals(AiExecutionPolicy.Decision.ASK,
@@ -126,10 +128,10 @@ public final class AiExecutionPolicyTest {
     }
 
     @Test
-    void askAsksForControlledWriteEvenPureCreation() {
-        // Under Auto, pure creation (e.g. instance/create) auto-runs. Under Ask it must still ask
-        // — the create-vs-edit/remove split is an Auto-only relaxation.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+    void manualAsksForControlledWriteEvenPureCreation() {
+        // Under Auto, pure creation (e.g. instance/create) auto-runs. Under Manual it must still
+        // ask — the create-vs-edit/remove split is an Auto-only relaxation.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.MANUAL, true);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("instance", "create", ToolPermission.CONTROLLED_WRITE, false, false));
         assertEquals(AiExecutionPolicy.Decision.ASK,
@@ -137,24 +139,25 @@ public final class AiExecutionPolicyTest {
     }
 
     @Test
-    void askAsksForDangerousWriteRegardlessOfTheConfirmationToggle() {
+    void manualAsksForDangerousWriteRegardlessOfTheConfirmationToggle() {
         // Under Auto, turning the dangerous-confirmation toggle off relaxes DANGEROUS_WRITE to
-        // ALLOW while attended. Ask must NOT honor that toggle at all — it always asks.
-        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.ASK, false);
+        // ALLOW while attended. Manual must NOT honor that toggle at all — it always asks.
+        AiExecutionPolicy policy = new AiExecutionPolicy(AiApprovalMode.MANUAL, false);
         assertEquals(AiExecutionPolicy.Decision.ASK,
                 policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, false, false));
     }
 
     @Test
-    void askIsMeaningfullyStricterThanAutoAcrossTheWholeMatrix() {
-        // Ask must never be more permissive than Auto for the same call — that would defeat the
-        // entire point of choosing it. (It's fine, and expected, for Ask to be strictly stricter.)
+    void manualIsMeaningfullyStricterThanAutoAcrossTheWholeMatrix() {
+        // Manual must never be more permissive than Auto for the same call — that would defeat the
+        // entire point of choosing it. (It's fine, and expected, for Manual to be strictly
+        // stricter.)
         AiExecutionPolicy auto = new AiExecutionPolicy(AiApprovalMode.AUTO, true);
-        AiExecutionPolicy ask = new AiExecutionPolicy(AiApprovalMode.ASK, true);
+        AiExecutionPolicy manual = new AiExecutionPolicy(AiApprovalMode.MANUAL, true);
         for (ToolPermission permission : ToolPermission.values()) {
             assertEquals(AiExecutionPolicy.Decision.ASK,
-                    ask.check("instance", "create", permission, false, false),
-                    "Ask must ask for permission=" + permission);
+                    manual.check("instance", "create", permission, false, false),
+                    "Manual must ask for permission=" + permission);
         }
     }
 
@@ -228,6 +231,33 @@ public final class AiExecutionPolicyTest {
             assertEquals(AiExecutionPolicy.Decision.BLOCK,
                     AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW.apply(base, ToolPermission.DANGEROUS_WRITE),
                     "mode=" + mode + ": ALWAYS_ALLOW override must not rescue an unattended-dangerous BLOCK");
+        }
+    }
+
+    @Test
+    void unattendedDangerousWriteStaysHardBlockedNoMatterHowTheComposerUiPresentsThePlanRow() {
+        // AIMainPage's mode popup now merges TWO orthogonal pieces of state (the persisted
+        // AiApprovalMode and a separate Plan Mode boolean, normally toggled by /plan or the popup's
+        // Plan row — see AiApprovalMode's own "History, part 3" doc and
+        // AIMainPage#showApprovalModePopup) into a single-choice display: picking Plan turns Plan
+        // Mode on WITHOUT touching whichever of Auto/Manual/yolo is parked underneath, so it is
+        // perfectly possible for the UI to show "Plan" highlighted while the persisted mode
+        // resolves to `yolo` (the most permissive one). This test locks down that neither state of
+        // that UI-only `planMode` boolean can EVER make the unattended DANGEROUS_WRITE hard-BLOCK
+        // any weaker than "yolo alone, unattended, Plan off" already is (which the test above pins
+        // at BLOCK) — the full mode x planMode x dangerous-confirmation-toggle matrix must all
+        // still come back BLOCK.
+        for (AiApprovalMode mode : AiApprovalMode.values()) {
+            for (boolean planMode : new boolean[]{false, true}) {
+                for (boolean confirmationEnabled : new boolean[]{true, false}) {
+                    AiExecutionPolicy policy = new AiExecutionPolicy(mode, confirmationEnabled);
+                    assertEquals(AiExecutionPolicy.Decision.BLOCK,
+                            policy.check("shell", null, ToolPermission.DANGEROUS_WRITE, planMode, true),
+                            "mode=" + mode + " planMode=" + planMode + " dangerousConfirmationEnabled="
+                                    + confirmationEnabled + " must hard-BLOCK an unattended DANGEROUS_WRITE"
+                                    + " regardless of how the composer UI is currently presenting the Plan row");
+                }
+            }
         }
     }
 
