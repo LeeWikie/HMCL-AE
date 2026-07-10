@@ -279,6 +279,20 @@ public final class LlmConfig {
         return reasoningEffort;
     }
 
+    /// Returns a copy of this configuration with the reasoning effort replaced.
+    ///
+    /// All other fields are preserved. Passing {@code null} clears the hint so
+    /// the request omits the reasoning parameter entirely (useful for endpoints
+    /// that reject an explicit reasoning value).
+    ///
+    /// @param newReasoningEffort the reasoning effort hint, or {@code null} to omit
+    /// @return a new immutable configuration differing only in reasoning effort
+    public LlmConfig withReasoningEffort(@Nullable String newReasoningEffort) {
+        return new LlmConfig(endpoint, apiKey, model, provider, maxTokens, temperature,
+                timeout, contextWindow, maxOutputTokens, topP, presencePenalty,
+                frequencyPenalty, seed, newReasoningEffort, stream, stopSequences);
+    }
+
     /// Returns whether streaming responses are enabled.
     public boolean isStream() {
         return stream;

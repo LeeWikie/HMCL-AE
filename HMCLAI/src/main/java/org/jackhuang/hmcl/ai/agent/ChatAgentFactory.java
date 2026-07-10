@@ -53,10 +53,18 @@ import java.util.function.BooleanSupplier;
 ///
 /// ## Connection test contract
 ///
-/// The {@link #testConnection} method sends a user message `"Reply with exactly
-/// one word: Hello"`, requests at most 8 output tokens at temperature 0, and
-/// times out after 10 seconds. This validates the endpoint, API key, model, and
-/// basic response path without creating or mutating any session.
+/// The {@link #testConnection} method sends a minimal one-word prompt, requests
+/// only a handful of output tokens at temperature 0, and times out after 10
+/// seconds. This validates the endpoint, API key, model, and basic response path
+/// without creating or mutating any session. Any non-empty response (no
+/// exception) counts as connected — the reply content is never matched.
+///
+/// The first attempt disables reasoning ({@code reasoningEffort="none"}) so
+/// reasoning-capable models do not burn tokens thinking about a one-word reply.
+/// If that attempt fails with an {@link LlmException} (e.g. an endpoint that
+/// rejects the reasoning parameter), it is retried once with reasoning omitted
+/// entirely ({@code reasoningEffort=null}); only if both attempts fail is the
+/// error surfaced.
 ///
 /// Failure mapping follows the same convention as {@link LlmException}:
 /// 401 → authentication error, 429 → rate limit, 0+timeout → network error,
@@ -67,14 +75,26 @@ import java.util.function.BooleanSupplier;
 @NotNullByDefault
 public final class ChatAgentFactory {
 
-    /// The prompt used for the lightweight connection test.
-    static final String TEST_PROMPT = "Reply with exactly one word: Hello";
+    /// The prompt used for the lightweight connection test. Kept minimal (shortest
+    /// possible context, single-character reply) so the round-trip is fast and cheap.
+    static final String TEST_PROMPT = "回复一个字:通";
 
-    /// Maximum output tokens for the connection test.
-    static final int TEST_MAX_TOKENS = 8;
+    /// Maximum output tokens for the connection test. Small but with a little slack
+    /// above 1 so tokenizers that split the reply do not truncate it to empty.
+    static final int TEST_MAX_TOKENS = 5;
+
+    /// Reasoning effort for the first connection-test attempt. "none" keeps
+    /// reasoning-capable models from spending reasoning tokens on a one-word reply.
+    static final String TEST_REASONING_EFFORT = "none";
 
     /// Timeout for the connection test.
     private static final Duration TEST_TIMEOUT = Duration.ofSeconds(10);
+
+    /// Test seam: when non-{@code null}, overrides how the connection-test client is
+    /// built from a config, letting unit tests inject a stub instead of a live model.
+    /// Production leaves this {@code null} and uses {@link #resolveClient(LlmConfig, ToolRegistry)}.
+    @Nullable
+    static java.util.function.Function<LlmConfig, AiChatClient> testClientFactory = null;
 
     /// Provider IDs that can be handled by the LangChain4j OpenAI-compatible
     /// adapter. Providers NOT in this set fall back to the legacy
@@ -221,16 +241,59 @@ public final class ChatAgentFactory {
                 LlmConfig.DEFAULT_PRESENCE_PENALTY,
                 LlmConfig.DEFAULT_FREQUENCY_PENALTY,
                 null,
-                null,
+                TEST_REASONING_EFFORT,
                 false, // no streaming for test
                 Collections.emptyList()
         );
 
-        AiChatClient client = resolveClient(testConfig, null);
+        return attemptTestWithFallback(testConfig);
+    }
 
-        return client.sendMessage(Collections.singletonList(
-                new LlmMessage("user", TEST_PROMPT)
-        ));
+    /// Runs the connection test with the automatic no-reasoning fallback.
+    ///
+    /// First attempt uses {@code config} as-is (reasoning already set to
+    /// {@code "none"} by the callers). If it fails with an {@link LlmException},
+    /// the test is retried once with reasoning omitted ({@code null}) to tolerate
+    /// endpoints that reject the reasoning parameter. Any other failure, or a
+    /// failure on the retry, propagates unchanged.
+    ///
+    /// Shared by all three {@code testConnection}/{@code testConnectionSync}
+    /// overloads so their behaviour stays identical.
+    private static CompletableFuture<@Nullable String> attemptTestWithFallback(LlmConfig config) {
+        return attemptTest(config).exceptionallyCompose(err -> {
+            if (containsLlmException(err)) {
+                return attemptTest(config.withReasoningEffort(null));
+            }
+            return CompletableFuture.failedFuture(err);
+        });
+    }
+
+    /// Fires a single connection-test request against a freshly resolved client.
+    private static CompletableFuture<@Nullable String> attemptTest(LlmConfig config) {
+        AiChatClient client = resolveTestClient(config);
+        return client.sendMessage(Collections.singletonList(new LlmMessage("user", TEST_PROMPT)));
+    }
+
+    /// Resolves the client used for a connection test, honouring the {@link #testClientFactory}
+    /// test seam when present.
+    private static AiChatClient resolveTestClient(LlmConfig config) {
+        java.util.function.Function<LlmConfig, AiChatClient> factory = testClientFactory;
+        return factory != null ? factory.apply(config) : resolveClient(config, null);
+    }
+
+    /// Returns {@code true} if the throwable, or any exception in its cause chain,
+    /// is an {@link LlmException}.
+    private static boolean containsLlmException(@Nullable Throwable t) {
+        while (t != null) {
+            if (t instanceof LlmException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     /// Synchronous variant of {@link #testConnection} that blocks for at most
@@ -285,13 +348,11 @@ public final class ChatAgentFactory {
                 LlmConfig.DEFAULT_PRESENCE_PENALTY,
                 LlmConfig.DEFAULT_FREQUENCY_PENALTY,
                 null,
-                null,
+                TEST_REASONING_EFFORT,
                 false,
                 Collections.emptyList());
-        AiChatClient client = resolveClient(testConfig, null);
         try {
-            return client.sendMessage(Collections.singletonList(new LlmMessage("user", TEST_PROMPT)))
-                    .get(timeoutSeconds, TimeUnit.SECONDS);
+            return attemptTestWithFallback(testConfig).get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             while (cause != null) {
