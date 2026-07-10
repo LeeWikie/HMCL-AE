@@ -97,6 +97,32 @@ public final class DeleteModToolTest {
     }
 
     @Test
+    void noMatchListsInstalledFileNamesWithEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("JEI.jar"), "a");
+            Files.writeString(modsDir.resolve("Sodium.jar"), "b");
+
+            // The shared resolveTrackedMod zero-match path must carry the real installed file
+            // names here too, and must not delete anything.
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "NoSuchMod"));
+            assertFalse(result.isSuccess());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("Retryable: yes"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().contains("installed mods:"),
+                    "should carry the installed file list: " + result.getError());
+            assertTrue(result.getError().contains("JEI.jar"), "should list JEI.jar: " + result.getError());
+            assertTrue(result.getError().contains("Sodium.jar"), "should list Sodium.jar: " + result.getError());
+            assertTrue(result.getError().contains("list_mods"), "should point at list_mods: " + result.getError());
+            assertTrue(Files.exists(modsDir.resolve("JEI.jar")), "nothing must be deleted on no-match");
+            assertTrue(Files.exists(modsDir.resolve("Sodium.jar")), "nothing must be deleted on no-match");
+        }
+    }
+
+    @Test
     void ambiguousMatchFailsAndDeletesNothing() throws Exception {
         try (ProfileFixture fx = new ProfileFixture()) {
             fx.createInstance("HasMods");

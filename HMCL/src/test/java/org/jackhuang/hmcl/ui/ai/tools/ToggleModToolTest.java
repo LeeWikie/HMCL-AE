@@ -230,6 +230,31 @@ public final class ToggleModToolTest {
     }
 
     @Test
+    void zeroMatchFailureListsInstalledFileNames() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("JEI.jar"), "a");
+            Files.writeString(modsDir.resolve("Sodium.jar"), "b");
+
+            // No file matches the query on disk either, so this is the plain "not found" path:
+            // it must carry the real installed file names (aligning the zero-match branch with the
+            // multi-match branch, which already lists its candidates), and be a retryable envelope.
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "NoSuchMod"));
+            assertFalse(result.isSuccess());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("Retryable: yes"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().contains("installed mods:"),
+                    "should carry the installed file list: " + result.getError());
+            assertTrue(result.getError().contains("JEI.jar"), "should list JEI.jar: " + result.getError());
+            assertTrue(result.getError().contains("Sodium.jar"), "should list Sodium.jar: " + result.getError());
+            assertTrue(result.getError().contains("list_mods"), "should point at list_mods: " + result.getError());
+        }
+    }
+
+    @Test
     void ambiguousMatchFailureIsWellFormedEnvelope() throws Exception {
         try (ProfileFixture fx = new ProfileFixture()) {
             fx.createInstance("HasMods");

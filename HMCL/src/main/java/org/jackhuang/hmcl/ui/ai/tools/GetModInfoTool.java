@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import org.jackhuang.hmcl.addon.mod.LocalModFile;
 import org.jackhuang.hmcl.addon.mod.ModManager;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
@@ -108,8 +109,15 @@ public final class GetModInfoTool implements Tool {
         }
 
         if (matches.isEmpty()) {
-            return ToolResult.failure("No installed mod matches \"" + query + "\" in instance '" + target
-                    + "'. Use list_mods to see the available mods.");
+            // Zero-match, like the multi-match branch below, carries the actual candidates — the
+            // first N installed mod file names, reusing the already-parsed `all` list (no second
+            // read) so a typo is obvious without a separate list_mods round-trip (B10/#19).
+            return ToolFailures.failure(
+                    "No installed mod matches \"" + query + "\" in instance '" + target + "'",
+                    ToolFailures.Retryable.YES,
+                    "no installed mod's file name, display name or id contains this substring, which is usually a typo",
+                    "installed mods: " + describeInstalledMods(all)
+                            + "; use list_mods for the full list, or refine the query");
         }
 
         if (matches.size() > 1) {
@@ -148,6 +156,28 @@ public final class GetModInfoTool implements Tool {
             }
         }
         return ToolResult.success(sb.toString().trim());
+    }
+
+    /// The maximum number of installed mod file names carried in a zero-match failure — enough
+    /// for the model to spot a typo, bounded so a huge mods folder can't flood the context.
+    private static final int MAX_LISTED_MODS = 10;
+
+    /// Lists up to [#MAX_LISTED_MODS] installed mod file names for a zero-match failure, reusing
+    /// the already-parsed [LocalModFile] list (the earlier empty-folder branch guarantees this
+    /// list is non-empty here), appending a "(N more)" tail when truncated.
+    private static String describeInstalledMods(List<LocalModFile> all) {
+        int shown = Math.min(all.size(), MAX_LISTED_MODS);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < shown; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(safe(all.get(i).getFileName()));
+        }
+        if (all.size() > shown) {
+            sb.append(", ... (").append(all.size() - shown).append(" more)");
+        }
+        return sb.toString();
     }
 
     private static void appendIfPresent(StringBuilder sb, String label, String value) {

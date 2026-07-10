@@ -245,15 +245,7 @@ public final class ToggleModTool implements Tool {
         }
 
         if (matches.isEmpty()) {
-            ToolResult untracked = explainUntrackedMatch(modsDir, needle);
-            if (untracked != null) {
-                return ResolvedMod.fail(untracked);
-            }
-            return ResolvedMod.fail(ToolFailures.failure(
-                    "No mod file matching '" + modQuery + "' was found in " + modsDir,
-                    ToolFailures.Retryable.NO,
-                    "no installed mod matches this query",
-                    "Use list_mods to see the installed mods, then retry with an exact file name"));
+            return ResolvedMod.fail(noMatchFailure(modsDir, modQuery, needle));
         }
         if (matches.size() > 1) {
             StringBuilder sb = new StringBuilder();
@@ -270,21 +262,78 @@ public final class ToggleModTool implements Tool {
         return ResolvedMod.of(matches.get(0));
     }
 
-    /// When the [ModManager] tracked nothing for a query, probes the mods directory for files
-    /// that DO match on disk and explains why they are not manageable. Returns `null` when the
-    /// directory has no matching file either (plain "not found").
-    @Nullable
-    private static ToolResult explainUntrackedMatch(Path modsDir, String needle) {
-        List<Path> onDisk = new ArrayList<>();
+    /// The maximum number of real file names carried in a zero-match failure — enough for the
+    /// model to spot a typo, bounded so a huge mods folder can't flood the context.
+    private static final int MAX_LISTED_FILES = 10;
+
+    /// Builds the zero-match failure. Lists the mods directory ONCE and reuses that single
+    /// listing for both jobs, so the failure carries the actual candidates just like the
+    /// multi-match branch already does (B10/#19): (a) when a file on disk DOES match the query
+    /// but the [ModManager] does not track it as a manageable mod, explain why (stale
+    /// enabled+disabled duplicate pair, `.old` rollback archive, or a non-mod file); (b) otherwise
+    /// a plain "not found" that lists the first [#MAX_LISTED_FILES] real file names in the folder
+    /// so a typo is obvious without a separate list_mods round-trip.
+    private static ToolResult noMatchFailure(Path modsDir, String modQuery, String needle) {
+        List<Path> allFiles = new ArrayList<>();
+        boolean listed = true;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(modsDir)) {
             for (Path entry : stream) {
-                if (Files.isRegularFile(entry)
-                        && entry.getFileName().toString().toLowerCase(Locale.ROOT).contains(needle)) {
-                    onDisk.add(entry);
+                if (Files.isRegularFile(entry)) {
+                    allFiles.add(entry);
                 }
             }
         } catch (Throwable e) {
-            return null; // fall back to the plain "not found" failure
+            listed = false; // directory unreadable — fall back to a not-found without candidates
+        }
+
+        if (listed) {
+            ToolResult untracked = explainUntrackedMatch(modsDir, allFiles, needle);
+            if (untracked != null) {
+                return untracked;
+            }
+        }
+
+        return ToolFailures.failure(
+                "No mod file matching '" + modQuery + "' was found in " + modsDir,
+                ToolFailures.Retryable.YES,
+                "no installed mod file name contains this substring, which is usually a typo",
+                listed
+                        ? "installed mods: " + describeInstalledFiles(allFiles)
+                            + "; use list_mods for the full list, or refine the query"
+                        : "Use list_mods to see the installed mods, then retry with an exact file name");
+    }
+
+    /// Lists up to [#MAX_LISTED_FILES] real file names in the mods folder for a zero-match
+    /// failure, appending a "(N more)" tail when truncated; an empty folder is reported explicitly.
+    private static String describeInstalledFiles(List<Path> allFiles) {
+        if (allFiles.isEmpty()) {
+            return "(none — the mods folder is empty)";
+        }
+        int shown = Math.min(allFiles.size(), MAX_LISTED_FILES);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < shown; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(allFiles.get(i).getFileName());
+        }
+        if (allFiles.size() > shown) {
+            sb.append(", ... (").append(allFiles.size() - shown).append(" more)");
+        }
+        return sb.toString();
+    }
+
+    /// When the [ModManager] tracked nothing for a query but a file on disk DOES match, explains
+    /// why that file is not manageable (stale enabled+disabled duplicate pair, `.old` rollback
+    /// archive, or a non-mod file). Reuses the single directory listing collected by
+    /// [#noMatchFailure] (no second stream). Returns `null` when no on-disk file matches the query.
+    @Nullable
+    private static ToolResult explainUntrackedMatch(Path modsDir, List<Path> allFiles, String needle) {
+        List<Path> onDisk = new ArrayList<>();
+        for (Path file : allFiles) {
+            if (file.getFileName().toString().toLowerCase(Locale.ROOT).contains(needle)) {
+                onDisk.add(file);
+            }
         }
 
         for (Path file : onDisk) {
