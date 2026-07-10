@@ -2065,35 +2065,9 @@
     -fx-padding: 4 12 4 12;
 }
 
-/* Collapsible reasoning ("思考过程") card — a muted block above the answer. Box model (radius/
-   padding/border-width) is kept in lockstep with the sibling .ai-tool-card below: this card never
-   picked up the shared .ai-bubble class (it isn't a chat bubble), so it needs its own explicit
-   -fx-border-width to match .ai-tool-card's, and its radius/padding are pinned to the same values
-   rather than the slightly different ones it drifted to on its own. */
-.ai-reasoning-card {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 8;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
-    -fx-border-width: 1;
-    -fx-padding: 6 10 6 10;
-}
-
-.ai-reasoning-header {
-    -fx-padding: 2 6 2 6;
-    -fx-background-radius: 8;
-}
-
-.ai-reasoning-title {
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 12px;
-}
-
-.ai-reasoning-content {
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 12px;
-    -fx-opacity: 0.9;
-}
+/* The reasoning ("思考过程") card shares .ai-tool-card with the tool/tool-group cards (see the
+   "AI inline cards" section below) — one rule keeps the three inline subordinate cards'
+   box model byte-identical by construction. */
 
 .ai-bubble-wrapper {
     -fx-padding: 4 16 4 16;
@@ -2374,29 +2348,29 @@
 .ai-job-row {
     -fx-padding: 3 2 3 2;
 }
-/* Pinned TODO checklist above the messages — mirrors .ai-jobs-pane's translucent/borderless
-   treatment (previously inherited .ai-tool-card's OPAQUE background + hairline border, meant for
-   a bubble-like chat card, which read as a disconnected box sitting flush against the container's
-   edges: "任务清单的边缘和界面相当割裂不对齐"). Also now collapsible like the jobs pane, via
-   .ai-todo-header (previously had no toggle at all). */
+/* Pinned TODO checklist above the messages — the card itself carries .ai-jobs-pane (same
+   translucent/borderless treatment as its jobs-pane sibling: "任务清单的边缘和界面相当割裂不对齐")
+   and its header is the shared .ai-collapse-header component. Row state colours below replace
+   per-row hard-coded setStyle values so both light and dark themes get proper monet colours;
+   the .svg descendant rules tint the CHECK / PLAY_ARROW / RADIO_BUTTON_UNCHECKED status icons. */
 .ai-todo-container {
     -fx-padding: 4 8 0 8;
 }
-.ai-todo-card {
-    -fx-background-color: -monet-surface-container-low-transparent-80;
-    -fx-background-radius: 8;
-}
-.ai-todo-header {
-    -fx-cursor: hand;
-    -fx-background-radius: 8;
-}
-.ai-todo-title {
-    -fx-font-size: 12px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface-variant;
-}
 .ai-todo-body {
     -fx-padding: 4 0 0 0;
+}
+.ai-todo-done {
+    -fx-text-fill: -monet-tertiary;
+}
+.ai-todo-done .svg {
+    -fx-fill: -monet-tertiary;
+}
+.ai-todo-in-progress {
+    -fx-text-fill: -monet-primary;
+    -fx-font-weight: bold;
+}
+.ai-todo-in-progress .svg {
+    -fx-fill: -monet-primary;
 }
 .ai-job-cat {
     -fx-font-size: 12px;
@@ -2519,25 +2493,7 @@
     -fx-opacity: 0.75;
 }
 
-/* ---- AI Tool Activity ---- */
-
-.ai-tool-activity {
-    -fx-background-color: -monet-surface-container;
-    -fx-padding: 4 12 4 12;
-    -fx-spacing: 4;
-}
-
-.ai-tool-activity-label {
-    -fx-font-size: 10px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface-variant;
-}
-
-.ai-tool-activity-item {
-    -fx-font-size: 10px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 1 0 1 0;
-}
+/* ---- AI inline cards (reasoning / tool / tool group) ---- */
 
 .ai-bubble-tool {
     -fx-text-fill: -monet-on-surface-variant;
@@ -2545,35 +2501,32 @@
     -fx-padding: 4 0 4 0;
 }
 
-/* Inline tool-call card (Calling… -> Used/Failed, collapsible result) */
+/* Shared box model of the three inline subordinate cards — reasoning ("思考过程"), tool call
+   (Calling… -> Used/Failed, collapsible result) and tool-call group ("已调用 N 个工具"). One rule
+   keeps them byte-identical (§B B2 constraint); borderless tonal surface, native radius 4. */
 .ai-tool-card {
     -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 8;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
-    -fx-border-width: 1;
+    -fx-background-radius: 4;
     -fx-padding: 6 10 6 10;
 }
 
-/* Font size matches .ai-reasoning-title (both are card-header titles, see .ai-reasoning-card
-   above) — this used to be 11px, one size smaller than its reasoning-card sibling. */
+/* Title label inside every CollapseHeader (reasoning/tool/group/todo share the component). */
 .ai-tool-card-header {
     -fx-text-fill: -monet-on-surface-variant;
     -fx-font-size: 12px;
 }
 
-.ai-tool-card-expandable {
+/* Shared collapsible header row (CollapseHeader component): whole-row hot zone, deliberately
+   no ripple — hover feedback only. Hover value = the single AI-area hover token (C-06). */
+.ai-collapse-header {
     -fx-cursor: hand;
+    -fx-background-radius: 4;
 }
-
-/* Collapsed run of 2+ consecutive tool calls ("已调用 N 个工具") — see ToolCallGroupCard. Scoped to
-   the group's own dedicated class so it can't leak onto nested ToolCard headers inside the
-   group's body (a ToolCard is a descendant of the group VBox too, and a plain descendant
-   selector on .ai-tool-card-header would otherwise match those as well). Font size matches
-   .ai-tool-card-header/.ai-reasoning-title. */
-.ai-tool-group-header {
-    -fx-cursor: hand;
-    -fx-font-size: 12px;
+.ai-collapse-header:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+.ai-collapse-header .svg {
+    -fx-fill: -monet-on-surface-variant;
 }
 
 .ai-tool-card-result {

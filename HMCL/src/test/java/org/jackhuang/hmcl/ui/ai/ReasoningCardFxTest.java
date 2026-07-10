@@ -17,7 +17,6 @@
  */
 package org.jackhuang.hmcl.ui.ai;
 
-import com.jfoenix.controls.JFXButton;
 import javafx.scene.control.Label;
 import javafx.scene.layout.StackPane;
 import org.junit.jupiter.api.AfterAll;
@@ -33,7 +32,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /// FX component test for the reasoning ("思考过程") card (#53): streams append into the
-/// content label, and the header toggles the collapsed/expanded state with its chevron.
+/// content label, and the shared CollapseHeader toggles the collapsed/expanded state
+/// (whole-row hot zone since the B4 refactor — driven via CollapseHeader#toggle(), A7).
 /// Event-injection pipeline (see MarkdownCodeCopyFxTest for the pipeline rationale).
 public final class ReasoningCardFxTest {
 
@@ -41,6 +41,9 @@ public final class ReasoningCardFxTest {
     static void setUpToolkit() throws Exception {
         assumeFalse(java.awt.GraphicsEnvironment.isHeadless(), "no display — skipping FX UI test");
         FxToolkit.registerPrimaryStage();
+        // CollapseHeader's chevron animation touches AnimationUtils, whose static init reads
+        // SettingsManager — seed it so this test doesn't depend on run order.
+        AiMainPageFxTestSupport.ensureSettingsManagerLoaded();
     }
 
     @AfterAll
@@ -64,7 +67,7 @@ public final class ReasoningCardFxTest {
         AIMainPage.ReasoningCard card = cardRef[0];
         FxRobot robot = new FxRobot();
 
-        Label content = robot.from(card).lookup(".ai-reasoning-content").queryAs(Label.class);
+        Label content = robot.from(card).lookup(".ai-caption").queryAs(Label.class);
         assertTrue(content.isVisible(), "starts expanded while streaming");
         assertEquals("让我想想：", content.getText());
 
@@ -80,12 +83,12 @@ public final class ReasoningCardFxTest {
         assertFalse(content.isVisible(), "collapsed once the answer starts");
         assertFalse(content.isManaged(), "collapsed content must not take layout space");
 
-        // user clicks the header to peek at the reasoning again
-        JFXButton header = robot.from(card).lookup(".ai-reasoning-header").queryAs(JFXButton.class);
-        WaitForAsyncUtils.asyncFx(header::fire).get(5, TimeUnit.SECONDS);
+        // user clicks the header (whole-row hot zone) to peek at the reasoning again
+        CollapseHeader header = robot.from(card).lookup(".ai-collapse-header").queryAs(CollapseHeader.class);
+        WaitForAsyncUtils.asyncFx(header::toggle).get(5, TimeUnit.SECONDS);
         assertTrue(content.isVisible(), "header click expands");
 
-        WaitForAsyncUtils.asyncFx(header::fire).get(5, TimeUnit.SECONDS);
+        WaitForAsyncUtils.asyncFx(header::toggle).get(5, TimeUnit.SECONDS);
         assertFalse(content.isVisible(), "second click collapses again");
     }
 }

@@ -32,8 +32,10 @@ import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -308,7 +310,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final VBox messageList = new VBox(12);
     private final ScrollPane scrollPane = new ScrollPane(messageList);
     private final Label statusLabel = new Label();
-    private final VBox toolActivityBox = new VBox(2);
+    /// Single-line strip above the conversation echoing the most recent legacy tool message —
+    /// downgraded from a stacked panel to one caption line with no container fill (VS §3.3 末).
+    private final Label toolActivityLabel = new Label();
 
     private final VBox emptyState = new VBox(12);
     /// Suggestion chips block of the empty state — visible only when a usable model is configured.
@@ -405,39 +409,25 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Package-private (not private) so the FX component test can drive it directly.
     static final class ReasoningCard extends VBox {
         private final Label content = new Label();
-        private final Label chevron = new Label("▾");
+        private final CollapseHeader header;
         private final StringBuilder text = new StringBuilder();
 
         ReasoningCard(String initial, boolean expanded) {
-            getStyleClass().add("ai-reasoning-card");
+            // Shares .ai-tool-card with ToolCard/ToolCallGroupCard: the three inline subordinate
+            // cards keep a byte-identical box model (§B B2 constraint) from a single CSS rule.
+            getStyleClass().add("ai-tool-card");
             setSpacing(4);
-            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
             content.setWrapText(true);
-            content.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
-            content.getStyleClass().add("ai-reasoning-content");
+            content.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16);
+            content.getStyleClass().add("ai-caption"); // rule lands with the B7 css rewrite
             if (initial != null) {
                 text.append(initial);
                 content.setText(initial);
             }
-            // Same style class as the title so they share a font-size/baseline — previously the
-            // chevron had none and fell back to the platform default label size, which made the
-            // two glyphs look uncentered/skewed relative to each other ("歪扭字体对齐").
-            chevron.getStyleClass().add("ai-reasoning-title");
-            Label title = new Label("思考过程");
-            title.getStyleClass().add("ai-reasoning-title");
-            HBox headerBox = new HBox(6, chevron, title);
-            headerBox.setAlignment(Pos.CENTER_LEFT);
-            JFXButton header = new JFXButton();
-            header.setGraphic(headerBox);
-            // NOT Double.MAX_VALUE: that stretched the button to the VBox's full assigned width
-            // (which can be much wider than "▾ 思考过程" itself, especially after the bubble-width
-            // increase above), so JFXButton's ripple — which clips to the button's own bounds, not
-            // its visible graphic — bloomed across a large empty area to the right of the text
-            // ("涟漪范围歪扭"). USE_PREF_SIZE keeps the button hugging headerBox's real content.
-            header.setMaxWidth(Region.USE_PREF_SIZE);
-            header.setAlignment(Pos.CENTER_LEFT);
-            header.getStyleClass().add("ai-reasoning-header");
-            header.setOnAction(e -> setExpanded(!content.isVisible()));
+            header = new CollapseHeader("思考过程"); // TODO(i18n)
+            content.visibleProperty().bind(header.expandedProperty());
+            content.managedProperty().bind(header.expandedProperty());
             getChildren().addAll(header, content);
             setExpanded(expanded);
         }
@@ -447,10 +437,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             content.setText(text.toString());
         }
 
+        /// Thin wrapper kept for the streaming path (collapse the card once the visible answer
+        /// starts) and for tests — the expand state itself lives on the header.
         void setExpanded(boolean expanded) {
-            content.setVisible(expanded);
-            content.setManaged(expanded);
-            chevron.setText(expanded ? "▾" : "▸");
+            header.setExpanded(expanded);
         }
     }
 
@@ -1271,19 +1261,16 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         statusLabel.managedProperty().bind(statusLabel.visibleProperty());
         statusLabel.getStyleClass().add("ai-typing-indicator");
 
-        toolActivityBox.getStyleClass().add("ai-tool-activity");
-        toolActivityBox.setVisible(false);
-        toolActivityBox.setManaged(false);
-
-        Label toolActivityLabel = new Label(i18n("ai.tool.activity"));
-        toolActivityLabel.getStyleClass().add("ai-tool-activity-label");
-        toolActivityBox.getChildren().add(toolActivityLabel);
+        toolActivityLabel.getStyleClass().add("ai-caption"); // rule lands with the B7 css rewrite
+        toolActivityLabel.setPadding(new Insets(4, 12, 4, 12)); // old .ai-tool-activity padding, moved to code
+        toolActivityLabel.setVisible(false);
+        toolActivityLabel.setManaged(false);
 
         todoCardContainer.getStyleClass().add("ai-todo-container");
         todoCardContainer.setVisible(false);
         todoCardContainer.setManaged(false);
 
-        VBox conversationCard = new VBox(toolActivityBox, todoCardContainer, messagesArea, statusLabel, buildComposer());
+        VBox conversationCard = new VBox(toolActivityLabel, todoCardContainer, messagesArea, statusLabel, buildComposer());
         conversationCard.getStyleClass().addAll("card-no-padding", "ai-conversation-card");
         VBox.setVgrow(conversationCard, Priority.ALWAYS);
 
@@ -1625,7 +1612,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private void resetConversationView() {
         hideTodoCard();
         messageList.getChildren().clear();
-        toolActivityBox.getChildren().clear();
+        toolActivityLabel.setText("");
         streamingBubble = null;
         reasoningLiveCard = null;
         pendingToolCards.clear();
@@ -2992,7 +2979,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // Reasoning/"思考过程" that came with this answer: a collapsed card above the bubble.
                 String reasoningText = msg.getReasoning();
                 if (reasoningText != null && !reasoningText.isBlank()) {
-                    messageList.getChildren().add(wrapBubble(new ReasoningCard(reasoningText, false), Pos.CENTER_LEFT));
+                    messageList.getChildren().add(wrapCard(new ReasoningCard(reasoningText, false)));
                 }
                 createAiBubble(content, msg.getUsage());
                 attachMessageActions(content, role, index);
@@ -3583,7 +3570,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     if (reasoningLiveCard == null) {
                         // First reasoning token of the turn: create the card (expanded) above the answer.
                         reasoningLiveCard = new ReasoningCard("", true);
-                        messageList.getChildren().add(wrapBubble(reasoningLiveCard, Pos.CENTER_LEFT));
+                        messageList.getChildren().add(wrapCard(reasoningLiveCard));
                     }
                     reasoningLiveCard.append(chunk);
                     scrollToBottom();
@@ -4453,6 +4440,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return wrapper;
     }
 
+    /// Wraps an inline subordinate card (reasoning / tool / tool group) in a left-aligned row
+    /// mirroring {@link #wrapBubble}, with two deliberate differences that express the card's
+    /// subordination to the adjacent AI answer (VS §3.3): the card grows to fill the column
+    /// width (up to its own 704px max, so all three card types render equally wide instead of
+    /// shrinking to content), and the left inset is 16px deeper than the bubble column.
+    /// Deliberately NO `.ai-bubble-wrapper` style class — that rule's `-fx-padding` would
+    /// override these insets (author CSS beats code setters).
+    private static HBox wrapCard(Region card) {
+        HBox wrapper = new HBox(card);
+        wrapper.setAlignment(Pos.CENTER_LEFT);
+        wrapper.setPadding(new Insets(2, 16, 2, 32));
+        HBox.setHgrow(card, Priority.ALWAYS);
+        wrapper.setCache(true); // same rasterise-once treatment as wrapBubble
+        return wrapper;
+    }
+
     /// Toggles the bitmap cache of the `.ai-bubble-wrapper` row enclosing {@code bubble}. While a
     /// bubble is still STREAMING, every appended chunk invalidates the cached bitmap — paying the
     /// rasterisation cost per frame for nothing — so the streaming path switches its wrapper's
@@ -4711,50 +4714,49 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             long done = todos.stream().filter(t -> "done".equals(t.status())).count();
 
-            // Header row (chevron + "任务清单 (n/m)") is always visible and clickable to collapse
-            // the body — previously the whole thing was one plain Label with no toggle at all.
-            Label chevron = new Label(todoExpanded ? "▾" : "▸");
-            chevron.getStyleClass().add("ai-todo-title");
-            Label title = new Label("任务清单 (" + done + "/" + todos.size() + ")");
-            title.getStyleClass().add("ai-todo-title");
-            HBox headerRow = new HBox(6, chevron, title);
-            headerRow.getStyleClass().add("ai-todo-header");
-            headerRow.setAlignment(Pos.CENTER_LEFT);
+            // Shared collapsible header ("任务清单 (n/m)"), same form language as the inline
+            // reasoning/tool cards. The card is rebuilt on every todo_write, so the header/body
+            // pair is rebuilt too — todoExpanded carries the expand state across rebuilds
+            // (§B B7: the collapse capability must not regress).
+            CollapseHeader header = new CollapseHeader("任务清单 (" + done + "/" + todos.size() + ")"); // TODO(i18n)
 
             VBox body = new VBox(4);
             body.getStyleClass().add("ai-todo-body");
             for (org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem t : todos) {
                 String status = t.status();
-                String mark = switch (status) {
-                    case "done" -> "✓";
-                    case "in_progress" -> "▶";
-                    default -> "○";
-                };
-                Label row = new Label(mark + "  " + t.content());
+                Label row = new Label(t.content());
                 row.setWrapText(true);
                 row.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
+                row.setGraphicTextGap(6);
+                // Status icon + themed colour classes replace the old ✓/▶/○ characters and the
+                // hard-coded per-theme-hostile setStyle colours (CP §6-3 / VS §3.4 / C-07).
                 switch (status) {
-                    case "done" -> row.setStyle("-fx-text-fill: #6aa84f;");
-                    case "in_progress" -> row.setStyle("-fx-font-weight: bold; -fx-text-fill: #4285f4;");
-                    default -> { /* pending: default styling */ }
+                    case "done" -> {
+                        row.setGraphic(SVG.CHECK.createIcon(14));
+                        row.getStyleClass().add("ai-todo-done");
+                    }
+                    case "in_progress" -> {
+                        row.setGraphic(SVG.PLAY_ARROW.createIcon(14));
+                        row.getStyleClass().add("ai-todo-in-progress");
+                    }
+                    default -> {
+                        row.setGraphic(SVG.RADIO_BUTTON_UNCHECKED.createIcon(14));
+                        row.getStyleClass().add("subtitle-label"); // pending: native muted text
+                    }
                 }
                 body.getChildren().add(row);
             }
-            body.setVisible(todoExpanded);
-            body.setManaged(todoExpanded);
-            FXUtils.onClicked(headerRow, () -> {
-                todoExpanded = !todoExpanded;
-                chevron.setText(todoExpanded ? "▾" : "▸");
-                body.setVisible(todoExpanded);
-                body.setManaged(todoExpanded);
-            });
+            body.visibleProperty().bind(header.expandedProperty());
+            body.managedProperty().bind(header.expandedProperty());
+            header.setExpanded(todoExpanded);
+            header.expandedProperty().addListener((obs, was, is) -> todoExpanded = is);
 
-            VBox card = new VBox(4, headerRow, body);
-            // Deliberately NOT .ai-tool-card (opaque background + hairline border, meant for a
-            // bubble-like chat card) — this pinned banner sits full-width above the messages like
-            // the jobs pane, so it reuses that translucent/borderless treatment instead, matching
-            // its sibling rather than reading as a disconnected box ("边缘和界面相当割裂").
-            card.getStyleClass().add("ai-todo-card");
+            VBox card = new VBox(4, header, body);
+            // Deliberately NOT .ai-tool-card (opaque background, meant for an in-conversation
+            // card) — this pinned banner sits full-width above the messages like the jobs pane,
+            // so it shares .ai-jobs-pane's translucent/borderless treatment, matching its sibling
+            // rather than reading as a disconnected box ("边缘和界面相当割裂").
+            card.getStyleClass().add("ai-jobs-pane");
             card.setPadding(new Insets(8, 12, 8, 12));
 
             todoCard = card;
@@ -4775,10 +4777,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// A tool-call card shown inline in the conversation, in chronological order: it appears
     /// when the agent invokes a tool ("调用中") and is updated in place when the tool finishes
     /// ("已完成"/"失败"). The result text is collapsible — click the header to expand it.
-    private final class ToolCard extends VBox {
-        private final Label header = new Label();
+    static final class ToolCard extends VBox {
+        private final CollapseHeader header;
         private final Label result = new Label();
         private final String toolName;
+        /// Set once complete() stores a non-blank result. Gates the result binding so clicking
+        /// the header of a card with nothing to show keeps doing nothing (pre-CollapseHeader
+        /// behavior), and the chevron only appears once there is something to expand.
+        private final BooleanProperty hasResult = new SimpleBooleanProperty(false);
 
         /// Live progress UI (hidden until the first progress event, removed once the tool finishes).
         private final JFXProgressBar progressBar = new JFXProgressBar();
@@ -4789,18 +4795,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         ToolCard(String toolName) {
             super(2);
             this.toolName = toolName;
-            getStyleClass().addAll("ai-bubble", "ai-bubble-tool", "ai-tool-card");
-            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
+            getStyleClass().add("ai-tool-card");
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
 
-            header.setText(i18n("ai.tool.calling", toolName));
-            header.setWrapText(true);
-            header.getStyleClass().add("ai-tool-card-header");
+            // Whole-row hot zone replaces the old "only the header Label is clickable" hitbox.
+            // The chevron stays hidden until complete() delivers an expandable result, so a
+            // running/plain card doesn't advertise a toggle it does not have.
+            header = new CollapseHeader(i18n("ai.tool.calling", toolName));
+            header.getTitleLabel().setWrapText(true);
+            header.getChevron().setVisible(false);
+            header.getChevron().setManaged(false);
 
             result.setWrapText(true);
             result.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
             result.getStyleClass().add("ai-tool-card-result");
-            result.setVisible(false);
-            result.setManaged(false);
+            result.visibleProperty().bind(header.expandedProperty().and(hasResult));
+            result.managedProperty().bind(result.visibleProperty());
 
             progressLabel.setWrapText(true);
             progressLabel.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 40);
@@ -4809,15 +4819,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             progressBar.setMaxWidth(Double.MAX_VALUE);
             progressBox.setVisible(false);
             progressBox.setManaged(false);
-
-            header.setOnMouseClicked(e -> {
-                String r = result.getText();
-                if (r != null && !r.isEmpty()) {
-                    boolean show = !result.isVisible();
-                    result.setVisible(show);
-                    result.setManaged(show);
-                }
-            });
 
             getChildren().addAll(header, progressBox, result);
         }
@@ -4843,11 +4844,23 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             finished = true;
             progressBox.setVisible(false);
             progressBox.setManaged(false);
-            header.setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
+            header.getTitleLabel().setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
             getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
             if (summary != null && !summary.isBlank()) {
-                result.setText(summary.strip());
-                header.getStyleClass().add("ai-tool-card-expandable");
+                String text = summary.strip();
+                // UI-side hard cap (BF 2-3): a Label with hundreds of KB stalls layout. The full
+                // result is still persisted and visible in the ai-trace log; this only trims what
+                // the collapsible card renders.
+                if (text.length() > 4000) {
+                    text = text.substring(0, 4000) + "\n…（结果过长，已截断显示，完整内容见 ai-trace 日志）"; // TODO(i18n)
+                }
+                result.setText(text);
+                hasResult.set(true);
+                // Freshly-completed cards start collapsed, exactly like the old click-to-reveal
+                // Label — even if the whole-row hot zone was toggled while the tool was running.
+                header.setExpanded(false);
+                header.getChevron().setVisible(true);
+                header.getChevron().setManaged(true);
             }
         }
     }
@@ -4859,37 +4872,26 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// live inside this card's body instead of directly in {@link #messageList} once a run reaches
     /// 2+ calls (see {@link #appendToolCard}, which decides when to promote a solo card into one
     /// of these).
-    private final class ToolCallGroupCard extends VBox {
-        private final Label chevron = new Label("▸");
-        private final Label summary = new Label();
+    static final class ToolCallGroupCard extends VBox {
+        private final CollapseHeader header;
         private final VBox body = new VBox(2);
-        private boolean expanded = false;
         private int count = 0;
 
         ToolCallGroupCard() {
             super(2);
-            getStyleClass().addAll("ai-bubble", "ai-tool-card", "ai-tool-group-card");
-            setMaxWidth(AI_BUBBLE_MAX_WIDTH);
+            getStyleClass().add("ai-tool-card");
+            setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
 
-            chevron.getStyleClass().addAll("ai-tool-card-header", "ai-tool-group-header");
-            summary.getStyleClass().addAll("ai-tool-card-header", "ai-tool-group-header");
-            HBox headerBox = new HBox(6, chevron, summary);
-            headerBox.setAlignment(Pos.CENTER_LEFT);
-            FXUtils.onClicked(headerBox, () -> {
-                expanded = !expanded;
-                chevron.setText(expanded ? "▾" : "▸");
-                body.setVisible(expanded);
-                body.setManaged(expanded);
-            });
-            body.setVisible(false);
-            body.setManaged(false);
-            getChildren().addAll(headerBox, body);
+            header = new CollapseHeader("已调用 0 个工具"); // placeholder, overwritten by the 1st add() // TODO(i18n)
+            body.visibleProperty().bind(header.expandedProperty()); // starts collapsed (default false)
+            body.managedProperty().bind(header.expandedProperty());
+            getChildren().addAll(header, body);
         }
 
         void add(ToolCard card) {
             body.getChildren().add(card);
             count++;
-            summary.setText("已调用 " + count + " 个工具");
+            header.getTitleLabel().setText("已调用 " + count + " 个工具"); // TODO(i18n)
         }
     }
 
@@ -4911,12 +4913,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             lastSoloToolCardWrapper.getChildren().remove(lastSoloToolCard);
             group.add(lastSoloToolCard);
             group.add(card);
-            messageList.getChildren().add(wrapBubble(group, Pos.CENTER_LEFT));
+            messageList.getChildren().add(wrapCard(group));
             activeToolGroup = group;
             lastSoloToolCard = null;
             lastSoloToolCardWrapper = null;
         } else {
-            HBox wrapper = wrapBubble(card, Pos.CENTER_LEFT);
+            HBox wrapper = wrapCard(card);
             messageList.getChildren().add(wrapper);
             lastSoloToolCard = card;
             lastSoloToolCardWrapper = wrapper;
@@ -4963,19 +4965,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));
 
-        Label activityItem = new Label(text);
-        activityItem.getStyleClass().add("ai-tool-activity-item");
-        toolActivityBox.getChildren().add(activityItem);
+        toolActivityLabel.setText(text);
         updateToolActivityVisibility();
         updateEmptyState();
         scrollToBottom();
     }
 
-    /// Shows or hides the tool activity panel based on whether it has entries.
+    /// Shows or hides the tool activity strip based on whether it has anything to echo.
     private void updateToolActivityVisibility() {
-        boolean hasItems = !toolActivityBox.getChildren().isEmpty();
-        toolActivityBox.setVisible(hasItems);
-        toolActivityBox.setManaged(hasItems);
+        boolean hasItems = !toolActivityLabel.getText().isEmpty();
+        toolActivityLabel.setVisible(hasItems);
+        toolActivityLabel.setManaged(hasItems);
     }
 
     private void scrollToBottom() {
