@@ -573,6 +573,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// of {@link #sendText} for every turn; read from the agent's background thread via
     /// {@link #isPossiblyUnattended}, so this must stay {@code volatile}.
     private volatile boolean currentTurnUnattended = false;
+    /// Wall-clock time the in-flight turn started (set alongside {@link #streamSessionId} in
+    /// {@link #sendText}). Used by {@link #cancelCurrentTurnJobs} to scope the Stop button's
+    /// job-cancellation (G7) to jobs DISPATCHED BY THIS TURN — background jobs the user let run
+    /// from earlier turns are deliberately left alone. Volatile: read from any thread.
+    private volatile long currentTurnStartedAtMillis;
 
     // ---- Autocomplete ----
 
@@ -663,6 +668,33 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         registerTools();
         installToolProgressListener();
+
+        // H4（第二波）：把 doom-loop 硬停确认弹窗接到聊天适配器的静态挂载点上（wave1 只留了
+        // 挂载点）。模型连续 6 次同签名调用同一工具时，先问用户“是否继续”，再决定放行/强制收尾。
+        org.jackhuang.hmcl.ai.langchain4j.LangChain4jChatAdapter
+                .setLoopHardStopConfirmer(this::confirmLoopHardStopContinue);
+
+        // G8：给 AiJobManager 挂 shutdown hook（仿 FileSaver 模式）——启动器被关闭/强杀时把仍在
+        // RUNNING 的后台任务摘要落盘 ai-jobs-interrupted.json；这里随后读取上次残留的快照（读后即
+        // 删，保证只提示一次），提示用户哪些后台任务未完成，后台任务不再无声蒸发。
+        java.nio.file.Path interruptedJobsFile =
+                SettingsManager.localConfigDirectory().resolve("ai-jobs-interrupted.json");
+        org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().enableShutdownSnapshot(interruptedJobsFile);
+        java.util.List<org.jackhuang.hmcl.ai.tools.AiJobManager.InterruptedJobRecord> interruptedJobs =
+                org.jackhuang.hmcl.ai.tools.AiJobManager.consumeInterruptedSnapshot(interruptedJobsFile);
+        if (!interruptedJobs.isEmpty()) {
+            StringBuilder labels = new StringBuilder();
+            for (org.jackhuang.hmcl.ai.tools.AiJobManager.InterruptedJobRecord record : interruptedJobs) {
+                if (labels.length() > 0) {
+                    labels.append("、");
+                }
+                labels.append(record.label != null ? record.label : record.toolName);
+            }
+            final int interruptedCount = interruptedJobs.size();
+            final String interruptedLabels = labels.toString();
+            Platform.runLater(() ->
+                    addSystemMessage(i18n("ai.jobs.interrupted_last_run", interruptedCount, interruptedLabels)));
+        }
 
         // Seed built-in skills and load the skill list so the agent's prompt knows them.
         skillRegistry.setSkillsDir(SettingsManager.localConfigDirectory().resolve("ai-skills"));
@@ -2445,6 +2477,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 180, false);
     }
 
+    /// H4（第二波）：doom-loop 硬停的用户确认——聊天适配器检测到模型连续 6 次以相同签名调用同一
+    /// 工具时，先经由这里问用户“模型似乎卡在重复调用，是否继续？”再决定放行还是强制收尾。
+    /// 比照 {@link #confirmDangerousOperation} 的模态管线（阻塞调用线程、FX 弹窗、超时/Stop/
+    /// 会话切换自动以“否”收场），不提供“记住选择”（每次卡循环都值得单独看一眼）。
+    /// 注册见构造函数里的 {@code LangChain4jChatAdapter.setLoopHardStopConfirmer}。
+    private boolean confirmLoopHardStopContinue(String toolName, int repeatCount) {
+        return showConfirmDialog(toolName, null, i18n("ai.confirm.loop.title"),
+                i18n("ai.confirm.loop.text", toolName, repeatCount),
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.QUESTION,
+                60, false);
+    }
+
     /// Shared plumbing for {@link #confirmDangerousOperation} and {@link #confirmCriticalOperation}:
     /// shows a Yes/No dialog on the FX thread and blocks the calling (agent tool) thread until it
     /// is answered, declined on timeout, or auto-declined because the turn that raised it was
@@ -3222,6 +3266,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // otherwise A's tokens leak into B and scrollToBottom fights the user (jitter/freeze).
         final AiSession streamSession = session;
         streamSessionId = streamSession.getId();
+        currentTurnStartedAtMillis = System.currentTimeMillis();
 
         final int generation = ++responseGeneration;
         StringBuilder fullContent = new StringBuilder();
@@ -4001,6 +4046,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // the full 120s/180s timeout after the user pressed Stop, and could still be answered once
         // the button frees up and the user starts a brand-new turn. See the activeConfirm field doc.
         cancelActiveConfirm();
+        // G7: Stop 的语义是“终止本 turn 的一切”——包括本 turn 派发、仍在 RUNNING 的后台 job。
+        // 否则它们会继续跑完并触发自动续接（F-481GP2 实证：Stop 之后模型“复活”接着干活）。
+        // 产品决策：默认连带取消（可否决，记录见 agent-logic-manual-checks/jobs.md）；早前 turn
+        // 留下的后台任务不受影响（用户当时明确让它们后台跑）。必须在 exitStreamingState()
+        // 清空 streamSessionId 之前统计。
+        int cancelledJobs = cancelCurrentTurnJobs();
         java.util.concurrent.CompletableFuture<Void> future = currentResponse;
         if (future != null) {
             future.cancel(true);
@@ -4016,10 +4067,40 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
         }
         exitStreamingState();
-        setStatus(null);
+        // G7: tell the user Stop also took down this turn's background jobs (Chinese UI copy via
+        // i18n); stays visible in the status strip until the next turn starts.
+        setStatus(cancelledJobs > 0 ? i18n("ai.stop.jobs_cancelled", cancelledJobs) : null);
         // persistInterrupted() above already wrote the partial into the session synchronously,
         // so this single save puts it on disk — no need to hope a later pulse catches it.
         persistStore();
+    }
+
+    /// G7: cancels every {@link org.jackhuang.hmcl.ai.tools.AiJobManager} job that is still
+    /// RUNNING, belongs to the STREAMING session, and was submitted during the in-flight turn
+    /// (started at/after {@link #currentTurnStartedAtMillis}). Called by {@link #stopResponse()}
+    /// BEFORE {@link #exitStreamingState()} clears {@link #streamSessionId}. Cancellation punches
+    /// through to the underlying executor via the manager's cancel-action forwarding (G6), and a
+    /// CANCELLED terminal status never triggers the auto-continue path (see
+    /// {@link #onBackgroundJobComplete}).
+    ///
+    /// @return how many jobs this call actually transitioned to CANCELLED
+    private int cancelCurrentTurnJobs() {
+        String sid = streamSessionId;
+        if (sid == null) {
+            return 0;
+        }
+        long turnStart = currentTurnStartedAtMillis;
+        org.jackhuang.hmcl.ai.tools.AiJobManager manager =
+                org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance();
+        int cancelled = 0;
+        for (org.jackhuang.hmcl.ai.tools.AiJobManager.Job job : manager.listBySession(sid)) {
+            if (job.getStatus() == org.jackhuang.hmcl.ai.tools.AiJobManager.Status.RUNNING
+                    && job.getStartedAtMillis() >= turnStart
+                    && manager.cancel(job.getId())) {
+                cancelled++;
+            }
+        }
+        return cancelled;
     }
 
     private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,

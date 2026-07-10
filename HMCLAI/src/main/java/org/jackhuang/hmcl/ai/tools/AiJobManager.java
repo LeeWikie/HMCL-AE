@@ -17,8 +17,14 @@
  */
 package org.jackhuang.hmcl.ai.tools;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
 import org.jetbrains.annotations.Nullable;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -31,6 +37,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -125,6 +132,14 @@ public final class AiJobManager {
         /// The work to run; cleared from the public surface (never exposed).
         private final Callable<ToolResult> work;
         private final long startedAtMillis;
+
+        /// Cancellation-forwarding hooks (G6): actions that must run when THIS job is cancelled so
+        /// the cancel really reaches the underlying machinery (e.g. an HMCL-side
+        /// {@code TaskExecutor.cancel()}) — interrupting the worker thread alone is NOT enough when
+        /// the tool handed its real work to another executor, which used to keep downloading to
+        /// disk after cancel() had already reported "已取消". Registered while the work runs via
+        /// {@link AiJobManager#registerCancelAction}; each action runs at most once.
+        private final CopyOnWriteArrayList<Runnable> cancelActions = new CopyOnWriteArrayList<>();
 
         private volatile @Nullable Future<?> future;
         private volatile Status status = Status.RUNNING;
@@ -379,7 +394,58 @@ public final class AiJobManager {
             // Interrupt the worker; the resulting exception is absorbed by runJob.
             future.cancel(true);
         }
+        // G6: forward the cancel to whatever machinery the tool registered (e.g. the HMCL
+        // TaskExecutor actually doing the download) — interrupting the worker alone leaves that
+        // executor running to completion, contradicting the "cancelled" status on disk.
+        if (job.getStatus() == Status.CANCELLED) {
+            runCancelActions(job);
+        }
         return transitioned;
+    }
+
+    /// Registers an action to run when the job with {@code jobId} is cancelled, so the cancel
+    /// reaches the tool's real underlying work (G6 — e.g. {@code TaskExecutor.cancel()} for a
+    /// download). If the job was ALREADY cancelled when this is called (cancel raced in during
+    /// setup), the action runs immediately on the calling thread. Unknown job ids are a no-op.
+    /// Each registered action runs at most once; exceptions it throws are swallowed.
+    public void registerCancelAction(String jobId, Runnable action) {
+        if (action == null) {
+            return;
+        }
+        Job job = get(jobId);
+        if (job == null) {
+            return;
+        }
+        job.cancelActions.addIfAbsent(action);
+        // Close the register-vs-cancel race: cancel() drains AFTER transitioning the status, so if
+        // the status already reads CANCELLED here, our just-added action might have missed that
+        // drain — run the drain again ourselves (idempotent: actions are removed before running).
+        if (job.getStatus() == Status.CANCELLED) {
+            runCancelActions(job);
+        }
+    }
+
+    /// Removes a previously registered cancel action (typically in the tool's {@code finally}
+    /// once the underlying work has completed and no longer needs cancel forwarding).
+    public void unregisterCancelAction(String jobId, Runnable action) {
+        Job job = get(jobId);
+        if (job != null && action != null) {
+            job.cancelActions.remove(action);
+        }
+    }
+
+    /// Runs and removes every pending cancel action of {@code job}, swallowing their exceptions.
+    /// Remove-before-run keeps this idempotent across the cancel()/registerCancelAction race.
+    private static void runCancelActions(Job job) {
+        for (Runnable action : job.cancelActions) {
+            if (job.cancelActions.remove(action)) {
+                try {
+                    action.run();
+                } catch (Throwable ignored) {
+                    // A broken cancel hook must never break the manager.
+                }
+            }
+        }
     }
 
     /// Registers a listener fired (off the FX thread) when a job reaches a terminal state.
@@ -457,6 +523,103 @@ public final class AiJobManager {
             }
             jobs.remove(job.id);
             removable--;
+        }
+    }
+
+    // ---- Shutdown snapshot (G8) -------------------------------------------------------------
+
+    /// A plain serializable summary of a job that was still RUNNING when the JVM shut down,
+    /// written to {@code ai-jobs-interrupted.json} by the shutdown hook (see
+    /// {@link #enableShutdownSnapshot}) and read back on next startup via
+    /// {@link #consumeInterruptedSnapshot} so the UI can tell the user which background tasks
+    /// were lost instead of letting them silently evaporate with the daemon worker threads.
+    public static final class InterruptedJobRecord {
+        public @Nullable String id;
+        public @Nullable String toolName;
+        public @Nullable String label;
+        public @Nullable String sessionId;
+        public long startedAtMillis;
+    }
+
+    private static final Gson SNAPSHOT_GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    /// Where the shutdown hook writes the interrupted-jobs snapshot; set by
+    /// {@link #enableShutdownSnapshot}, {@code null} until then (hook writes nothing).
+    private volatile @Nullable Path interruptedJobsFile;
+    private final AtomicBoolean shutdownHookRegistered = new AtomicBoolean();
+
+    /// Enables the shutdown snapshot (G8, mirroring {@code FileSaver}'s shutdown-hook pattern):
+    /// registers a JVM shutdown hook (once) that synchronously writes a summary of every job
+    /// still RUNNING to {@code file} — the manager is purely in-memory on daemon threads, so a
+    /// window close otherwise vaporises all knowledge of in-flight background work. When nothing
+    /// is running at shutdown the file is deleted instead, so a stale snapshot can never prompt
+    /// the user twice.
+    public void enableShutdownSnapshot(Path file) {
+        this.interruptedJobsFile = Objects.requireNonNull(file, "file");
+        if (shutdownHookRegistered.compareAndSet(false, true)) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                Path target = interruptedJobsFile;
+                if (target != null) {
+                    writeInterruptedSnapshot(target);
+                }
+            }, "ai-jobs-interrupted-snapshot"));
+        }
+    }
+
+    /// Writes the RUNNING-jobs summary to {@code file} (deleting it when none are running).
+    /// Package-private so the shutdown hook's body is testable without killing the JVM.
+    /// Never throws — this runs on the shutdown path.
+    void writeInterruptedSnapshot(Path file) {
+        try {
+            List<InterruptedJobRecord> running = new ArrayList<>();
+            for (Job job : list()) {
+                if (job.getStatus() == Status.RUNNING) {
+                    InterruptedJobRecord record = new InterruptedJobRecord();
+                    record.id = job.getId();
+                    record.toolName = job.getToolName();
+                    record.label = job.getLabel();
+                    record.sessionId = job.getSessionId();
+                    record.startedAtMillis = job.getStartedAtMillis();
+                    running.add(record);
+                }
+            }
+            if (running.isEmpty()) {
+                Files.deleteIfExists(file);
+                return;
+            }
+            if (file.getParent() != null) {
+                Files.createDirectories(file.getParent());
+            }
+            Files.writeString(file, SNAPSHOT_GSON.toJson(running), StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {
+            // Best-effort only; the shutdown path must never throw.
+        }
+    }
+
+    /// Reads and DELETES the interrupted-jobs snapshot left by a previous run's shutdown hook.
+    /// Returns an empty list when there is no snapshot or it is unreadable (an unreadable file is
+    /// still deleted so it can't re-prompt forever). The consume-on-read contract guarantees each
+    /// interruption is reported to the user exactly once.
+    public static List<InterruptedJobRecord> consumeInterruptedSnapshot(Path file) {
+        try {
+            if (!Files.isRegularFile(file)) {
+                return List.of();
+            }
+            String json = Files.readString(file, StandardCharsets.UTF_8);
+            Files.deleteIfExists(file);
+            List<InterruptedJobRecord> records = SNAPSHOT_GSON.fromJson(json,
+                    new TypeToken<List<InterruptedJobRecord>>() { }.getType());
+            if (records == null) {
+                return List.of();
+            }
+            records.removeIf(r -> r == null || (r.label == null && r.toolName == null));
+            return records;
+        } catch (Throwable t) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (Throwable ignored) {
+            }
+            return List.of();
         }
     }
 

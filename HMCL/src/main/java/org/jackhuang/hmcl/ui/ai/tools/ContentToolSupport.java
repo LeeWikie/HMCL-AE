@@ -202,6 +202,17 @@ final class ContentToolSupport {
     static void runTaskBlocking(Task<?> task, int timeoutSeconds, String operation) throws Exception {
         TaskExecutor executor = task.executor();
         executor.addTaskListener(progressListener(operation));
+        // G6: when this task runs INSIDE a background job (AiJobManager binds the job id around the
+        // work — see ToolProgress.currentJobId), register the executor with the job so
+        // job(action="cancel") is forwarded straight to TaskExecutor.cancel(). Interrupting the
+        // job's worker thread alone only unblocks future.get() below; without this hook (and the
+        // InterruptedException catch) the underlying download kept writing to disk after the tool
+        // had already reported "cancelled" — the cancel must punch through to the bottom.
+        String jobId = ToolProgress.currentJobId();
+        Runnable cancelAction = jobId != null ? () -> cancelQuietly(executor) : null;
+        if (cancelAction != null) {
+            org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().registerCancelAction(jobId, cancelAction);
+        }
         Future<Boolean> future = WORKER.submit(() -> {
             boolean ok = executor.test();
             if (!ok) {
@@ -216,12 +227,25 @@ final class ContentToolSupport {
             executor.cancel();
             future.cancel(true);
             throw new IOException(operation + " timed out after " + timeoutSeconds + "s");
+        } catch (InterruptedException e) {
+            // G6: the blocking thread was interrupted (job cancel / user stop). Cancel the real
+            // executor synchronously — merely unwinding this stack leaves it running to completion.
+            cancelQuietly(executor);
+            future.cancel(true);
+            // The executor may have been started by the worker in the gap between the first
+            // attempt (pre-start cancel is a no-op) and future.cancel — one more attempt closes it.
+            cancelQuietly(executor);
+            throw e;
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof Exception) {
                 throw (Exception) cause;
             }
             throw new IOException(operation + " failed: " + cause, cause);
+        } finally {
+            if (cancelAction != null) {
+                org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().unregisterCancelAction(jobId, cancelAction);
+            }
         }
     }
 
@@ -271,6 +295,18 @@ final class ContentToolSupport {
             }
         }
         throw last != null ? last : new IOException(operation + " failed");
+    }
+
+    /// Cancels a [TaskExecutor] tolerating the not-yet-started state ({@code cancel()} throws
+    /// {@link IllegalStateException} before {@code start()}) — used by the cancel-forwarding
+    /// paths in [#runTaskBlocking], where the cancel can race the worker's own startup.
+    private static void cancelQuietly(TaskExecutor executor) {
+        try {
+            executor.cancel();
+        } catch (IllegalStateException ignored) {
+            // Not started yet; the caller also cancels the wrapping Future, which prevents the
+            // start from ever happening.
+        }
     }
 
     /// Builds a download [Task] for a specific [DownloadProvider]. Implementations should

@@ -1103,6 +1103,10 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                     // and deterministic; only the actual (network/disk) tool.execute() work above
                     // may have happened concurrently.
                     boolean hardLoopStop = false;
+                    // Which tool tripped the hard stop and how many identical signatures it racked
+                    // up — carried to the user-facing "继续还是停?" confirm below (H4).
+                    String hardLoopTool = null;
+                    int hardLoopRepeats = 0;
                     // Whether a successful todo_write call landed THIS cycle — drives the staleness
                     // half of the todo-discipline guard below (see LoopGuardState#cyclesSinceTodoUpdate).
                     boolean todoTouchedThisCycle = false;
@@ -1176,6 +1180,8 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                                     trace(tc, TraceEvents.guard(tc, cycle, "LOOP_SIGNATURE_HARD_STOP",
                                             req.name() + " x" + repeatCount));
                                     hardLoopStop = true;
+                                    hardLoopTool = req.name();
+                                    hardLoopRepeats = (int) repeatCount;
                                 } else if (LOOP_SIGNATURE_SOFT_THRESHOLDS.contains((int) repeatCount)) {
                                     trace(tc, TraceEvents.guard(tc, cycle, "LOOP_SIGNATURE_SOFT",
                                             req.name() + " x" + repeatCount));
@@ -1189,11 +1195,31 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
                         // Doom-loop hard stop (borrow-list A2): the turn is now REALLY force-ended
                         // — tools withdrawn, one final text-only request — instead of the model
                         // being merely lectured and left holding the execution reins.
-                        // TODO(第二波·H4 弹窗): 在这里接入 UI 确认 —— 比照 AIMainPage 的
-                        // confirmDangerousOperation 弹窗问用户“模型似乎卡在重复调用，是否继续？”，
-                        // 用户选择继续则清空 state.signatureWindow 并 streamTurn(cycle+1) 放行，
-                        // 否则维持本强制收尾。钩子需要一个由 AIMainPage 注入的确认回调
-                        // （ToolConfirmHandler 形态即可），本波（第一波）不碰 UI，仅保留此挂载点。
+                        // H4（第二波）：强制收尾前先把决定权交给用户 —— AIMainPage 通过
+                        // setLoopHardStopConfirmer 注入阻塞式确认弹窗（与 confirmDangerousOperation
+                        // 同一套模态管线）：“模型似乎卡在重复调用，是否继续？”。用户选“是”则清空
+                        // 签名窗口并放行下一轮；选“否”/超时/无 UI（confirmer 为 null，如纯单测环境）
+                        // 均维持原有强制收尾，行为完全向后兼容。
+                        LoopHardStopConfirmer confirmer = loopHardStopConfirmer;
+                        boolean userContinues = false;
+                        if (confirmer != null && !callback.isCancelled()) {
+                            try {
+                                userContinues = confirmer.confirmContinue(hardLoopTool, hardLoopRepeats);
+                            } catch (Throwable t) {
+                                AiLog.warn("[AI] doom-loop 继续确认失败，按“停止”处理：" + t.getMessage());
+                            }
+                        }
+                        if (userContinues && !callback.isCancelled()) {
+                            state.signatureWindow.clear();
+                            trace(tc, TraceEvents.guard(tc, cycle, "LOOP_HARD_STOP_OVERRIDE",
+                                    hardLoopTool + " x" + hardLoopRepeats + " user-approved continue"));
+                            conversation.add(GuardMessageFormatter.guardMessage("loop_override",
+                                    "[系统提示] 检测到你反复以几乎相同的方式调用工具 " + hardLoopTool
+                                    + "（已 " + hardLoopRepeats + " 次同签名、结果基本相同），用户确认允许你继续。"
+                                    + "请换一种思路、参数或工具再试——不要原样重复同一调用。"));
+                            streamTurn(conversation, callback, cycle + 1, state, turnText, tc);
+                            return;
+                        }
                         forceFinishTurn(conversation, callback, turnText, tc, cycle, ForceFinishCause.DOOM_LOOP);
                         return;
                     }
@@ -1301,6 +1327,26 @@ public final class LangChain4jChatAdapter implements AiChatClient, AutoCloseable
     /// A8's follow-up note): "you hit the 25-cycle budget" and "you were caught repeating the same
     /// call in a loop" call for different closing summaries and different user advice.
     enum ForceFinishCause { CYCLE_CAP, DOOM_LOOP }
+
+    /// H4（第二波）：doom-loop 硬停前的用户确认钩子。UI 侧（AIMainPage）注入一个阻塞式实现——
+    /// 在 FX 线程弹 “模型似乎卡在重复调用，是否继续？” 的确认框并阻塞本（流式回调）线程等待答案，
+    /// 与 confirmDangerousOperation 完全同一套模态管线（超时/Stop/会话切换都会自动以 false 收场）。
+    /// 返回 true = 用户放行：签名窗口清空、模型获得下一轮；false = 维持强制收尾。
+    @FunctionalInterface
+    public interface LoopHardStopConfirmer {
+        boolean confirmContinue(String toolName, int repeatCount);
+    }
+
+    /// The UI-injected doom-loop confirmer, or {@code null} when no UI is attached (unit tests,
+    /// headless) — null keeps the pre-H4 behaviour: hard stop with no question asked.
+    private static volatile @Nullable LoopHardStopConfirmer loopHardStopConfirmer;
+
+    /// Installs (or clears, with {@code null}) the doom-loop hard-stop confirmer. Static because
+    /// the confirm dialog surface is process-global (one AIMainPage), mirroring how ToolProgress
+    /// decouples the UI from this module; the last registration wins.
+    public static void setLoopHardStopConfirmer(@Nullable LoopHardStopConfirmer confirmer) {
+        loopHardStopConfirmer = confirmer;
+    }
 
     /// Soft landing at the hard {@link #maxToolCycles} cap (borrow-list 2.4) or on a doom-loop
     /// hard stop (borrow-list A2). The old behaviour ended the turn with a canned Chinese
