@@ -31,10 +31,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /// WriteFileTool is a write-capable, higher-risk tool with no confirmation dialog by default
 /// (CONTROLLED_WRITE) — this had zero automated verification of its root-containment logic before.
-/// NOTE: a target that does not exist yet has nothing to resolve, so it is created directly inside
-/// the allowed roots as before. When the target already exists (the common overwrite/append case),
-/// a toRealPath()-based symlink-containment recheck now applies, mirroring EditTool's fix — see
-/// {@link #overwritingThroughASymlinkEscapingEveryRootIsRejected}.
+/// A toRealPath()-based symlink-containment recheck applies to every write, mirroring EditTool's
+/// fix — see {@link #overwritingThroughASymlinkEscapingEveryRootIsRejected}. Crucially this check
+/// is NOT skipped when the target file does not exist yet ({@link Path#toRealPath()} requires the
+/// path to exist, so a naive implementation is tempted to skip the check for "create a new file",
+/// which is exactly the case a directory symlink/junction escape (buildable with plain user rights
+/// on Windows via `mklink /J`) would exploit — see
+/// {@link #creatingANewFileThroughADirectoryLinkEscapingEveryRootIsRejected} and
+/// {@link #creatingANewFileNestedSeveralLevelsBelowADirectoryLinkEscapingEveryRootIsRejected}.
 public final class WriteFileToolTest {
 
     @Test
@@ -141,6 +145,95 @@ public final class WriteFileToolTest {
                     "the file outside the allowed roots must be untouched");
         } catch (IOException e) {
             fail(e);
+        }
+    }
+
+    // ---- New-file-through-a-directory-link regression coverage (the reported symlink-escape gap) ----
+
+    @Test
+    public void creatingANewFileThroughADirectoryLinkEscapingEveryRootIsRejected(
+            @TempDir Path root, @TempDir Path outside) throws IOException {
+        Path link = root.resolve("linkdir");
+        if (!createDirectoryLink(link, outside)) {
+            Assumptions.abort("directory symlink/junction creation is not permitted in this environment");
+            return;
+        }
+
+        WriteFileTool tool = new WriteFileTool(root);
+        // "newfile.txt" does not exist anywhere yet — this is the "create a new file" path that
+        // the pre-fix code skipped real-path containment for entirely.
+        ToolResult result = tool.execute(Map.of("path", "linkdir/newfile.txt", "content", "TAMPERED"));
+
+        assertFalse(result.isSuccess(),
+                "creating a new file through a directory link escaping every allowed root must be refused: "
+                        + (result.isSuccess() ? "" : result.getError()));
+        assertFalse(Files.exists(outside.resolve("newfile.txt")),
+                "the new file must not have been created outside the allowed roots");
+    }
+
+    @Test
+    public void creatingANewFileNestedSeveralLevelsBelowADirectoryLinkEscapingEveryRootIsRejected(
+            @TempDir Path root, @TempDir Path outside) throws IOException {
+        Path link = root.resolve("linkdir");
+        if (!createDirectoryLink(link, outside)) {
+            Assumptions.abort("directory symlink/junction creation is not permitted in this environment");
+            return;
+        }
+
+        WriteFileTool tool = new WriteFileTool(root);
+        // Neither "sub1" nor "sub2" exists yet (inside the link target or anywhere else) —
+        // exercises walking up MULTIPLE nonexistent levels before reaching the link itself.
+        ToolResult result = tool.execute(Map.of("path", "linkdir/sub1/sub2/newfile.txt", "content", "TAMPERED"));
+
+        assertFalse(result.isSuccess(),
+                "creating a nested new file through a directory link escaping every allowed root must be refused: "
+                        + (result.isSuccess() ? "" : result.getError()));
+        assertFalse(Files.exists(outside.resolve("sub1")),
+                "no directories must have been created outside the allowed roots");
+    }
+
+    @Test
+    public void creatingANewFileSeveralNonexistentLevelsDeepInsideARootStillWorks(@TempDir Path root)
+            throws IOException {
+        // Control for the two tests above: ordinary nested-new-file creation, with no
+        // symlink/junction anywhere on the path, must be completely unaffected by the fix.
+        WriteFileTool tool = new WriteFileTool(root);
+
+        ToolResult result = tool.execute(Map.of("path", "a/b/c/new.txt", "content", "hello"));
+
+        assertTrue(result.isSuccess(), "expected success: " + result.getError());
+        assertEquals("hello",
+                Files.readString(root.resolve("a").resolve("b").resolve("c").resolve("new.txt"),
+                        StandardCharsets.UTF_8));
+    }
+
+    /// Best-effort directory link creation for tests: tries a real symlink first (works on
+    /// Linux/macOS with normal user rights; on Windows requires Developer Mode or elevation), then
+    /// falls back to a Windows directory junction via `mklink /J`, which — unlike a symlink —
+    /// needs NO elevation or Developer Mode on Windows, matching the exact primitive described in
+    /// the vulnerability report. Returns false if neither succeeds, so the caller can skip via
+    /// {@link Assumptions#abort}.
+    private static boolean createDirectoryLink(Path link, Path target) throws IOException {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (IOException | UnsupportedOperationException e) {
+            // fall through to the junction attempt below
+        }
+        if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")) {
+            return false;
+        }
+        try {
+            Process process = new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            int exit = process.waitFor();
+            return exit == 0 && Files.exists(link);
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 }

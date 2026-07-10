@@ -60,4 +60,70 @@ public final class ListDatapacksToolTest {
                     "must list the real world names: " + err);
         }
     }
+
+    /// Regression test for a legitimate call: a normal, single-segment world name must still list
+    /// the real datapacks folder contents (guards against the path-confinement fix below being
+    /// overly strict and rejecting valid usage too).
+    @Test
+    void listsTheDatapacksOfAnExistingWorld() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path worldDir = fx.repository().getRunDirectory("Existing").resolve("saves").resolve("MyWorld");
+            Path datapacksDir = worldDir.resolve("datapacks");
+            Files.createDirectories(datapacksDir);
+            Files.writeString(datapacksDir.resolve("cool-pack.zip"), "zip-bytes");
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", "MyWorld"));
+
+            assertTrue(result.isSuccess(), "expected success: " + result.getError());
+            assertTrue(result.getOutput().contains("cool-pack.zip"),
+                    "unexpected output: " + result.getOutput());
+        }
+    }
+
+    /// Regression test for a path-traversal / information-disclosure vulnerability: since
+    /// list_datapacks is READ_ONLY and runs silently without a confirmation prompt, a `world`
+    /// value crafted with `..` segments must never let the tool enumerate the contents of a
+    /// directory outside the instance's saves/ tree.
+    @Test
+    void pathTraversalWithDotDotSegmentsIsRefused() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path savesDir = fx.repository().getRunDirectory("Existing").resolve("saves");
+            Path outsideDatapacks = fx.baseDir().resolve("outside-secret").resolve("datapacks");
+            Files.createDirectories(outsideDatapacks);
+            Files.writeString(outsideDatapacks.resolve("super-secret-marker.txt"), "leaked");
+            String traversal = savesDir.relativize(outsideDatapacks.getParent()).toString();
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", traversal));
+
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("outside the saves directory"),
+                    "unexpected message: " + result.getError());
+            assertFalse(result.getError().contains("super-secret-marker"),
+                    "must not leak the outside directory's contents: " + result.getError());
+        }
+    }
+
+    /// Same vulnerability, but via an absolute path — `Path#resolve` treats an absolute argument
+    /// as a full replacement of the base path, which is exactly how the escape worked before the
+    /// confinement check was added.
+    @Test
+    void pathTraversalWithAbsolutePathIsRefused() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path outsideDir = fx.baseDir().resolve("outside-secret-abs");
+            Path outsideDatapacks = outsideDir.resolve("datapacks");
+            Files.createDirectories(outsideDatapacks);
+            Files.writeString(outsideDatapacks.resolve("super-secret-marker.txt"), "leaked");
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", outsideDir.toString()));
+
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("outside the saves directory"),
+                    "unexpected message: " + result.getError());
+            assertFalse(result.getError().contains("super-secret-marker"),
+                    "must not leak the outside directory's contents: " + result.getError());
+        }
+    }
 }

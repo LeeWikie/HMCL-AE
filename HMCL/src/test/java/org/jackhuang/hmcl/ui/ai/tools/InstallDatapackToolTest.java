@@ -172,4 +172,54 @@ public final class InstallDatapackToolTest {
                     "the existing datapack must be untouched");
         }
     }
+
+    /// Regression test for a path-traversal vulnerability: a `world` value crafted with `..`
+    /// segments must never let the tool copy the source zip into a directory outside the
+    /// instance's saves/ tree, even if that outside directory already exists on disk.
+    @Test
+    void pathTraversalWithDotDotSegmentsIsRefused() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path savesDir = fx.repository().getRunDirectory("Existing").resolve("saves");
+            Path outsideDir = fx.baseDir().resolve("outside-secret");
+            Files.createDirectories(outsideDir);
+            String traversal = savesDir.relativize(outsideDir).toString();
+
+            Path zip = fx.baseDir().resolve("mydatapack.zip");
+            Files.writeString(zip, "malicious-content");
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", traversal,
+                    "source", zip.toString()));
+
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("outside the saves directory"),
+                    "unexpected message: " + result.getError());
+            assertFalse(Files.exists(outsideDir.resolve("datapacks")),
+                    "must not have written into the directory outside saves/");
+        }
+    }
+
+    /// Regression test for the same vulnerability using an absolute path instead of a `..`
+    /// traversal — `Path#resolve` treats an absolute argument as a full replacement of the base
+    /// path, which is exactly how the escape worked before the confinement check was added.
+    @Test
+    void pathTraversalWithAbsolutePathIsRefused() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("Existing");
+            Path outsideDir = fx.baseDir().resolve("outside-secret-abs");
+            Files.createDirectories(outsideDir);
+
+            Path zip = fx.baseDir().resolve("mydatapack.zip");
+            Files.writeString(zip, "malicious-content");
+
+            ToolResult result = tool.execute(Map.of("instance", "Existing", "world", outsideDir.toString(),
+                    "source", zip.toString()));
+
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("outside the saves directory"),
+                    "unexpected message: " + result.getError());
+            assertFalse(Files.exists(outsideDir.resolve("datapacks")),
+                    "must not have written into the directory outside saves/");
+        }
+    }
 }

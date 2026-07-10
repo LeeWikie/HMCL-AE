@@ -106,10 +106,18 @@ public final class InstallDatapackTool implements Tool {
         Path savesDir;
         Path worldDir;
         try {
-            savesDir = repository.getRunDirectory(instance).resolve("saves");
-            worldDir = savesDir.resolve(world);
+            savesDir = repository.getRunDirectory(instance).resolve("saves").normalize();
+            worldDir = savesDir.resolve(world).normalize();
         } catch (Throwable e) {
             return ToolResult.failure("Failed to resolve the run directory of '" + instance + "': " + e.getMessage());
+        }
+
+        // Path confinement: a malicious/garbled name like "../.." or an absolute path must never
+        // escape the saves directory — otherwise install_datapack could write the source zip into
+        // an arbitrary existing directory outside the world's saves/ tree (mirrors DeleteWorldTool).
+        if (!worldDir.startsWith(savesDir) || worldDir.equals(savesDir)) {
+            return ToolResult.failure("Refused to install into '" + world + "': it resolves outside the saves directory. "
+                    + "Pass a single world folder name only.");
         }
 
         if (!Files.isDirectory(worldDir)) {

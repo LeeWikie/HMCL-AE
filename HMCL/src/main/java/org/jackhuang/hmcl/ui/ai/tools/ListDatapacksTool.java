@@ -90,10 +90,20 @@ public final class ListDatapacksTool implements Tool {
         Path savesDir;
         Path worldDir;
         try {
-            savesDir = repository.getRunDirectory(instance).resolve("saves");
-            worldDir = savesDir.resolve(world);
+            savesDir = repository.getRunDirectory(instance).resolve("saves").normalize();
+            worldDir = savesDir.resolve(world).normalize();
         } catch (Throwable e) {
             return ToolResult.failure("Failed to resolve the run directory of '" + instance + "': " + e.getMessage());
+        }
+
+        // Path confinement: a malicious/garbled name like "../.." or an absolute path must never
+        // escape the saves directory — otherwise list_datapacks could silently enumerate the
+        // contents of an arbitrary existing directory outside the world's saves/ tree (this tool is
+        // READ_ONLY and runs without a confirmation prompt, so this check is its only guard;
+        // mirrors DeleteWorldTool).
+        if (!worldDir.startsWith(savesDir) || worldDir.equals(savesDir)) {
+            return ToolResult.failure("Refused to list '" + world + "': it resolves outside the saves directory. "
+                    + "Pass a single world folder name only.");
         }
 
         if (!Files.isDirectory(worldDir)) {

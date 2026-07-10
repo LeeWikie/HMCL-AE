@@ -125,22 +125,26 @@ public final class WriteFileTool implements ToolSpec {
             if (roots.stream().noneMatch(resolved::startsWith)) {
                 return FileToolFailures.outsideRoots(resolved, roots);
             }
-            // Real-path containment for an EXISTING target: mirrors EditTool's symlink-escape fix.
-            // A symlink can be planted under an allowed root (e.g. via the shell tool's `mklink` /
-            // `ln -s`, which today's DangerousCommands heuristics do not flag) pointing OUTSIDE every
-            // allowed root. Since this tool overwrites by default, writing through such a symlink
-            // would otherwise let the lexical/normalized containment check above pass while the
-            // bytes actually land in an arbitrary external file. A target that does not exist yet has
-            // nothing to resolve — that case is unaffected and still lets new files be created.
-            Path real = Files.exists(resolved, java.nio.file.LinkOption.NOFOLLOW_LINKS)
-                    ? resolved.toRealPath() : null;
-            if (real != null && roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
+            // Real-path containment: mirrors EditTool's symlink-escape fix, extended to also cover
+            // a target that does NOT exist yet. `Path#toRealPath()` requires the path to exist, so
+            // the previous code skipped this whole check whenever the leaf was absent — which is
+            // exactly the "create a new file" case, i.e. the common one. That let a directory
+            // symlink/junction planted under an allowed root (e.g. via `mklink /J`, buildable with
+            // plain user rights on Windows and unflagged by today's DangerousCommands heuristics)
+            // redirect a "new file" write to anywhere on disk: the lexical/normalized containment
+            // check above happens BEFORE any symlink is followed, so it can't see the redirect.
+            // realPathForWrite() walks up to the nearest EXISTING ancestor (there is always at
+            // least one — the filesystem root) and resolves that ancestor's real path, which
+            // correctly follows any symlink/junction sitting above the not-yet-created leaf,
+            // regardless of how many nonexistent path segments sit beneath it.
+            Path real = realPathForWrite(resolved);
+            if (roots.stream().noneMatch(r -> real.startsWith(realOrSelf(r)))) {
                 return FileToolFailures.outsideRoots(real, roots);
             }
             // Read precondition for OVERWRITING an existing regular file: without a prior read
             // the model is destroying content it has never seen. Creating a new file is
             // unrestricted, and append is exempt too (it does not discard existing content).
-            if (real != null && !append && Files.isRegularFile(resolved)) {
+            if (!append && Files.isRegularFile(resolved)) {
                 ReadLedger.Status ledgerStatus = ledger.check(real, Files.readAllBytes(resolved));
                 if (ledgerStatus == ReadLedger.Status.NOT_READ) {
                     return ToolFailures.failure(
@@ -199,5 +203,38 @@ public final class WriteFileTool implements ToolSpec {
         } catch (IOException e) {
             return p;
         }
+    }
+
+    /// Real-path resolution that also works for a target that does not exist yet (the "create a
+    /// new file" case). {@link Path#toRealPath()} throws unless the path exists, so it cannot be
+    /// called on `resolved` directly when the leaf is absent — and silently skipping the check in
+    /// that case (as this method's predecessor did) is unsafe: any ancestor directory between the
+    /// allowed root and the new leaf could be a symlink/directory-junction pointing outside every
+    /// allowed root, and a lexical/normalized `startsWith` check can't detect that because it never
+    /// follows the link.
+    ///
+    /// The fix walks upward from `path` component by component until it finds an ancestor that
+    /// DOES exist (there is always at least one — the filesystem root itself), resolves that
+    /// ancestor's real path — which correctly follows any symlink/junction sitting anywhere along
+    /// the way — and then re-appends the (still nonexistent) trailing segments that were peeled off
+    /// on the way up. If `path` itself already exists this degenerates to a plain
+    /// {@code path.toRealPath()}, i.e. identical to the pre-existing-target behavior.
+    private static Path realPathForWrite(Path path) throws IOException {
+        Path existing = path;
+        Path remainder = null;
+        while (!Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            Path parent = existing.getParent();
+            if (parent == null) {
+                // Nothing along the path exists, not even a filesystem root — nothing to resolve.
+                // Falls back to the lexical path; the caller's normalized-containment check
+                // (already performed) is what governs this (environment-misconfiguration) case.
+                return path;
+            }
+            Path segment = existing.getFileName();
+            remainder = remainder == null ? segment : segment.resolve(remainder);
+            existing = parent;
+        }
+        Path real = existing.toRealPath();
+        return remainder == null ? real : real.resolve(remainder);
     }
 }
