@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing git tag to release (e.g. v0.2.1-beta)'
+        description: 'Existing git tag to release (e.g. v0.1.0-alpha)'
         required: true
       version:
-        description: 'Version number stamped into the artifacts (e.g. 0.2.1-beta)'
+        description: 'Version number stamped into the artifacts (e.g. 0.1.0-alpha)'
         required: true
       prerelease:
         description: 'Mark as pre-release'
