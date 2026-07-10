@@ -421,7 +421,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
             content.setWrapText(true);
             content.setMaxWidth(AI_BUBBLE_MAX_WIDTH - 16);
-            content.getStyleClass().add("ai-caption"); // rule lands with the B7 css rewrite
+            content.getStyleClass().add("ai-caption");
             if (initial != null) {
                 text.append(initial);
                 content.setText(initial);
@@ -883,7 +883,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private void buildLayout() {
         chatSettingsStack.getChildren().setAll(chatView);
-        chatSettingsStack.getStyleClass().add("ai-chat-stack");
 
         StackPane centerWithDrawer = new StackPane(chatSettingsStack);
 
@@ -1200,7 +1199,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         chatView.setPadding(new Insets(10)); // native card-list rhythm (VS §1.4)
 
         scrollPane.setFitToWidth(true);
-        scrollPane.getStyleClass().addAll("edge-to-edge", "ai-messages-scroll");
+        scrollPane.getStyleClass().add("edge-to-edge");
         VBox.setVgrow(scrollPane, Priority.ALWAYS);
         FXUtils.smoothScrolling(scrollPane);
         // Stick-to-bottom: a wheel-up means the user is reading history, so stop auto-pinning;
@@ -1227,7 +1226,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         StackPane messagesArea = new StackPane(scrollPane, emptyState, autocompletePopup);
         StackPane.setAlignment(autocompletePopup, Pos.BOTTOM_LEFT);
         StackPane.setMargin(autocompletePopup, new Insets(0, 0, 6, 12));
-        messagesArea.getStyleClass().add("ai-messages-area");
         VBox.setVgrow(messagesArea, Priority.ALWAYS);
         // Let the scrollable message area absorb all vertical shrink so the header and
         // composer keep their size when the window is small.
@@ -1241,19 +1239,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Don't reserve a layout slot while hidden — otherwise its padded height sits as an invisible
         // band between the conversation and the composer (it stays managed even when invisible).
         statusLabel.managedProperty().bind(statusLabel.visibleProperty());
-        statusLabel.getStyleClass().add("ai-typing-indicator");
+        statusLabel.getStyleClass().add("ai-caption");
+        statusLabel.setPadding(new Insets(4, 16, 6, 16)); // old .ai-typing-indicator padding, moved to code
 
-        toolActivityLabel.getStyleClass().add("ai-caption"); // rule lands with the B7 css rewrite
+        toolActivityLabel.getStyleClass().add("ai-caption");
         toolActivityLabel.setPadding(new Insets(4, 12, 4, 12)); // old .ai-tool-activity padding, moved to code
         toolActivityLabel.setVisible(false);
         toolActivityLabel.setManaged(false);
 
-        todoCardContainer.getStyleClass().add("ai-todo-container");
+        todoCardContainer.setPadding(new Insets(4, 8, 0, 8)); // old .ai-todo-container padding, moved to code
         todoCardContainer.setVisible(false);
         todoCardContainer.setManaged(false);
 
         VBox conversationCard = new VBox(toolActivityLabel, todoCardContainer, messagesArea, statusLabel, buildComposer());
-        conversationCard.getStyleClass().addAll("card-no-padding", "ai-conversation-card");
+        conversationCard.getStyleClass().add("card-no-padding");
         VBox.setVgrow(conversationCard, Priority.ALWAYS);
 
         Node headerNode = buildHeaderNode();
@@ -1304,7 +1303,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         Label suggestionsLabel = new Label(i18n("ai.empty_suggestions"));
-        suggestionsLabel.getStyleClass().add("ai-suggestions-label");
+        suggestionsLabel.getStyleClass().add("ai-caption");
+        suggestionsLabel.setPadding(new Insets(0, 4, 4, 4)); // old .ai-suggestions-label padding, moved to code
 
         suggestionsBox = new VBox(8, suggestionsLabel, chips);
         suggestionsBox.setAlignment(Pos.CENTER);
@@ -1357,7 +1357,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
     private Node buildHeaderNode() {
         headerTitle.getStyleClass().add("ai-header-title"); // 15px bold lives in the CSS rule now
-        headerSubtitle.getStyleClass().add("ai-header-subtitle");
+        headerSubtitle.getStyleClass().add("subtitle-label"); // native variant-text tier (VS §2.2)
         approvalBadge.getStyleClass().add("ai-approval-badge");
         approvalBadge.setVisible(false);
         approvalBadge.setManaged(false);
@@ -1400,7 +1400,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         HBox headerBox = new HBox(titleArea, toolbarControls);
         headerBox.setAlignment(Pos.CENTER_LEFT);
         headerBox.setPadding(new Insets(8, 16, 8, 16)); // 8-point grid (VS §1.4)
-        headerBox.getStyleClass().add("ai-main-header");
         HBox.setHgrow(titleArea, Priority.ALWAYS);
         // Never let the header be squeezed away when the window gets short — only the
         // (scrollable) message area should yield vertical space.
@@ -1780,7 +1779,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         fileChipArea = new VBox(4);
         fileChipArea.setVisible(false);
         fileChipArea.setManaged(false);
-        fileChipArea.getStyleClass().add("ai-file-chip-area");
+        fileChipArea.setPadding(new Insets(2, 0, 2, 0)); // old .ai-file-chip-area padding, moved to code
 
         fileChipFlow = new javafx.scene.layout.FlowPane(6, 4);
         fileChipArea.getChildren().add(fileChipFlow);
@@ -1794,7 +1793,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Background-tasks pull-up: a thin header above the composer (后台任务 + running count) that
         // unfurls UPWARD into a compact per-category list when clicked. Only shown when busy.
         jobsListContainer = new VBox(2);
-        jobsListContainer.getStyleClass().add("ai-jobs-list");
+        jobsListContainer.setPadding(new Insets(0, 10, 6, 10)); // old .ai-jobs-list padding, moved to code (VS §3.5)
         FXUtils.setOverflowHidden(jobsListContainer);
         setJobsListHeightLimit(0);
         jobsListContainer.setManaged(false);
@@ -1803,11 +1802,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         jobsToggleIcon = SVG.KEYBOARD_ARROW_UP.createIcon(16);
         jobsToggleIcon.setMouseTransparent(true);
         Label jobsTitle = new Label("后台任务");
-        jobsTitle.getStyleClass().add("ai-jobs-title");
+        jobsTitle.getStyleClass().add("ai-caption");
         Region jobsSpacer = new Region();
         HBox.setHgrow(jobsSpacer, Priority.ALWAYS);
         jobsCountLabel = new Label();
-        jobsCountLabel.getStyleClass().add("ai-jobs-count");
+        jobsCountLabel.getStyleClass().add("ai-caption-primary");
         HBox jobsHeader = new HBox(6, jobsToggleIcon, jobsTitle, jobsSpacer, jobsCountLabel);
         jobsHeader.getStyleClass().add("ai-jobs-header");
         jobsHeader.setAlignment(Pos.CENTER_LEFT);
@@ -2102,7 +2101,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private VBox buildAutocompletePopup() {
         VBox popup = new VBox(2);
         popup.setMaxHeight(180);
-        popup.getStyleClass().add("ai-autocomplete-popup");
+        // Native popup shell: surface + radius 4 from .jfx-popup-container, elevation from
+        // .depth-1 (replaces the custom .ai-autocomplete-popup border box, VS §2.2).
+        popup.getStyleClass().addAll("jfx-popup-container", "depth-1");
+        popup.setPadding(new Insets(4)); // old .ai-autocomplete-popup padding, moved to code
         popup.setVisible(false);
         popup.setManaged(false);
         return popup;
@@ -2958,7 +2960,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         int lines = content == null ? 1 : content.split("\n", -1).length;
         editor.setPrefRowCount(Math.min(10, Math.max(2, lines)));
         editor.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
-        editor.getStyleClass().add("ai-inline-edit");
 
         JFXButton cancel = new JFXButton("取消");
         cancel.getStyleClass().add("dialog-cancel"); // native dialog-button styling
@@ -2969,7 +2970,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         VBox editBox = new VBox(6, editor, btnRow);
         editBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
-        editBox.getStyleClass().add("ai-inline-edit-box");
         HBox wrapper = new HBox(editBox);
         wrapper.setAlignment(Pos.CENTER_RIGHT);
         wrapper.setPadding(new Insets(2, 16, 2, 16));
@@ -3612,20 +3612,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 continue;   // only show categories with active work
             }
             Label name = new Label(e.getKey());
-            name.getStyleClass().add("ai-job-cat");
             name.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(name, Priority.ALWAYS);
             // Append a suffix so "2/10" reads as "2 of 10 running", not a countdown — mirrors
             // JobProgressBadge's "done/total 已完成" pattern for the same run/total ambiguity.
             Label count = new Label(run + "/" + total + " 运行中");
-            count.getStyleClass().add("ai-job-count");
+            count.getStyleClass().add("ai-caption");
             JFXButton cancelBtn = new JFXButton("取消");
-            cancelBtn.getStyleClass().add("ai-job-cancel-btn");
+            cancelBtn.getStyleClass().add("dialog-error"); // native error-text button tier (VS §3.5)
             java.util.List<String> ids = runningIds.getOrDefault(e.getKey(), java.util.Collections.emptyList());
             cancelBtn.setOnAction(ev -> ids.forEach(id -> org.jackhuang.hmcl.ai.tools.AiJobManager.getInstance().cancel(id)));
             HBox row = new HBox(8, name, count, cancelBtn);
             row.setAlignment(Pos.CENTER_LEFT);
-            row.getStyleClass().add("ai-job-row");
+            row.setPadding(new Insets(2, 0, 2, 0)); // old .ai-job-row padding, moved to code (VS §3.5)
             jobsListContainer.getChildren().add(row);
         }
 
@@ -3847,7 +3846,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             final String titlePrefix = askSourcePrefix;
 
             Label title = new Label(titlePrefix + i18n("ai.ask.title"));
-            title.getStyleClass().add("ai-ask-title");
+            title.getStyleClass().add("ai-caption-primary");
 
             int n = questions.size();
             // Build every question's control once up front, so answers persist while the user
@@ -3856,10 +3855,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             java.util.List<java.util.function.Supplier<String>> collectors = new java.util.ArrayList<>(n);
             for (org.jackhuang.hmcl.ui.ai.tools.AskTool.Question q : questions) {
                 VBox qBox = new VBox(4);
-                qBox.getStyleClass().add("ai-ask-question");
+                qBox.setPadding(new Insets(4, 0, 4, 0)); // old .ai-ask-question padding, moved to code
                 Label qLabel = new Label(q.question());
                 qLabel.setWrapText(true);
-                qLabel.getStyleClass().add("ai-ask-q-label");
+                qLabel.getStyleClass().add("ai-caption-bold");
                 qBox.getChildren().add(qLabel);
                 collectors.add(buildAskControl(q, qBox));
                 qBoxes.add(qBox);
@@ -3867,7 +3866,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
             // One-question-at-a-time wizard: a body that shows the current step + a nav bar.
             VBox body = new VBox();
-            body.getStyleClass().add("ai-ask-body");
 
             JFXButton back = FXUtils.newBorderButton(i18n("ai.ask.back"));
             JFXButton next = FXUtils.newBorderButton(i18n("ai.ask.next"));
@@ -3880,7 +3878,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             Region navSpacer = new Region();
             HBox.setHgrow(navSpacer, Priority.ALWAYS);
             HBox nav = new HBox(8, back, navSpacer, next, confirm);
-            nav.getStyleClass().add("ai-ask-nav-bar");
 
             int[] current = {0};
             Runnable render = () -> {
@@ -3925,7 +3922,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         boolean multi = "multi".equals(q.type());
         JFXTextField customField = new JFXTextField();
         customField.setPromptText(i18n("ai.ask.custom_hint"));
-        customField.getStyleClass().add("ai-ask-custom-field");
         customField.setVisible(false);
         customField.setManaged(false);
 
@@ -3933,12 +3929,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             java.util.List<JFXCheckBox> boxes = new java.util.ArrayList<>();
             for (String opt : q.options()) {
                 JFXCheckBox cb = new JFXCheckBox(opt);
-                cb.getStyleClass().add("ai-ask-option");
                 qBox.getChildren().add(cb);
                 boxes.add(cb);
             }
             JFXCheckBox customCb = new JFXCheckBox(i18n("ai.ask.custom"));
-            customCb.getStyleClass().add("ai-ask-option");
             customCb.selectedProperty().addListener((o, ov, nv) -> {
                 customField.setVisible(nv);
                 customField.setManaged(nv);
@@ -3958,12 +3952,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             for (String opt : q.options()) {
                 JFXRadioButton rb = new JFXRadioButton(opt);
                 rb.setToggleGroup(group);
-                rb.getStyleClass().add("ai-ask-option");
                 qBox.getChildren().add(rb);
             }
             JFXRadioButton customRb = new JFXRadioButton(i18n("ai.ask.custom"));
             customRb.setToggleGroup(group);
-            customRb.getStyleClass().add("ai-ask-option");
             customRb.selectedProperty().addListener((o, ov, nv) -> {
                 customField.setVisible(nv);
                 customField.setManaged(nv);
@@ -4096,7 +4088,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 target.setManaged(false);
             }
             Label errTitle = new Label("回复失败"); // TODO(i18n)
-            errTitle.getStyleClass().add("ai-caption-bold"); // rule lands with the B7 css rewrite
+            errTitle.getStyleClass().add("ai-caption-bold");
             Label errBody = new Label(message);
             errBody.setWrapText(true);
             VBox errCol = new VBox(2, errTitle, errBody);
@@ -4184,7 +4176,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (alignRight) {
             nameLabel.setAlignment(Pos.CENTER_RIGHT);
         }
-        nameLabel.getStyleClass().add("ai-bubble-name");
+        nameLabel.getStyleClass().add("ai-caption-bold");
+        nameLabel.setPadding(new Insets(0, 4, 2, 4)); // old .ai-bubble-name padding, moved to code
         return nameLabel;
     }
 
@@ -4369,7 +4362,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         Label footer = new Label(formatUsage(effective));
-        footer.getStyleClass().add("ai-usage-footer");
+        footer.getStyleClass().add("ai-footnote");
+        footer.setPadding(new Insets(2, 4, 0, 4)); // old .ai-usage-footer padding, moved to code
         return footer;
     }
 
@@ -4439,7 +4433,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label label = new Label(text);
         label.setWrapText(true);
         label.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
-        label.getStyleClass().addAll("ai-bubble", "ai-bubble-system");
+        // Caption-tier plain text, not a bubble (old .ai-bubble-system merged into .ai-caption).
+        label.getStyleClass().add("ai-caption");
+        label.setPadding(new Insets(4, 14, 6, 14)); // old .ai-bubble-system padding, moved to code
 
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));
         updateEmptyState();
@@ -4511,7 +4507,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             CollapseHeader header = new CollapseHeader("任务清单 (" + done + "/" + todos.size() + ")"); // TODO(i18n)
 
             VBox body = new VBox(4);
-            body.getStyleClass().add("ai-todo-body");
+            body.setPadding(new Insets(4, 0, 0, 0)); // old .ai-todo-body padding, moved to code
             for (org.jackhuang.hmcl.ui.ai.tools.TodoWriteTool.TodoItem t : todos) {
                 String status = t.status();
                 Label row = new Label(t.content());
@@ -4751,7 +4747,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label label = new Label(text);
         label.setWrapText(true);
         label.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
-        label.getStyleClass().addAll("ai-bubble", "ai-bubble-tool");
+        // Caption-tier plain text, not a bubble (old .ai-bubble-tool merged into .ai-caption).
+        label.getStyleClass().add("ai-caption");
+        label.setPadding(new Insets(4, 0, 4, 0)); // old .ai-bubble-tool padding, moved to code
 
         messageList.getChildren().add(wrapBubble(label, Pos.CENTER_LEFT));
 

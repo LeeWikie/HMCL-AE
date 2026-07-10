@@ -2002,14 +2002,41 @@
 .update-pane:active .subtitle-label {
     -fx-text-fill: -monet-tertiary;
 }
-
 /*******************************************************************************
  *                                                                             *
  * AI Chat Bubbles                                                             *
  *                                                                             *
  ******************************************************************************/
 
-/* Bubbles carry no border — container-vs-surface fill contrast alone separates them (VS §3.1/3.2). */
+/* ===== Shared caption / footnote text tiers (VS §2.1-1) =====
+   Every small secondary-text label in the AI area hangs off one of these four classes
+   (the old per-widget 11px/11.5px/12.5px one-off rules were merged into this family). */
+
+.ai-caption {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-caption-bold {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+.ai-caption-primary {
+    -fx-font-size: 12px;
+    -fx-text-fill: -monet-primary;
+}
+
+.ai-footnote {
+    -fx-font-size: 10px;
+    -fx-text-fill: -monet-on-surface-variant;
+}
+
+/* ===== Bubbles ===== */
+
+/* Bubbles carry no border — container-vs-surface fill contrast alone separates them (VS §3.1/3.2).
+   Radius 12 is exception A of the radius system: the bubble keeps the chat form language (VS §1.1). */
 .ai-bubble {
     -fx-padding: 10 14 10 14;
     -fx-font-size: 13px;
@@ -2028,6 +2055,15 @@
     -fx-text-fill: -monet-on-surface;
 }
 
+/* Colour-emoji bubbles render text as a TextFlow; colour its Text nodes to match. */
+.ai-bubble-user .text {
+    -fx-fill: -monet-on-secondary-container;
+}
+
+.ai-bubble-ai .text {
+    -fx-fill: -monet-on-surface;
+}
+
 .ai-bubble-error {
     -fx-background-color: -monet-error-container;
     -fx-text-fill: -monet-on-error-container;
@@ -2035,7 +2071,7 @@
 
 /* The error panel is an HBox (icon + text column) since A13 — -fx-text-fill on the container
    does NOT reach child Labels in JavaFX, so the on-error-container pairing needs an explicit
-   descendant rule (keep this alongside the container rule in the B7 rewrite). */
+   descendant rule alongside the container rule. */
 .ai-bubble-error .label {
     -fx-text-fill: -monet-on-error-container;
 }
@@ -2044,28 +2080,25 @@
     -fx-fill: -monet-on-error-container;
 }
 
-.ai-bubble-system {
-    -fx-background-color: transparent;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
-    -fx-padding: 4 14 6 14;
+/* Flat message style strips the bubble fill/padding for plain text rendering. */
+.ai-msg-flat .ai-bubble {
+    -fx-background-color: null;
+    -fx-padding: 2 0 2 0;
 }
 
-/* Centered pill for synthetic event turns (background-job auto-continue, crash injection). */
-.ai-event-pill {
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 10;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
-    -fx-padding: 4 12 4 12;
+/* ---- AI Chat Font Sizes (classes are string-built: "ai-chat-font-" + setting) ---- */
+
+.ai-chat-font-small .ai-bubble {
+    -fx-font-size: 12px;
 }
 
-/* The reasoning ("思考过程") card shares .ai-tool-card with the tool/tool-group cards (see the
-   "AI inline cards" section below) — one rule keeps the three inline subordinate cards'
-   box model byte-identical by construction. */
+.ai-chat-font-normal .ai-bubble {
+    -fx-font-size: 13px;
+}
 
-/* No `.ai-bubble-wrapper` rule: its padding moved into wrapBubble (VS §4.3-1 dual-write fix);
-   the class itself stays in code as the setWrapperCache marker. */
+.ai-chat-font-large .ai-bubble {
+    -fx-font-size: 16px;
+}
 
 /* Inline action bar (copy/regenerate/branch/delete etc.) below a message bubble. The bubble
    wrapper + its bar are fused into one `.ai-msg-block` (BF A2 / C-04) so the bar can fade in on
@@ -2079,8 +2112,23 @@
     -fx-opacity: 1;
 }
 
-/* Markdown native rendering (commonmark AST -> JavaFX nodes). Text nodes use -fx-fill
-   (not -fx-text-fill), so colour them explicitly with the theme on-surface colour. */
+/* Centered pill for synthetic event turns (background-job auto-continue, crash injection).
+   Radius 10 is exception B of the radius system: capsule badges (VS §1.1). */
+.ai-event-pill {
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 10;
+    -fx-text-fill: -monet-on-surface-variant;
+    -fx-font-size: 12px;
+    -fx-padding: 2 10 2 10;
+}
+
+/* No `.ai-bubble-wrapper` rule: its padding moved into wrapBubble (VS §4.3-1 dual-write fix);
+   the class itself stays in code as the setWrapperCache marker. */
+
+/* ===== Markdown (commonmark AST -> JavaFX nodes) ===== */
+
+/* Text nodes use -fx-fill (not -fx-text-fill), so colour them explicitly with the theme
+   on-surface colour. */
 .ai-markdown-view .text {
     -fx-fill: -monet-on-surface;
 }
@@ -2116,14 +2164,6 @@
     -fx-font-weight: bold;
 }
 
-/* Colour-emoji bubbles render text as a TextFlow; colour its Text nodes to match. */
-.ai-bubble-user .text {
-    -fx-fill: -monet-on-secondary-container;
-}
-.ai-bubble-ai .text {
-    -fx-fill: -monet-on-surface;
-}
-
 .ai-markdown-view .md-list-marker {
     -fx-text-fill: -monet-on-surface;
 }
@@ -2150,12 +2190,12 @@
 
 .ai-markdown-view .md-code-lang {
     -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
 }
 
 .ai-markdown-view .md-code-copy {
     -fx-text-fill: -monet-primary;
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
     -fx-padding: 2 8 2 8;
     -fx-background-radius: 6;
 }
@@ -2212,295 +2252,7 @@
     -fx-border-width: 0 1 1 0;
 }
 
-/* Flat message style strips bubble fills/borders for plain text rendering */
-.ai-msg-flat .ai-bubble {
-    -fx-background-color: transparent;
-    -fx-border-color: transparent;
-    -fx-padding: 4 14 4 14;
-}
-
-.ai-typing-indicator {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 4 16 6 16;
-}
-
-
-/* Shared scrim behind the chat-settings drawer (single backdrop token, C-19). */
-.ai-backdrop {
-    -fx-background-color: rgba(0, 0, 0, 0.35);
-}
-
-/* ---- AI Header Selectors (compact LineSelectButton) ---- */
-
-.ai-header-selector {
-    -fx-font-size: 11px;
-}
-
-.ai-header-selector > .rippler-container > .line-component-container {
-    -fx-padding: 0 4 0 8;
-    -fx-spacing: 8;
-}
-
-.ai-header-selector .trailing-label {
-    -fx-font-size: 11px;
-}
-
-.ai-header-selector .trailing-icon {
-    -fx-padding: 0;
-}
-
-.ai-header-selector .svg {
-    -fx-scale-x: 0.8;
-    -fx-scale-y: 0.8;
-}
-
-/* ---- AI Main Header ---- */
-
-/* Page-header AND drawer title tier (absorbed AIMainPage's former inline 15px-bold setStyle;
-   text colour falls back to the global .label on-surface). */
-.ai-header-title {
-    -fx-font-size: 15px;
-    -fx-font-weight: bold;
-}
-
-.ai-header-subtitle {
-    -fx-text-fill: -monet-on-surface-variant;
-}
-
-.ai-header-avatar {
-    -fx-background-color: -monet-primary-container;
-    -fx-background-radius: 17;
-}
-
-.ai-header-avatar .svg {
-    -fx-fill: -monet-on-primary-container;
-}
-
-/* ---- AI Chat View ---- */
-
-.ai-chat-view {
-    -fx-background-color: transparent;
-}
-
-.ai-chat-stack {
-    -fx-background-color: transparent;
-}
-
-.ai-messages-scroll {
-    -fx-background-color: transparent;
-}
-
-.ai-messages-scroll > .viewport {
-    -fx-background-color: transparent;
-}
-
-.ai-messages-area {
-    -fx-background-color: transparent;
-}
-
-.ai-message-list {
-    -fx-background-color: transparent;
-}
-
-/* ---- AI Suggestion Chips (chips themselves are native jfx-button-border JFXButtons) ---- */
-
-.ai-suggestions-label {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 0 4 4 4;
-}
-
-/* ---- AI Input Bar ---- */
-
-.ai-input-bar {
-    /* No -fx-background-color: a Region with a (even transparent) background is mouse-pickable across
-       its whole bounds, so the bar's tall padding/gutters would eat clicks over the conversation above
-       the field. A null background is click-through; the top divider border still paints. */
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1 0 0 0;
-}
-
-/* Background-tasks pull-up (compact, collapsible, unfurls upward above the composer). */
-.ai-jobs-pane {
-    -fx-background-color: -monet-surface-container-low-transparent-80;
-    -fx-background-radius: 8;
-}
-.ai-jobs-header {
-    -fx-padding: 4 8 4 8;
-    -fx-cursor: hand;
-    -fx-background-radius: 8;
-}
-.ai-jobs-header:hover {
-    -fx-background-color: -monet-surface-container-highest-transparent-50;
-}
-.ai-jobs-title {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface-variant;
-}
-.ai-jobs-count {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-primary;
-}
-.ai-jobs-list {
-    -fx-padding: 0 8 0 8;
-}
-.ai-job-row {
-    -fx-padding: 3 2 3 2;
-}
-/* Pinned TODO checklist above the messages — the card itself carries .ai-jobs-pane (same
-   translucent/borderless treatment as its jobs-pane sibling: "任务清单的边缘和界面相当割裂不对齐")
-   and its header is the shared .ai-collapse-header component. Row state colours below replace
-   per-row hard-coded setStyle values so both light and dark themes get proper monet colours;
-   the .svg descendant rules tint the CHECK / PLAY_ARROW / RADIO_BUTTON_UNCHECKED status icons. */
-.ai-todo-container {
-    -fx-padding: 4 8 0 8;
-}
-.ai-todo-body {
-    -fx-padding: 4 0 0 0;
-}
-.ai-todo-done {
-    -fx-text-fill: -monet-tertiary;
-}
-.ai-todo-done .svg {
-    -fx-fill: -monet-tertiary;
-}
-.ai-todo-in-progress {
-    -fx-text-fill: -monet-primary;
-    -fx-font-weight: bold;
-}
-.ai-todo-in-progress .svg {
-    -fx-fill: -monet-primary;
-}
-.ai-job-cat {
-    -fx-font-size: 12px;
-    -fx-text-fill: -monet-on-surface;
-}
-.ai-job-count {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-}
-.ai-job-cancel-btn {
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-error;
-    -fx-padding: 1 6 1 6;
-}
-
-.ai-input-field {
-    -fx-font-size: 13px;
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-background-radius: 6;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 6;
-    -fx-border-width: 1;
-    -fx-padding: 6 10 6 10;
-}
-
-/* Focus feedback is colour-only: the border width must NOT change, or the content area would
-   shift by a pixel on every focus change (VS §3.6). */
-.ai-input-field:focused {
-    -fx-border-color: -monet-primary;
-}
-
-/* The composer is now a TextArea: strip the inner ScrollPane/content chrome so only the
-   outer rounded surface paints (otherwise a white rectangle covers the rounded corners). */
-.ai-input-field .scroll-pane,
-.ai-input-field .scroll-pane .viewport,
-.ai-input-field .scroll-pane .content {
-    -fx-background-color: transparent;
-    -fx-background-insets: 0;
-    -fx-padding: 0;
-}
-
-/* ---- ask tool: structured question panel above the input ---- */
-.ai-ask-panel {
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 10;
-    -fx-border-color: -monet-primary;
-    -fx-border-radius: 10;
-    -fx-border-width: 1;
-    -fx-padding: 10 12 10 12;
-}
-
-.ai-ask-title {
-    -fx-font-size: 13px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-primary;
-}
-
-.ai-ask-question {
-    -fx-padding: 4 0 4 0;
-}
-
-.ai-ask-q-label {
-    -fx-font-size: 12.5px;
-    -fx-font-weight: bold;
-}
-
-.ai-ask-option {
-    -fx-font-size: 12.5px;
-}
-
-/* Send button is a plain .jfx-button-raised; while a response of the VISIBLE session streams it
-   becomes a Stop button and gains .ai-stop-btn (danger colours). The compound selector outranks
-   .jfx-button-raised explicitly instead of relying on source order (C-08). The class name is
-   also a behaviour hook — updateSendButtonMode() checks contains("ai-stop-btn"). */
-.jfx-button-raised.ai-stop-btn {
-    -fx-background-color: -monet-error;
-    -fx-text-fill: -monet-on-error;
-}
-
-/* ---- AI Approval Badge in Header ----
-   Used to have per-mode (.ai-approval-badge-safe/-ask/-yolo) color variants; now that there is
-   only one approval mode (Auto — see AiApprovalMode's own doc for the SAFE/ASK/YOLO merge this
-   replaced), the badge no longer varies and just uses the base style below. */
-
-.ai-approval-badge {
-    -fx-font-size: 10px;
-    -fx-padding: 1 6 1 6;
-    -fx-background-radius: 4;
-    -fx-text-fill: -monet-on-primary-container;
-    -fx-background-color: -monet-primary-container;
-}
-
-/* "计划模式" header badge (AIMainPage#planBadge) — a DIFFERENT feature from the approval-mode
-   badge above (Plan Mode is the read-only-investigation-then-approve toggle, unrelated to the
-   now-unified SAFE/ASK/YOLO approval mode). It used to piggyback on the approval-mode badge's
-   now-deleted ".ai-approval-badge-ask" tertiary-container variant purely for a distinct color;
-   now that that class is gone it needs its own rule so it doesn't silently fall back to
-   .ai-approval-badge's primary-container color and become visually indistinguishable from the
-   "Auto" badge next to it. */
-.ai-plan-mode-badge {
-    -fx-background-color: -monet-tertiary-container;
-    -fx-text-fill: -monet-on-tertiary-container;
-}
-
-/* ---- Inline live job-progress badge ({{job_progress:<id[,id...]>}} chat markup) ----
-   Spliced into a message's TextFlow in place of the raw marker (see MarkdownMessageView /
-   JobProgressBadge): a small highlighted pill, not plain inline text, so a live-updating
-   percentage (single job) or "<done>/<N> 已完成" count (multiple jobs) reads as status chrome
-   rather than prose. Mirrors .ai-approval-badge's small-pill treatment above. */
-.ai-job-progress-badge {
-    -fx-font-size: 11.5px;
-    -fx-padding: 1 8 1 8;
-    -fx-background-radius: 8;
-    -fx-text-fill: -monet-on-primary-container;
-    -fx-background-color: -monet-primary-container;
-}
-
-/* Once settled (job finished / all jobs in the group terminal / bad id fallback), dim slightly
-   so a glance at old chat history can tell a live badge from a long-finished one. */
-.ai-job-progress-badge-done {
-    -fx-opacity: 0.75;
-}
-
-/* ---- AI inline cards (reasoning / tool / tool group) ---- */
-
-.ai-bubble-tool {
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
-    -fx-padding: 4 0 4 0;
-}
+/* ===== Inline subordinate cards (reasoning / tool / tool group) ===== */
 
 /* Shared box model of the three inline subordinate cards — reasoning ("思考过程"), tool call
    (Calling… -> Used/Failed, collapsible result) and tool-call group ("已调用 N 个工具"). One rule
@@ -2523,16 +2275,18 @@
     -fx-cursor: hand;
     -fx-background-radius: 4;
 }
+
 .ai-collapse-header:hover {
     -fx-background-color: -monet-surface-container-highest;
 }
+
 .ai-collapse-header .svg {
     -fx-fill: -monet-on-surface-variant;
 }
 
 .ai-tool-card-result {
     -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
     -fx-font-family: "Monospaced";
     -fx-padding: 4 0 0 0;
 }
@@ -2545,51 +2299,45 @@
     -fx-text-fill: -monet-error;
 }
 
-/* ---- AI Chat Settings Drawer ---- */
+/* ===== Capsule badges (radius 10 = exception B, VS §1.1) ===== */
 
-.ai-chat-settings-drawer {
-    /* Raised side-sheet: tonal surface + native depth-3 elevation + native 4px inner-edge
-       radius (title/header/body/scroll styling is native or code-side now). */
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 4 0 0 4;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
-}
-
-/* ---- AI Chat Message Styles ---- */
-
-.ai-bubble-name {
-    -fx-font-weight: bold;
-    -fx-font-size: 11px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-padding: 0 4 2 4;
-}
-
-.ai-usage-footer {
+/* ---- AI Approval Badge in Header ----
+   Used to have per-mode (.ai-approval-badge-safe/-ask/-yolo) color variants; now that there is
+   only one approval mode (Auto — see AiApprovalMode's own doc for the SAFE/ASK/YOLO merge this
+   replaced), the badge no longer varies and just uses the base style below. */
+.ai-approval-badge {
     -fx-font-size: 10px;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-opacity: 0.7;
-    -fx-padding: 2 4 0 4;
+    -fx-padding: 2 8 2 8;
+    -fx-background-radius: 10;
+    -fx-text-fill: -monet-on-primary-container;
+    -fx-background-color: -monet-primary-container;
 }
 
-/* ---- AI Chat Font Sizes ---- */
+/* "计划模式" header badge (AIMainPage#planBadge) — a DIFFERENT feature from the approval-mode
+   badge above (Plan Mode is the read-only-investigation-then-approve toggle, unrelated to the
+   now-unified SAFE/ASK/YOLO approval mode). It needs its own colour pair so it doesn't fall
+   back to .ai-approval-badge's primary-container and become indistinguishable from the "Auto"
+   badge next to it. */
+.ai-plan-mode-badge {
+    -fx-background-color: -monet-tertiary-container;
+    -fx-text-fill: -monet-on-tertiary-container;
+}
 
-.ai-chat-font-small .ai-bubble {
+/* ---- Inline live job-progress badge ({{job_progress:<id[,id...]>}} chat markup) ----
+   Spliced into a message's TextFlow in place of the raw marker (see MarkdownMessageView /
+   JobProgressBadge). The node carries BOTH .ai-approval-badge (capsule base above) and this
+   class, which only bumps the font a step above the header badge's 10px. */
+.ai-job-progress-badge {
     -fx-font-size: 12px;
 }
 
-.ai-chat-font-normal .ai-bubble {
-    -fx-font-size: 13px;
+/* Once settled (job finished / all jobs in the group terminal / bad id fallback), dim slightly
+   so a glance at old chat history can tell a live badge from a long-finished one. */
+.ai-job-progress-badge-done {
+    -fx-opacity: 0.75;
 }
 
-.ai-chat-font-large .ai-bubble {
-    -fx-font-size: 16px;
-}
-
-/* ---- AI Search (dialog) ----
- * Cross-session search moved from a hand-built overlay into a native DialogPane
- * (ui/ai/AiSearchDialog, blueprint B5); the dialog shell / text field / buttons are all
- * native now, so only the message-locate flash below survives. Search result rows and
- * the composer autocomplete rows share the .ai-list-row family. */
+/* ===== List rows (search results + composer autocomplete share the family, B5 / CP §1) ===== */
 
 .ai-list-row {
     -fx-background-color: null;
@@ -2606,38 +2354,202 @@
     -fx-background-color: -monet-secondary-container;
 }
 
+/* ---- AI Search (dialog) ----
+ * Cross-session search moved from a hand-built overlay into a native DialogPane
+ * (ui/ai/AiSearchDialog, blueprint B5); the dialog shell / text field / buttons are all
+ * native now, so only the message-locate flash below survives. */
 .ai-search-match-highlight {
     -fx-background-color: -monet-tertiary-container;
     -fx-background-radius: 4;
 }
 
-/* ---- AI File Upload ---- */
+/* ===== Input area ===== */
 
-.ai-file-chip-area {
-    -fx-padding: 2 0 2 0;
+.ai-input-bar {
+    /* No -fx-background-color: a Region with a (even transparent) background is mouse-pickable across
+       its whole bounds, so the bar's tall padding/gutters would eat clicks over the conversation above
+       the field. A null background is click-through; the top divider border still paints. */
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-width: 1 0 0 0;
 }
 
+.ai-input-field {
+    -fx-font-size: 13px;
+    -fx-background-color: -monet-surface-container-highest;
+    -fx-background-radius: 6;
+    -fx-border-color: -monet-outline-variant;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+    -fx-padding: 6 10 6 10;
+}
+
+/* Focus feedback is colour-only: the border width must NOT change, or the content area would
+   shift by a pixel on every focus change (VS §3.6). */
+.ai-input-field:focused {
+    -fx-border-color: -monet-primary;
+}
+
+/* The composer is a TextArea: strip the inner ScrollPane/content chrome so only the
+   outer rounded surface paints (otherwise a white rectangle covers the rounded corners). */
+.ai-input-field .scroll-pane,
+.ai-input-field .scroll-pane .viewport,
+.ai-input-field .scroll-pane .content {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+/* Send button is a plain .jfx-button-raised; while a response of the VISIBLE session streams it
+   becomes a Stop button and gains .ai-stop-btn (danger colours). The compound selector outranks
+   .jfx-button-raised explicitly instead of relying on source order (C-08). The class name is
+   also a behaviour hook — updateSendButtonMode() checks contains("ai-stop-btn"). */
+.jfx-button-raised.ai-stop-btn {
+    -fx-background-color: -monet-error;
+    -fx-text-fill: -monet-on-error;
+}
+
+/* Attachment chip above the composer (capsule, radius 10 = exception B). */
 .ai-file-chip {
     -fx-background-color: -monet-secondary-container;
     -fx-text-fill: -monet-on-secondary-container;
-    -fx-font-size: 11px;
+    -fx-font-size: 12px;
     -fx-padding: 2 8 2 8;
-    -fx-background-radius: 6;
+    -fx-background-radius: 10;
     -fx-max-width: 300;
 }
 
-/* ---- AI Autocomplete Popup ---- */
+/* ===== Background jobs pull-up + pinned TODO checklist ===== */
 
-.ai-autocomplete-popup {
-    -fx-background-color: -monet-surface;
+/* Background-tasks pull-up (compact, collapsible, unfurls upward above the composer). The pane
+   is DELIBERATELY translucent with no shadow (surface-container-low-transparent-80) so the
+   conversation reads through it — do not "fix" it with an opaque fill or elevation (VS §6-3). */
+.ai-jobs-pane {
+    -fx-background-color: -monet-surface-container-low-transparent-80;
     -fx-background-radius: 4;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 1;
-    -fx-border-radius: 4;
-    -fx-padding: 4;
 }
 
-/* Autocomplete rows share the .ai-list-row family with the search dialog (B5 / CP §1). */
+.ai-jobs-header {
+    -fx-padding: 6 10 6 10;
+    -fx-cursor: hand;
+    -fx-background-radius: 4;
+}
+
+/* Single AI-area hover token — same value as .ai-list-row:hover / .ai-collapse-header:hover (C-06). */
+.ai-jobs-header:hover {
+    -fx-background-color: -monet-surface-container-highest;
+}
+
+/* Pinned TODO checklist above the messages — the card itself carries .ai-jobs-pane (same
+   translucent/borderless treatment as its jobs-pane sibling) and its header is the shared
+   .ai-collapse-header component. Row state colours below replace per-row hard-coded setStyle
+   values so both light and dark themes get proper monet colours; the .svg descendant rules
+   tint the CHECK / PLAY_ARROW / RADIO_BUTTON_UNCHECKED status icons. */
+.ai-todo-done {
+    -fx-text-fill: -monet-tertiary;
+}
+
+.ai-todo-done .svg {
+    -fx-fill: -monet-tertiary;
+}
+
+.ai-todo-in-progress {
+    -fx-text-fill: -monet-primary;
+    -fx-font-weight: bold;
+}
+
+.ai-todo-in-progress .svg {
+    -fx-fill: -monet-primary;
+}
+
+/* ===== Drawer + shared scrim ===== */
+
+/* Shared scrim behind the chat-settings drawer (single backdrop token, C-19). */
+.ai-backdrop {
+    -fx-background-color: rgba(0, 0, 0, 0.35);
+}
+
+.ai-chat-settings-drawer {
+    /* Raised side-sheet: tonal surface + native depth-3 elevation + native 4px inner-edge
+       radius (title/header/body/scroll styling is native or code-side now). */
+    -fx-background-color: -monet-surface-container-low;
+    -fx-background-radius: 4 0 0 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
+}
+
+/* ===== Page header ===== */
+
+/* Compact LineSelectButton variant used in the chat header. */
+.ai-header-selector {
+    -fx-font-size: 12px;
+}
+
+.ai-header-selector > .rippler-container > .line-component-container {
+    -fx-padding: 0 4 0 8;
+    -fx-spacing: 8;
+}
+
+.ai-header-selector .trailing-label {
+    -fx-font-size: 12px;
+}
+
+.ai-header-selector .trailing-icon {
+    -fx-padding: 0;
+}
+
+.ai-header-selector .svg {
+    -fx-scale-x: 0.8;
+    -fx-scale-y: 0.8;
+}
+
+/* Page-header AND drawer title tier (absorbed AIMainPage's former inline 15px-bold setStyle;
+   text colour falls back to the global .label on-surface). */
+.ai-header-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+/* 34×34 round avatar (radius 17 = exception C: full circle, VS §1.1). */
+.ai-header-avatar {
+    -fx-background-color: -monet-primary-container;
+    -fx-background-radius: 17;
+}
+
+.ai-header-avatar .svg {
+    -fx-fill: -monet-on-primary-container;
+}
+
+/* ===== ask tool: structured question panel above the input ===== */
+
+/* The ONLY intentional accent border in the AI area — an "awaiting your answer" panel needs to
+   interrupt the eye (VS §1.2); native radius 4. */
+.ai-ask-panel {
+    -fx-background-color: -monet-surface-container;
+    -fx-background-radius: 4;
+    -fx-border-color: -monet-primary;
+    -fx-border-radius: 4;
+    -fx-border-width: 1;
+    -fx-padding: 10 12 10 12;
+}
+
+/* ===== Settings-page connection-test feedback ===== */
+
+/* The result labels carry an SVG CHECK/CLOSE graphic plus latency/error text — colour both
+   the icon (.svg fill) and the text with the native success=tertiary / error pairing. */
+.ai-feedback-success {
+    -fx-text-fill: -monet-tertiary;
+}
+
+.ai-feedback-success .svg {
+    -fx-fill: -monet-tertiary;
+}
+
+.ai-feedback-error {
+    -fx-text-fill: -monet-error;
+}
+
+.ai-feedback-error .svg {
+    -fx-fill: -monet-error;
+}
 
 /* org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane: a real JSON/code editor (RichTextFX
  * CodeArea) with lightweight syntax highlighting, replacing the old fixed-question-form dialog
@@ -2646,9 +2558,9 @@
 .json-editor-code-area {
     -fx-font-size: 13px;
     -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 8;
+    -fx-background-radius: 6;
     -fx-border-color: -monet-outline-variant;
-    -fx-border-radius: 8;
+    -fx-border-radius: 6;
     -fx-padding: 6;
 }
 

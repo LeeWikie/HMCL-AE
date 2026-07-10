@@ -477,7 +477,6 @@ public final class MarkdownMessageView extends VBox {
         if (italic) t.getStyleClass().add("md-em");
         if (code) t.getStyleClass().add("md-code-inline");
         if (strike) t.setStrikethrough(true);
-        t.getStyleClass().add("md-text");
         return t;
     }
 
