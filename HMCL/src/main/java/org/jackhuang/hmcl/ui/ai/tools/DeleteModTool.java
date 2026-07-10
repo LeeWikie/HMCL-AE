@@ -17,6 +17,8 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.addon.mod.LocalModFile;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
@@ -24,41 +26,37 @@ import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 /// A controlled-write tool that removes a single mod file from an instance's
 /// `mods` directory.
 ///
-/// Resolution mirrors {@link ToggleModTool}: the `mods` folder is located through
-/// HMCL's launcher APIs ([`Profiles#getSelectedProfile()`] /
-/// [`Profiles#getSelectedInstance()`] / [`HMCLGameRepository#getRunDirectory(String)`]),
-/// then every regular file in it is matched against the `mod` parameter by a
-/// case-insensitive substring. The tool refuses to act unless exactly one file
-/// matches (zero or several is an error), so it can never delete the wrong mod by
-/// accident. Both enabled (`xxx.jar`) and disabled (`xxx.jar.disabled`) files are
-/// considered.
+/// Resolution goes through the native mod state machine, exactly like {@link ToggleModTool}:
+/// the installed mods are parsed via [`HMCLGameRepository#getModManager(String)`] +
+/// [`ModManager#getLocalFiles()`] and matched against the `mod` parameter by a case-insensitive
+/// substring over the on-disk file name, the display name and the mod id. The tool refuses to
+/// act unless exactly one mod matches (zero or several is an error), so it can never delete the
+/// wrong mod by accident. Both enabled (`xxx.jar`) and disabled (`xxx.jar.disabled`) files are
+/// considered; `.old` rollback archives are left to the native mod page.
 ///
 /// Deletion is recoverable when possible: the file is routed to the OS recycle
 /// bin / trash via {@link FileTrash} when the user's "delete to recycle bin"
 /// preference (supplied to the constructor and read live on every call) is enabled
-/// and the platform supports it; otherwise it is permanently deleted.
+/// and the platform supports it; otherwise the native [`LocalModFile#delete()`] removes it
+/// permanently.
+///
+/// A failed deletion is attributed via [GameResourceGuard#checkInstanceNotRunning(String)]:
+/// when the instance is being played the failure says so ("file held open by the running game,
+/// quit and retry; nothing was changed") instead of leaking a raw I/O message.
 ///
 /// Permission level: {@link ToolPermission#CONTROLLED_WRITE}. It removes exactly
 /// one mod file and never touches anything else.
 @NotNullByDefault
 public final class DeleteModTool implements ToolSpec {
-
-    private static final String DISABLED_SUFFIX = ".disabled";
 
     /// Whether to route the deletion to the OS recycle bin (recoverable) instead of
     /// permanently deleting it; read live on each call.
@@ -92,7 +90,7 @@ public final class DeleteModTool implements ToolSpec {
                  "$schema": "https://json-schema.org/draft/2020-12/schema",
                  "type": "object",
                  "properties": {
-                   "mod": {"type": "string", "description": "The mod file name, or a case-insensitive substring of it that matches exactly one file in the mods folder (matches both enabled .jar and disabled .jar.disabled files)."},
+                   "mod": {"type": "string", "description": "The mod file name, or a case-insensitive substring of the file name, display name or mod id that matches exactly one installed mod (matches both enabled .jar and disabled .jar.disabled files)."},
                    "instance": {"type": "string", "description": "Optional instance/version id; defaults to the currently selected instance."}
                  },
                  "required": ["mod"]
@@ -103,11 +101,12 @@ public final class DeleteModTool implements ToolSpec {
     @Override
     public String getDescription() {
         return "Removes a single mod from an instance's mods folder (use this instead of a raw file delete). "
-                + "Parameters: mod (required, the mod file name or a case-insensitive substring that matches exactly one file; "
+                + "Parameters: mod (required, the mod file name — or a case-insensitive substring of the file name, "
+                + "display name or mod id — that matches exactly one installed mod; "
                 + "matches both enabled '.jar' and disabled '.jar.disabled' files), "
                 + "instance (optional, the instance/version id; defaults to the currently selected instance). "
                 + "The file is moved to the system recycle bin when possible (recoverable), otherwise permanently deleted. "
-                + "Fails if the substring matches zero or more than one file, so it never deletes the wrong mod. "
+                + "Fails if the substring matches zero or more than one mod, so it never deletes the wrong mod. "
                 + "Returns the removed file name and whether it was recycled or permanently deleted.";
     }
 
@@ -149,50 +148,38 @@ public final class DeleteModTool implements ToolSpec {
             return ToolResult.failure("Failed to resolve mods directory: " + e.getMessage());
         }
         if (!Files.isDirectory(modsDir)) {
-            return ToolResult.failure("Mods directory does not exist for instance '" + instanceId + "': " + modsDir);
+            return ToolFailures.failure(
+                    "Mods directory does not exist for instance '" + instanceId + "': " + modsDir,
+                    ToolFailures.Retryable.NO,
+                    "the instance has no mods folder yet, so there is nothing to delete",
+                    "Use list_mods to see the installed mods, or check the instance id");
         }
 
-        // Collect candidate mod files (only top-level regular files) and match by
-        // case-insensitive substring, exactly like ToggleModTool.
-        List<Path> candidates = new ArrayList<>();
-        String queryLower = modQuery.toLowerCase(Locale.ROOT);
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(modsDir)) {
-            for (Path entry : stream) {
-                if (!Files.isRegularFile(entry)) {
-                    continue;
-                }
-                String name = entry.getFileName().toString();
-                if (name.toLowerCase(Locale.ROOT).contains(queryLower)) {
-                    candidates.add(entry);
-                }
-            }
-        } catch (IOException e) {
-            return ToolResult.failure("Failed to list mods directory: " + e.getMessage());
+        // Resolve the mod through the native ModManager/LocalModFile state machine, exactly
+        // like ToggleModTool (shared helper).
+        ToggleModTool.ResolvedMod resolved =
+                ToggleModTool.resolveTrackedMod(repository.getModManager(instanceId), modsDir, modQuery);
+        if (resolved.failure() != null) {
+            return resolved.failure();
         }
+        LocalModFile mod = resolved.mod();
 
-        if (candidates.isEmpty()) {
-            return ToolResult.failure("No mod file matching '" + modQuery + "' was found in " + modsDir
-                    + ". Use list_mods to see the installed mods.");
-        }
-        if (candidates.size() > 1) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Ambiguous: '").append(modQuery).append("' matches ").append(candidates.size()).append(" files:\n");
-            for (Path c : candidates) {
-                sb.append("  - ").append(c.getFileName()).append('\n');
-            }
-            sb.append("Please refine the 'mod' parameter to match exactly one file.");
-            return ToolResult.failure(sb.toString().trim());
-        }
-
-        Path target = candidates.get(0);
+        Path target = mod.getFile();
         String fileName = target.getFileName().toString();
-        boolean wasDisabled = fileName.toLowerCase(Locale.ROOT).endsWith(DISABLED_SUFFIX);
+        boolean wasDisabled = mod.isDisabled();
 
         boolean recycled;
         try {
-            recycled = FileTrash.delete(target, toRecycleBin.getAsBoolean());
+            if (toRecycleBin.getAsBoolean()) {
+                recycled = FileTrash.delete(target, true);
+            } else {
+                // The native state-machine delete (the same call behind ModManager#removeMods).
+                mod.delete();
+                recycled = false;
+            }
         } catch (Throwable e) {
-            return ToolResult.failure("Failed to delete mod '" + fileName + "': " + e.getMessage());
+            return ToggleModTool.fileOperationFailure(instanceId,
+                    "Deleting mod '" + fileName + "' from instance '" + instanceId + "' failed", e);
         }
 
         return ToolResult.success((recycled

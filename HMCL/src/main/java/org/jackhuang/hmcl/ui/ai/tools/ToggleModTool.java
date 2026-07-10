@@ -17,39 +17,54 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.addon.LocalAddonManager;
+import org.jackhuang.hmcl.addon.mod.LocalModFile;
+import org.jackhuang.hmcl.addon.mod.ModManager;
 import org.jackhuang.hmcl.ai.tools.Tool;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
+import org.jackhuang.hmcl.util.StringUtils;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/// A tool that enables or disables a mod of a Minecraft instance by renaming the
-/// mod file inside its `mods` directory.
+/// A tool that enables or disables a mod of a Minecraft instance THROUGH the native
+/// [ModManager]/[LocalModFile] state machine (the same objects behind HMCL's mod page),
+/// instead of renaming files behind its back.
 ///
 /// In HMCL (as in most launchers) a mod is considered enabled when its file name
 /// ends with `.jar`, and disabled when the `.disabled` suffix is appended
-/// (`xxx.jar.disabled`). This tool toggles that suffix using [Files#move].
+/// (`xxx.jar.disabled`). This tool resolves the [LocalModFile] via
+/// [`HMCLGameRepository#getModManager(String)`] + [`ModManager#getLocalFiles()`] and flips its
+/// state with [`LocalModFile#setActive(boolean)`], which delegates to
+/// [`ModManager#enableMod`]/[`ModManager#disableMod`] — so the on-disk naming conventions
+/// (including the `.old` rollback archive convention) always stay consistent with the native UI.
 ///
 /// It reuses HMCL's launcher APIs directly:
 /// - [`Profiles#getSelectedProfile()`] / [`Profiles#getSelectedInstance()`],
-/// - [`HMCLGameRepository#getRunDirectory(String)`] to locate the `mods` folder.
+/// - [`HMCLGameRepository#getRunDirectory(String)`] to locate the `mods` folder,
+/// - [`HMCLGameRepository#getModManager(String)`] to parse the installed mods.
+///
+/// When a rename does not take effect (typically because the file is held open by a running
+/// game), the failure is attributed via [GameResourceGuard#checkInstanceNotRunning(String)]
+/// and reported in the unified failure envelope instead of pretending success.
 ///
 /// Permission level: MODIFIES the file system (renames a file on disk).
 @NotNullByDefault
 public final class ToggleModTool implements Tool {
 
-    private static final String DISABLED_SUFFIX = ".disabled";
+    private static final String DISABLED_SUFFIX = LocalAddonManager.DISABLED_EXTENSION;
+    private static final String OLD_SUFFIX = LocalAddonManager.OLD_EXTENSION;
 
     @Override
     public String getName() {
@@ -58,14 +73,15 @@ public final class ToggleModTool implements Tool {
 
     @Override
     public String getDescription() {
-        return "Enables or disables a single mod of a Minecraft instance by renaming its file in the mods directory "
+        return "Enables or disables a single mod of a Minecraft instance through HMCL's native mod manager "
                 + "(enabled = 'xxx.jar', disabled = 'xxx.jar.disabled'). "
-                + "Parameters: 'mod' (required, the mod file name or a case-insensitive substring that matches exactly one file), "
+                + "Parameters: 'mod' (required, the mod file name — or a case-insensitive substring of the file name, "
+                + "display name or mod id — that matches exactly one installed mod), "
                 + "'instance' (optional, the instance/version id; defaults to the currently selected instance), "
                 + "'enable' (optional boolean; if provided forces enable=true or disable=false, otherwise the current state is toggled). "
                 + "WARNING: this modifies the file system by renaming a file on disk. "
                 + "Returns the old name, the new name and the resulting state. "
-                + "Fails if the substring matches zero or more than one file.";
+                + "Fails if the substring matches zero or more than one mod.";
     }
 
     @Override
@@ -125,42 +141,23 @@ public final class ToggleModTool implements Tool {
             return ToolResult.failure("Failed to resolve mods directory: " + e.getMessage());
         }
         if (!Files.isDirectory(modsDir)) {
-            return ToolResult.failure("Mods directory does not exist for instance '" + instanceId + "': " + modsDir);
+            return ToolFailures.failure(
+                    "Mods directory does not exist for instance '" + instanceId + "': " + modsDir,
+                    ToolFailures.Retryable.NO,
+                    "the instance has no mods folder yet, so there is nothing to toggle",
+                    "Install a mod first, or check the instance id with the instance list");
         }
 
-        // Collect candidate mod files (only regular files) and match by case-insensitive substring.
-        List<Path> candidates = new ArrayList<>();
-        String queryLower = modQuery.toLowerCase(Locale.ROOT);
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(modsDir)) {
-            for (Path entry : stream) {
-                if (!Files.isRegularFile(entry)) {
-                    continue;
-                }
-                String name = entry.getFileName().toString();
-                if (name.toLowerCase(Locale.ROOT).contains(queryLower)) {
-                    candidates.add(entry);
-                }
-            }
-        } catch (IOException e) {
-            return ToolResult.failure("Failed to list mods directory: " + e.getMessage());
+        // Resolve the mod through the native ModManager/LocalModFile state machine.
+        ResolvedMod resolved = resolveTrackedMod(repository.getModManager(instanceId), modsDir, modQuery);
+        if (resolved.failure() != null) {
+            return resolved.failure();
         }
+        LocalModFile mod = resolved.mod();
 
-        if (candidates.isEmpty()) {
-            return ToolResult.failure("No mod file matching '" + modQuery + "' was found in " + modsDir);
-        }
-        if (candidates.size() > 1) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Ambiguous: '").append(modQuery).append("' matches ").append(candidates.size()).append(" files:\n");
-            for (Path c : candidates) {
-                sb.append("  - ").append(c.getFileName()).append('\n');
-            }
-            sb.append("Please refine the 'mod' parameter to match exactly one file.");
-            return ToolResult.failure(sb.toString().trim());
-        }
-
-        Path source = candidates.get(0);
+        Path source = mod.getFile();
         String oldName = source.getFileName().toString();
-        boolean currentlyEnabled = !oldName.toLowerCase(Locale.ROOT).endsWith(DISABLED_SUFFIX);
+        boolean currentlyEnabled = mod.isActive();
 
         boolean targetEnabled = forceEnable != null ? forceEnable : !currentlyEnabled;
 
@@ -170,33 +167,182 @@ public final class ToggleModTool implements Tool {
                     + "Path: " + source);
         }
 
-        String newName;
-        if (targetEnabled) {
-            // Remove the trailing .disabled suffix.
-            newName = oldName.substring(0, oldName.length() - DISABLED_SUFFIX.length());
-        } else {
-            newName = oldName + DISABLED_SUFFIX;
-        }
+        String newName = targetEnabled
+                ? StringUtils.removeSuffix(oldName, DISABLED_SUFFIX)
+                : oldName + DISABLED_SUFFIX;
 
+        // The native ModManager renames with REPLACE_EXISTING, which would silently clobber a
+        // stale duplicate — refuse explicitly instead, like the pre-ModManager implementation did.
         Path target = source.resolveSibling(newName);
-        if (Files.exists(target)) {
-            return ToolResult.failure("Cannot rename '" + oldName + "' to '" + newName + "': target already exists.");
+        if (!target.equals(source) && Files.exists(target)) {
+            return ToolFailures.failure(
+                    "Cannot rename '" + oldName + "' to '" + newName + "': the target file already exists "
+                            + "in the mods folder, so both an enabled and a disabled copy of this mod are present",
+                    ToolFailures.Retryable.NO,
+                    "renaming would silently overwrite one of the duplicate files",
+                    "Delete one of the two duplicate files first (delete_mod with the exact file name), then retry");
         }
 
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (Throwable atomicFailure) {
-            // ATOMIC_MOVE may not be supported on every file system; fall back to a plain move.
-            try {
-                Files.move(source, target);
-            } catch (Throwable e) {
-                return ToolResult.failure("Failed to rename '" + oldName + "' to '" + newName + "': " + e.getMessage());
-            }
+        // Flip the state through the native state machine. LocalModFile#setActive delegates to
+        // ModManager#enableMod/#disableMod but swallows IOExceptions (it only logs them), so
+        // verify the rename actually happened before reporting success.
+        mod.setActive(targetEnabled);
+        Path resultFile = mod.getFile();
+        if (!resultFile.getFileName().toString().equals(newName) || !Files.exists(resultFile)) {
+            return fileOperationFailure(instanceId,
+                    "Renaming mod '" + oldName + "' to '" + newName + "' in instance '" + instanceId + "' failed",
+                    null);
         }
 
         return ToolResult.success("Mod " + (targetEnabled ? "enabled" : "disabled") + " in instance '" + instanceId + "'.\n"
                 + "  " + oldName + "  ->  " + newName + "\n"
                 + "  state: " + (targetEnabled ? "enabled" : "disabled") + "\n"
-                + "  path : " + target);
+                + "  path : " + resultFile);
+    }
+
+    // ---------------------------------------------------------------------
+    // Shared helpers for the mod tool trio (ToggleModTool / DeleteModTool / UpdateModTool).
+    // They live here because the three tools form one file-ownership group; extracting a
+    // separate support class would spread the mods-domain logic over yet another file.
+    // ---------------------------------------------------------------------
+
+    /// Result of [#resolveTrackedMod]: exactly one of [#mod] / [#failure] is non-null.
+    record ResolvedMod(@Nullable LocalModFile mod, @Nullable ToolResult failure) {
+        static ResolvedMod of(LocalModFile mod) {
+            return new ResolvedMod(mod, null);
+        }
+
+        static ResolvedMod fail(ToolResult failure) {
+            return new ResolvedMod(null, failure);
+        }
+    }
+
+    /// Resolves exactly one installed mod through the native [ModManager] by a case-insensitive
+    /// substring over the on-disk file name, the display name and the mod id. Zero or several
+    /// matches is a failure. When nothing is tracked but a file on disk does match the query, the
+    /// failure explains why the file is not manageable (stale enabled+disabled duplicate pair,
+    /// `.old` rollback archive, or a non-mod file) instead of a bare "not found".
+    static ResolvedMod resolveTrackedMod(ModManager modManager, Path modsDir, String modQuery) {
+        List<LocalModFile> all;
+        try {
+            all = modManager.getLocalFiles();
+        } catch (Throwable e) {
+            return ResolvedMod.fail(ToolFailures.failure(
+                    "Failed to parse the mods of instance '" + modManager.getInstanceId() + "': " + e.getMessage(),
+                    ToolFailures.Retryable.LATER,
+                    "reading the mods folder failed, which is usually a transient I/O problem",
+                    "Retry once; if it keeps failing, check the mods folder on disk: " + modsDir));
+        }
+
+        String needle = modQuery.toLowerCase(Locale.ROOT);
+        List<LocalModFile> matches = new ArrayList<>();
+        for (LocalModFile mod : all) {
+            if (mod.getFile().getFileName().toString().toLowerCase(Locale.ROOT).contains(needle)
+                    || safe(mod.getName()).toLowerCase(Locale.ROOT).contains(needle)
+                    || safe(mod.getId()).toLowerCase(Locale.ROOT).contains(needle)) {
+                matches.add(mod);
+            }
+        }
+
+        if (matches.isEmpty()) {
+            ToolResult untracked = explainUntrackedMatch(modsDir, needle);
+            if (untracked != null) {
+                return ResolvedMod.fail(untracked);
+            }
+            return ResolvedMod.fail(ToolFailures.failure(
+                    "No mod file matching '" + modQuery + "' was found in " + modsDir,
+                    ToolFailures.Retryable.NO,
+                    "no installed mod matches this query",
+                    "Use list_mods to see the installed mods, then retry with an exact file name"));
+        }
+        if (matches.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Ambiguous: '").append(modQuery).append("' matches ").append(matches.size()).append(" mod files:\n");
+            for (LocalModFile mod : matches) {
+                sb.append("  - ").append(mod.getFile().getFileName()).append('\n');
+            }
+            return ResolvedMod.fail(ToolFailures.failure(
+                    sb.toString().trim(),
+                    ToolFailures.Retryable.YES,
+                    "a more specific query resolves to exactly one file",
+                    "Refine the 'mod' parameter to match exactly one of the listed files"));
+        }
+        return ResolvedMod.of(matches.get(0));
+    }
+
+    /// When the [ModManager] tracked nothing for a query, probes the mods directory for files
+    /// that DO match on disk and explains why they are not manageable. Returns `null` when the
+    /// directory has no matching file either (plain "not found").
+    @Nullable
+    private static ToolResult explainUntrackedMatch(Path modsDir, String needle) {
+        List<Path> onDisk = new ArrayList<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(modsDir)) {
+            for (Path entry : stream) {
+                if (Files.isRegularFile(entry)
+                        && entry.getFileName().toString().toLowerCase(Locale.ROOT).contains(needle)) {
+                    onDisk.add(entry);
+                }
+            }
+        } catch (Throwable e) {
+            return null; // fall back to the plain "not found" failure
+        }
+
+        for (Path file : onDisk) {
+            String name = file.getFileName().toString();
+            if (name.endsWith(OLD_SUFFIX)) {
+                return ToolFailures.failure(
+                        "The query only matches '" + name + "', which is an archived previous version "
+                                + "('" + OLD_SUFFIX + "' files are kept for rollback and are not active mods)",
+                        ToolFailures.Retryable.NO,
+                        "rollback archives are managed by HMCL's native mod page, not by this tool",
+                        "Ask the user to use the native mod list's rollback if they want this version back, "
+                                + "or target the current (non-.old) mod file instead");
+            }
+            Path counterpart = name.endsWith(DISABLED_SUFFIX)
+                    ? file.resolveSibling(StringUtils.removeSuffix(name, DISABLED_SUFFIX))
+                    : file.resolveSibling(name + DISABLED_SUFFIX);
+            if (Files.exists(counterpart)) {
+                return ToolFailures.failure(
+                        "Cannot operate on '" + name + "': its counterpart '" + counterpart.getFileName()
+                                + "' already exists in the same mods folder, so both an enabled and a disabled "
+                                + "copy of this mod are present and its state is ambiguous",
+                        ToolFailures.Retryable.NO,
+                        "acting on either duplicate would silently overwrite or shadow the other",
+                        "Delete one of the two duplicate files first (delete_mod with the exact file name), then retry");
+            }
+        }
+        if (!onDisk.isEmpty()) {
+            String name = onDisk.get(0).getFileName().toString();
+            return ToolFailures.failure(
+                    "'" + name + "' exists in " + modsDir + " but is not recognized as a manageable mod file",
+                    ToolFailures.Retryable.NO,
+                    "only .jar/.litemod mod files (optionally with the .disabled suffix) are managed by the mod tools",
+                    "Inspect the file with the file tools, or ask the user what it is");
+        }
+        return null;
+    }
+
+    /// Builds the failure for a mod file operation (rename/delete) that did not take effect,
+    /// attributing it to a running game when [GameResourceGuard] detects one (G10): the classic
+    /// cause of a locked mod file is the instance being played right now. Model-visible, English,
+    /// unified envelope; both branches state that nothing was changed and how to proceed.
+    static ToolResult fileOperationFailure(String instanceId, String what, @Nullable Throwable cause) {
+        String detail = cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()
+                ? " (" + cause.getMessage().trim() + ")"
+                : "";
+        if (GameResourceGuard.checkInstanceNotRunning(instanceId) != null) {
+            return ToolResult.failure(GameResourceGuard.rejectionText(
+                    GameResourceGuard.Kind.INSTANCE_RUNNING, instanceId,
+                    what + detail + " — the file is most likely held open by the running game"));
+        }
+        return ToolFailures.failure(
+                what + detail + ". Nothing was changed",
+                ToolFailures.Retryable.LATER,
+                "the file may be held open by a game launched outside HMCL or by another program",
+                "Ask the user to quit the game or close the program using the file, then retry this call");
+    }
+
+    private static String safe(@Nullable String value) {
+        return value == null ? "" : value;
     }
 }

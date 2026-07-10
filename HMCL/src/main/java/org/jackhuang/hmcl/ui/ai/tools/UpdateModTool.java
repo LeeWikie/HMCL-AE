@@ -21,6 +21,7 @@ import org.jackhuang.hmcl.addon.LocalAddonFile.AddonUpdate;
 import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.mod.LocalModFile;
 import org.jackhuang.hmcl.addon.mod.ModManager;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -34,6 +35,7 @@ import org.jackhuang.hmcl.task.FileDownloadTask;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,8 +44,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /// A controlled-write tool that updates a single installed mod to its newest
-/// compatible version and removes the old jar, so two copies of the same mod can
-/// never coexist (the classic "duplicate mods" launch crash).
+/// compatible version and archives the old jar, so two active copies of the same
+/// mod can never coexist (the classic "duplicate mods" launch crash).
 ///
 /// This reuses HMCL's native pipeline end to end — no faked matching:
 /// - [`HMCLGameRepository#getModManager(String)`] + [`ModManager#getLocalFiles()`]
@@ -53,19 +55,25 @@ import java.util.Map;
 ///   newer version for the same game version and mod loader,
 /// - [`FileDownloadTask`] (with the active [`DownloadProvider`]) to download the new
 ///   file into the same folder as the old one,
-/// - [`FileTrash`] to remove the superseded old jar (recycle bin when possible).
+/// - [`LocalModFile#setOld(boolean)`] to archive the superseded old jar with the
+///   `.old` suffix — the same convention HMCL's native mod page uses, so its
+///   "roll back to previous version" action keeps working after an AI-driven update.
 ///
 /// The mod is resolved by a case-insensitive substring over its file name, display
 /// name or mod id (like {@link GetModInfoTool}); the tool refuses to act unless
 /// exactly one mod matches.
 ///
-/// Ordering guarantees no duplicate is left behind: the new file is downloaded and
-/// verified first, then the old jar is removed. The game is not running during a
-/// tool call, so the brief on-disk overlap is harmless; what matters is that only
-/// one version remains when the tool returns.
+/// Ordering guarantees no active duplicate is left behind: the new file is downloaded
+/// and verified first, then the old jar is archived (`*.jar.old` is ignored by the
+/// game loaders). When the new version keeps the exact same file name, the old jar is
+/// archived BEFORE the download to free the name, and restored if the download fails.
+/// NOTE: the game MAY be running while this tool executes (the user can launch it at
+/// any time, including outside HMCL) — when the old jar cannot be renamed, the failure
+/// is attributed via [GameResourceGuard#checkInstanceNotRunning(String)] and reported
+/// truthfully instead of assuming a quiescent file system.
 ///
 /// Permission level: {@link ToolPermission#CONTROLLED_WRITE}. It downloads one file
-/// and removes the single old jar it replaces.
+/// and archives the single old jar it replaces.
 @NotNullByDefault
 public final class UpdateModTool implements ToolSpec {
 
@@ -75,13 +83,15 @@ public final class UpdateModTool implements ToolSpec {
     /// Maximum time to wait for the download to finish, in seconds.
     private static final int DOWNLOAD_TIMEOUT_SECONDS = 180;
 
-    /// Whether to route the removal of the old jar to the OS recycle bin (recoverable)
-    /// instead of permanently deleting it; read live on each call.
+    /// Historical: the superseded old jar used to be trashed/deleted according to this
+    /// preference. It is now archived with the `.old` suffix instead (recoverable through the
+    /// native mod page's rollback), so the preference no longer applies here; the field is kept
+    /// only so the constructor signature — and its call sites — stay stable.
+    @SuppressWarnings({"unused", "FieldCanBeLocal"})
     private final java.util.function.BooleanSupplier toRecycleBin;
 
-    /// @param toRecycleBin whether to prefer the OS recycle bin (recoverable) over a
-    ///                     permanent delete for the superseded old jar; typically
-    ///                     `aiSettings::isDeleteToRecycleBin`.
+    /// @param toRecycleBin historical recycle-bin preference; no longer consulted (the old jar
+    ///                     is archived as `.old` for native rollback instead of being deleted).
     public UpdateModTool(java.util.function.BooleanSupplier toRecycleBin) {
         this.toRecycleBin = toRecycleBin;
     }
@@ -126,7 +136,8 @@ public final class UpdateModTool implements ToolSpec {
                 + "instance (optional, the instance/version id; defaults to the selected instance), "
                 + "source (optional, \"modrinth\" or \"curseforge\"; by default both are checked and the newest wins). "
                 + "It hashes the local jar to match it to a remote project (same as the 'check for updates' button), "
-                + "downloads the newer file, then recycles/deletes the old jar. "
+                + "downloads the newer file, then archives the old jar with the '.old' suffix (the native mod list "
+                + "can roll back to it). "
                 + "Use check_mod_updates first to see what can be updated. Network calls are time-bounded.";
     }
 
@@ -254,11 +265,23 @@ public final class UpdateModTool implements ToolSpec {
         Path dest = destDir.resolve(remoteFile.filename());
         boolean sameTarget = dest.equals(oldFile);
 
-        // Download the new file (unless it is already present). Downloading first guarantees we
-        // never remove the old jar before the replacement is safely on disk.
-        // When the new version has the SAME filename, dest == the old jar, so it always "exists" —
-        // but that is the file we must overwrite, not skip. Only treat a DIFFERENT filename that is
-        // already on disk as already-present.
+        // When the new version keeps the SAME filename, the old jar must vacate the name before
+        // the download — archive it as .old up front (nothing else has been changed yet, so a
+        // failure here refuses the whole operation), and restore it if the download fails.
+        String removalNote = "";
+        if (sameTarget) {
+            try {
+                removalNote = archiveOldJar(mod);
+            } catch (Throwable e) {
+                return ToggleModTool.fileOperationFailure(target,
+                        "Archiving the old jar '" + oldFile.getFileName()
+                                + "' (rename to '.old') before downloading the update failed", e);
+            }
+        }
+
+        // Download the new file (unless it is already present). Downloading first (for a
+        // different target name) guarantees we never displace the old jar before the replacement
+        // is safely on disk.
         boolean alreadyPresent = !sameTarget && Files.exists(dest);
         if (!alreadyPresent) {
             // Download through the shared helper, which retries with backoff and switches the
@@ -273,32 +296,50 @@ public final class UpdateModTool implements ToolSpec {
                     return download;
                 }, DOWNLOAD_TIMEOUT_SECONDS, "Download");
             } catch (Exception e) {
+                String restoreNote = "";
+                if (sameTarget) {
+                    try {
+                        mod.setOld(false);
+                        restoreNote = " The old jar was restored; nothing was changed.";
+                    } catch (Throwable r) {
+                        restoreNote = " WARNING: the old jar is still archived as '"
+                                + mod.getFile().getFileName()
+                                + "' — remove its '.old' suffix to restore the mod.";
+                    }
+                }
                 if (ContentToolSupport.isNetworkError(e)) {
-                    return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e));
+                    return ToolResult.failure(ContentToolSupport.networkErrorAdvice(e) + restoreNote);
                 }
                 return ToolResult.failure("Download failed for the newer version '" + describe(newVersion)
-                        + "' of '" + mod.getFileName() + "': " + AbstractContentSearchTool.messageOf(e));
+                        + "' of '" + mod.getFileName() + "': " + AbstractContentSearchTool.messageOf(e)
+                        + restoreNote);
             }
         }
 
-        // Remove the superseded old jar so the two versions never coexist. When the new file has
-        // the exact same name it was overwritten in place, so there is nothing to remove.
-        String removalNote;
-        if (sameTarget) {
-            removalNote = "  old jar : replaced in place (" + oldFile.getFileName() + ")";
-        } else {
-            boolean recycled;
+        // Archive the superseded old jar as .old so no two ACTIVE versions coexist, while the
+        // native mod page keeps a rollback target (its "restore previous version" reads exactly
+        // this .old convention). For a same-name update this already happened before the download.
+        if (!sameTarget) {
             try {
-                recycled = FileTrash.delete(oldFile, toRecycleBin.getAsBoolean());
+                removalNote = archiveOldJar(mod);
             } catch (Throwable e) {
-                return ToolResult.failure("Downloaded the new version to:\n  " + dest
-                        + "\nbut FAILED to remove the old jar '" + oldFile.getFileName() + "': " + e.getMessage()
-                        + "\nTwo versions of the mod are now present — delete the old jar manually to avoid a "
-                        + "duplicate-mod crash.");
+                boolean running = GameResourceGuard.checkInstanceNotRunning(target) != null;
+                String detail = e.getMessage() == null || e.getMessage().isBlank()
+                        ? "" : " (" + e.getMessage().trim() + ")";
+                return ToolFailures.failure(
+                        "Downloaded the new version to '" + dest + "' but FAILED to archive the old jar '"
+                                + oldFile.getFileName() + "'" + detail
+                                + ". Two versions of the mod are now present, which crashes the game on launch"
+                                + (running
+                                        ? " — instance '" + target
+                                                + "' is currently running and likely holds the old jar open"
+                                        : ""),
+                        ToolFailures.Retryable.LATER,
+                        running ? "the old jar can be moved once the game exits"
+                                : "the old jar may be held open by another program",
+                        "Quit the game (or close the locking program), then remove or rename the old jar '"
+                                + oldFile.getFileName() + "' manually — or retry update_mod");
             }
-            removalNote = recycled
-                    ? "  old jar : '" + oldFile.getFileName() + "' moved to the recycle bin (recoverable)"
-                    : "  old jar : '" + oldFile.getFileName() + "' permanently deleted";
         }
 
         StringBuilder sb = new StringBuilder();
@@ -317,6 +358,22 @@ public final class UpdateModTool implements ToolSpec {
             sb.append("\n(Note: ").append(failed).append(" remote lookup(s) failed or timed out and were skipped.)");
         }
         return ToolResult.success(sb.toString());
+    }
+
+    /// Archives a superseded mod jar through the native state machine:
+    /// [`LocalModFile#setOld(boolean)`] renames it to the `*.jar.old` convention, drops it from
+    /// the active list and registers it as a rollback target of its [LocalMod] — so HMCL's native
+    /// "roll back to previous version" stays effective after an AI-driven update. Returns the
+    /// human-readable receipt line for the success message. Package-private for tests.
+    ///
+    /// @throws IOException when the rename fails (e.g. the jar is held open by a running game);
+    ///                     [`LocalAddonManager#setOld`] propagates the failure instead of
+    ///                     swallowing it, so callers can attribute it honestly
+    static String archiveOldJar(LocalModFile mod) throws IOException {
+        Path before = mod.getFile();
+        mod.setOld(true);
+        return "  old jar : '" + before.getFileName() + "' archived as '" + mod.getFile().getFileName()
+                + "' (kept on disk; the native mod list can roll back to it)";
     }
 
     /// Parses an optional source filter; returns {@code null} for "both / unspecified".

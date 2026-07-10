@@ -17,9 +17,12 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -37,6 +40,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public final class ToggleModToolTest {
 
     private final ToggleModTool tool = new ToggleModTool();
+
+    @AfterEach
+    void restoreInstanceRunningProbe() {
+        GameResourceGuard.setInstanceRunningProbeForTesting(null);
+    }
 
     @Test
     void reportsCorrectMetadata() {
@@ -199,5 +207,140 @@ public final class ToggleModToolTest {
             assertEquals("already-enabled", Files.readString(modsDir.resolve("Sodium.jar")));
             assertEquals("stale-leftover", Files.readString(modsDir.resolve("Sodium.jar.disabled")));
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // ModManager state-machine integration (G9) and failure envelopes (G10)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void zeroMatchFailureIsWellFormedEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("JEI.jar"), "jar-bytes");
+
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "NoSuchMod"));
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("No mod file matching"), "unexpected message: " + result.getError());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+        }
+    }
+
+    @Test
+    void ambiguousMatchFailureIsWellFormedEnvelope() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("JEI-forge.jar"), "a");
+            Files.writeString(modsDir.resolve("JEI-fabric.jar"), "b");
+
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "jei"));
+            assertFalse(result.isSuccess());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(result.getError().contains("Retryable: yes"), "unexpected message: " + result.getError());
+        }
+    }
+
+    @Test
+    void staleEnabledAndDisabledPairIsRefusedWithoutTouchingEitherFile() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("Sodium.jar"), "enabled-copy");
+            Files.writeString(modsDir.resolve("Sodium.jar.disabled"), "disabled-copy");
+
+            // Whichever copy the ModManager tracked, toggling would land on the other one —
+            // the tool must refuse instead of silently overwriting (ModManager renames with
+            // REPLACE_EXISTING).
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "Sodium"));
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains("already exists"), "unexpected message: " + result.getError());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertEquals("enabled-copy", Files.readString(modsDir.resolve("Sodium.jar")));
+            assertEquals("disabled-copy", Files.readString(modsDir.resolve("Sodium.jar.disabled")));
+        }
+    }
+
+    @Test
+    void oldRollbackArchiveIsNotToggleable() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("Legacy.jar.old"), "archived-bytes");
+
+            ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "legacy"));
+            assertFalse(result.isSuccess());
+            assertTrue(result.getError().contains(".old"), "unexpected message: " + result.getError());
+            assertTrue(result.getError().toLowerCase().contains("rollback"),
+                    "unexpected message: " + result.getError());
+            assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                    "not a well-formed envelope: " + result.getError());
+            assertTrue(Files.exists(modsDir.resolve("Legacy.jar.old")), "the archive must be untouched");
+        }
+    }
+
+    @Test
+    void toggleRoutesThroughModManagerAndKeepsDisabledStateMachine() throws Exception {
+        try (ProfileFixture fx = new ProfileFixture()) {
+            fx.createInstance("HasMods");
+            Path modsDir = fx.repository().getRunDirectory("HasMods").resolve("mods");
+            Files.createDirectories(modsDir);
+            Files.writeString(modsDir.resolve("Sodium.jar"), "jar-bytes");
+
+            // disable then re-enable: both transitions must land exactly on the native naming
+            // convention so the ModManager sees consistent state afterwards.
+            assertTrue(tool.execute(Map.of("instance", "HasMods", "mod", "Sodium", "enable", false)).isSuccess());
+            assertTrue(Files.exists(modsDir.resolve("Sodium.jar.disabled")));
+            assertFalse(Files.exists(modsDir.resolve("Sodium.jar")));
+            assertFalse(fx.repository().getModManager("HasMods").getLocalFiles().get(0).isActive(),
+                    "the ModManager must see the mod as disabled after the toggle");
+
+            assertTrue(tool.execute(Map.of("instance", "HasMods", "mod", "Sodium", "enable", true)).isSuccess());
+            assertTrue(Files.exists(modsDir.resolve("Sodium.jar")));
+            assertFalse(Files.exists(modsDir.resolve("Sodium.jar.disabled")));
+            assertTrue(fx.repository().getModManager("HasMods").getLocalFiles().get(0).isActive(),
+                    "the ModManager must see the mod as enabled after the toggle");
+        }
+    }
+
+    @Test
+    void fileOperationFailureBlamesRunningGameWhenInstanceIsRunning() {
+        GameResourceGuard.setInstanceRunningProbeForTesting("HasMods"::equals);
+
+        ToolResult result = ToggleModTool.fileOperationFailure(
+                "HasMods", "Renaming mod 'Sodium.jar' to 'Sodium.jar.disabled' in instance 'HasMods' failed",
+                new IOException("The process cannot access the file"));
+
+        assertFalse(result.isSuccess());
+        assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                "not a well-formed envelope: " + result.getError());
+        assertTrue(result.getError().contains("Retryable: later"), "unexpected message: " + result.getError());
+        assertTrue(result.getError().contains("running"), "should blame the running game: " + result.getError());
+        assertTrue(result.getError().contains("nothing was changed"),
+                "must state that no change was made: " + result.getError());
+        assertTrue(result.getError().contains("HasMods"), "should name the instance: " + result.getError());
+    }
+
+    @Test
+    void fileOperationFailureFallsBackToGenericLockEnvelopeWhenNotRunning() {
+        GameResourceGuard.setInstanceRunningProbeForTesting(id -> false);
+
+        ToolResult result = ToggleModTool.fileOperationFailure(
+                "HasMods", "Deleting mod 'Sodium.jar' from instance 'HasMods' failed", null);
+
+        assertFalse(result.isSuccess());
+        assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
+                "not a well-formed envelope: " + result.getError());
+        assertTrue(result.getError().contains("Retryable: later"), "unexpected message: " + result.getError());
+        assertTrue(result.getError().contains("Nothing was changed"),
+                "must state that no change was made: " + result.getError());
     }
 }
