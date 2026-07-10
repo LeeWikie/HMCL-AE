@@ -138,9 +138,9 @@ public final class ChatDrawerPersistenceFxTest {
         String original = settings.getReasoningEffort();
         String target = "high".equals(original) ? "medium" : "high";
         try {
-            // Open the thinking-level popup via its real button (the only ai-toolbar-icon-btn
-            // whose graphic is a raw SVGPath — the bulb; other toolbar icon buttons use SVG enums).
-            JFXButton thinkBtn = findThinkButton(page);
+            // Open the thinking-level popup via its real button (a field since B3's rewrite of
+            // the hand-rolled picker into a native PopupMenu).
+            JFXButton thinkBtn = (JFXButton) getField(page, "thinkBtn");
             assertNotNull(thinkBtn, "composer must contain the thinking-level button");
             WaitForAsyncUtils.asyncFx(thinkBtn::fire).get(10, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
@@ -149,7 +149,8 @@ public final class ChatDrawerPersistenceFxTest {
                     (com.jfoenix.controls.JFXPopup) getField(page, "thinkingPopup");
             assertNotNull(popup, "firing the button must open the picker popup");
 
-            Node row = findLevelRow(popup.getPopupContent(), target);
+            // Rows now display the human-readable effort name (A12); the raw id is tooltip-only.
+            Node row = findLevelRow(popup.getPopupContent(), AIMainPage.reasoningEffortLabel(target));
             assertNotNull(row, "picker must list the '" + target + "' level");
             WaitForAsyncUtils.asyncFx(() -> Event.fireEvent(row, syntheticClick(row))).get(10, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
@@ -168,22 +169,8 @@ public final class ChatDrawerPersistenceFxTest {
         }
     }
 
-    private static JFXButton findThinkButton(Node root) {
-        if (root instanceof JFXButton btn
-                && btn.getStyleClass().contains("ai-toolbar-icon-btn")
-                && btn.getGraphic() instanceof javafx.scene.shape.SVGPath) {
-            return btn;
-        }
-        if (root instanceof Parent parent) {
-            for (Node child : parent.getChildrenUnmodifiable()) {
-                JFXButton found = findThinkButton(child);
-                if (found != null) return found;
-            }
-        }
-        return null;
-    }
-
-    /// Finds the clickable level row (the RipplerContainer wrapping the Label with the level name).
+    /// Finds the clickable level row — an IconedMenuItem IS a RipplerContainer whose inner
+    /// Label carries the (human-readable) level name.
     private static Node findLevelRow(Node root, String level) {
         if (root instanceof org.jackhuang.hmcl.ui.construct.RipplerContainer rippler) {
             if (containsLabelText(rippler, level)) {

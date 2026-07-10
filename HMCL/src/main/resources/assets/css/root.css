@@ -2037,26 +2037,23 @@
     -fx-text-fill: -monet-on-error-container;
 }
 
+/* The error panel is an HBox (icon + text column) since A13 — -fx-text-fill on the container
+   does NOT reach child Labels in JavaFX, so the on-error-container pairing needs an explicit
+   descendant rule (keep this alongside the container rule in the B7 rewrite). */
+.ai-bubble-error .label {
+    -fx-text-fill: -monet-on-error-container;
+}
+
+.ai-bubble-error .svg {
+    -fx-fill: -monet-on-error-container;
+}
+
 .ai-bubble-system {
     -fx-background-color: transparent;
     -fx-border-color: transparent;
     -fx-text-fill: -monet-on-surface-variant;
     -fx-font-size: 11px;
     -fx-padding: 4 14 6 14;
-}
-
-/* Sidebar session-row "⋯" menu (rename / pin / delete). */
-.ai-session-menu {
-    -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 8;
-    -fx-padding: 4;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.25), 12, 0, 0, 3);
-}
-
-.ai-session-menu-item {
-    -fx-alignment: CENTER_LEFT;
-    -fx-padding: 8 20 8 12;
-    -fx-text-fill: -monet-on-surface;
 }
 
 /* Centered pill for synthetic event turns (background-job auto-continue, crash injection). */
@@ -2106,18 +2103,6 @@
    Padding is set in code so user/AI bars can align to their respective sides. */
 .ai-bubble-actions {
     -fx-alignment: center-left;
-}
-
-.ai-bubble-action-btn {
-    -jfx-button-type: FLAT;
-    -fx-background-color: transparent;
-    -fx-padding: 2;
-    -fx-min-width: 20;
-    -fx-min-height: 20;
-}
-.ai-bubble-action-btn:hover {
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 4;
 }
 
 /* Markdown native rendering (commonmark AST -> JavaFX nodes). Text nodes use -fx-fill
@@ -2267,8 +2252,9 @@
 }
 
 
-.ai-chat-settings-backdrop {
-    -fx-background-color: rgba(0, 0, 0, 0.3);
+/* Shared scrim behind the chat-settings drawer (single backdrop token, C-19). */
+.ai-backdrop {
+    -fx-background-color: rgba(0, 0, 0, 0.35);
 }
 
 /* ---- AI Header Selectors (compact LineSelectButton) ---- */
@@ -2297,8 +2283,11 @@
 
 /* ---- AI Main Header ---- */
 
+/* Page-header AND drawer title tier (absorbed AIMainPage's former inline 15px-bold setStyle;
+   text colour falls back to the global .label on-surface). */
 .ai-header-title {
-    -fx-text-fill: -monet-on-surface;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
 }
 
 .ai-header-subtitle {
@@ -2312,17 +2301,6 @@
 
 .ai-header-avatar .svg {
     -fx-fill: -monet-on-primary-container;
-}
-
-/* ---- AI Empty State ---- */
-
-.ai-empty-state {
-    -fx-padding: 40;
-}
-
-.ai-empty-text {
-    -fx-font-size: 14px;
-    -fx-text-fill: -monet-on-surface-variant;
 }
 
 /* ---- AI Chat View ---- */
@@ -2351,37 +2329,12 @@
     -fx-background-color: transparent;
 }
 
-/* ---- AI Suggestion Chips ---- */
-
-.ai-suggestions {
-    -fx-padding: 16 8 16 8;
-    -fx-spacing: 8;
-}
+/* ---- AI Suggestion Chips (chips themselves are native jfx-button-border JFXButtons) ---- */
 
 .ai-suggestions-label {
     -fx-font-size: 12px;
     -fx-text-fill: -monet-on-surface-variant;
     -fx-padding: 0 4 4 4;
-}
-
-.ai-suggestion-chip {
-    -fx-background-color: -monet-surface;
-    -fx-text-fill: -monet-on-surface-variant;
-    -fx-font-size: 13px;
-    -fx-padding: 10 18 10 18;
-    -fx-background-radius: 20;
-    -fx-cursor: hand;
-    -fx-border-color: -monet-outline-variant;
-    -fx-border-width: 0.5;
-    -fx-border-radius: 20;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.04), 2, 0, 0, 1);
-}
-
-.ai-suggestion-chip:hover {
-    -fx-background-color: -monet-primary-container;
-    -fx-text-fill: -monet-on-primary-container;
-    -fx-border-color: -monet-primary;
-    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 4, 0, 0, 2);
 }
 
 /* ---- AI Input Bar ---- */
@@ -2484,29 +2437,6 @@
     -fx-padding: 0;
 }
 
-/* Reasoning-effort ("思考: low/medium/...") popup — previously had NO dedicated rule at all,
-   so it fell back to the bare .jfx-popup-container (-monet-surface) + default .label fill
-   (-monet-on-surface) with no distinct selected-row treatment, reading as washed-out/illegible
-   against the rest of the themed UI. */
-.ai-model-picker {
-    -fx-background-color: -monet-surface-container-high;
-    -fx-background-radius: 8;
-    -fx-padding: 2;
-}
-/* Unselected rows (none/low/medium/high/xhigh/max minus whichever is active) — these plain
-   Labels carry no class of their own beyond the bare ".label" default, which is what users
-   reported as illegible against this popup's -monet-surface-container-high background. Pin an
-   explicit, higher-specificity fill here (the same on-surface pairing used for every other
-   -monet-surface-container-high surface in this file, e.g. .jfx-dialog-layout) so it can't be
-   lost to cascade ordering; the background itself is untouched. */
-.ai-model-picker .label {
-    -fx-text-fill: -monet-on-surface;
-}
-.ai-model-picker .title-label {
-    -fx-text-fill: -monet-primary;
-    -fx-font-weight: bold;
-}
-
 /* ---- ask tool: structured question panel above the input ---- */
 .ai-ask-panel {
     -fx-background-color: -monet-surface-container;
@@ -2536,21 +2466,13 @@
     -fx-font-size: 12.5px;
 }
 
-.ai-ask-confirm {
-    -fx-background-color: -monet-primary;
-    -fx-text-fill: -monet-on-primary;
-    -fx-background-radius: 8;
-    -fx-padding: 6 18 6 18;
-}
-
-.ai-send-btn {
-    -fx-background-color: -monet-primary;
-    -fx-text-fill: -monet-on-primary;
-    -fx-background-radius: 8;
-}
-
-.ai-send-btn:hover {
-    -fx-background-color: derive(-monet-primary, 10%);
+/* Send button is a plain .jfx-button-raised; while a response of the VISIBLE session streams it
+   becomes a Stop button and gains .ai-stop-btn (danger colours). The compound selector outranks
+   .jfx-button-raised explicitly instead of relying on source order (C-08). The class name is
+   also a behaviour hook — updateSendButtonMode() checks contains("ai-stop-btn"). */
+.jfx-button-raised.ai-stop-btn {
+    -fx-background-color: -monet-error;
+    -fx-text-fill: -monet-on-error;
 }
 
 /* ---- AI Approval Badge in Header ----
@@ -2672,30 +2594,11 @@
 /* ---- AI Chat Settings Drawer ---- */
 
 .ai-chat-settings-drawer {
-    /* Material raised side-sheet: tonal surface + elevation shadow + rounded inner edge,
-       instead of the old flat lowest-tone panel with a hairline left border. */
+    /* Raised side-sheet: tonal surface + native depth-3 elevation + native 4px inner-edge
+       radius (title/header/body/scroll styling is native or code-side now). */
     -fx-background-color: -monet-surface-container-low;
-    -fx-background-radius: 16 0 0 16;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 18, 0.14, -4, 0);
-}
-
-.ai-chat-settings-header {
-    /* Elevation (not a hard divider) separates the header; blend with the sheet surface. */
-    -fx-background-color: transparent;
-}
-
-.ai-chat-settings-header-title {
-    -fx-font-size: 15px;
-    -fx-font-weight: bold;
-    -fx-text-fill: -monet-on-surface;
-}
-
-.ai-chat-settings-body {
-    -fx-spacing: 12;
-}
-
-.ai-chat-settings-scroll {
-    -fx-background-color: transparent;
+    -fx-background-radius: 4 0 0 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
 }
 
 /* ---- AI Chat Message Styles ---- */
@@ -2834,26 +2737,6 @@
 
 /* ---- AI File Upload ---- */
 
-.ai-input-attach-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 8;
-    -fx-padding: 6;
-    -fx-min-width: 32;
-    -fx-min-height: 32;
-}
-
-.ai-input-attach-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-input-attach-btn .svg {
-    -fx-fill: -monet-on-surface-variant;
-}
-
-.ai-input-attach-btn:hover .svg {
-    -fx-fill: -monet-primary;
-}
-
 .ai-file-chip-area {
     -fx-padding: 2 0 2 0;
 }
@@ -2865,21 +2748,6 @@
     -fx-padding: 2 8 2 8;
     -fx-background-radius: 6;
     -fx-max-width: 300;
-}
-
-.ai-file-chip-clear-btn {
-    -fx-background-color: transparent;
-    -fx-padding: 2;
-    -fx-min-width: 16;
-    -fx-min-height: 16;
-}
-
-.ai-file-chip-clear-btn .svg {
-    -fx-fill: -monet-on-surface-variant;
-}
-
-.ai-file-chip-clear-btn:hover .svg {
-    -fx-fill: -monet-error;
 }
 
 /* ---- AI Autocomplete Popup ---- */
@@ -2908,28 +2776,6 @@
 .ai-autocomplete-item-selected {
     -fx-background-color: -monet-secondary-container;
     -fx-text-fill: -monet-on-secondary-container;
-}
-
-/* ---- AI Toolbar Icon Button ---- */
-
-.ai-toolbar-icon-btn {
-    -fx-background-color: transparent;
-    -fx-background-radius: 8;
-    -fx-padding: 6;
-    -fx-min-width: 32;
-    -fx-min-height: 32;
-}
-
-.ai-toolbar-icon-btn:hover {
-    -fx-background-color: -monet-surface-container-highest;
-}
-
-.ai-toolbar-icon-btn .svg {
-    -fx-fill: -monet-on-surface-variant;
-}
-
-.ai-toolbar-icon-btn:hover .svg {
-    -fx-fill: -monet-primary;
 }
 
 /* org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane: a real JSON/code editor (RichTextFX

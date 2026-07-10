@@ -2057,7 +2057,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         reasoning.setTitle("默认推理强度");
         reasoning.setSubtitle("仅对支持 reasoning 的模型生效");
         reasoning.setItems(List.of("none", "low", "medium", "high", "xhigh", "max"));
-        reasoning.setNullSafeConverter(v -> v);
+        reasoning.setNullSafeConverter(AIMainPage::reasoningEffortLabel); // A12: human-readable names, raw ids stored
         String currentEffort = aiSettings.getReasoningEffort();
         reasoning.setValue(currentEffort.isEmpty() ? "none" : currentEffort);
         reasoning.valueProperty().addListener((obs, old, val) -> {

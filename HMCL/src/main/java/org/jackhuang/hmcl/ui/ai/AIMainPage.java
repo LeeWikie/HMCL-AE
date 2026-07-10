@@ -94,9 +94,13 @@ import org.jackhuang.hmcl.ui.SVGContainer;
 import org.jackhuang.hmcl.ui.construct.AdvancedListBox;
 import org.jackhuang.hmcl.ui.construct.AdvancedListItem;
 import org.jackhuang.hmcl.ui.construct.ComponentList;
+import org.jackhuang.hmcl.ui.construct.HintPane;
+import org.jackhuang.hmcl.ui.construct.IconedMenuItem;
 import org.jackhuang.hmcl.ui.construct.LineButton;
 import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.jackhuang.hmcl.ui.construct.LineToggleButton;
+import org.jackhuang.hmcl.ui.construct.MenuSeparator;
+import org.jackhuang.hmcl.ui.construct.PopupMenu;
 import org.jackhuang.hmcl.ui.decorator.DecoratorAnimatedPage;
 import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -307,6 +311,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final VBox toolActivityBox = new VBox(2);
 
     private final VBox emptyState = new VBox(12);
+    /// Suggestion chips block of the empty state — visible only when a usable model is configured.
+    private VBox suggestionsBox;
+    /// "No model service configured" hint + CTA block of the empty state (A14) — the mutually
+    /// exclusive sibling of {@link #suggestionsBox}, visible when nothing usable is configured.
+    private VBox noProviderBox;
 
     // ---- Composer ----
 
@@ -323,6 +332,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     @Nullable
     private String draftSessionId;
     private JFXButton sendBtn;
+    /// Reasoning-effort popup button in the composer (a field so tests can drive the menu).
+    private JFXButton thinkBtn;
 
     /// Panel shown above the input field when the agent calls the `ask` tool: renders the
     /// structured questions and a confirm button. Hidden/unmanaged when no question is pending.
@@ -906,7 +917,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         // Backdrop (semi-transparent overlay behind drawer)
         chatSettingsBackdrop = new StackPane();
-        chatSettingsBackdrop.getStyleClass().add("ai-chat-settings-backdrop");
+        chatSettingsBackdrop.getStyleClass().add("ai-backdrop"); // shared scrim (C-19)
         chatSettingsBackdrop.setVisible(false);
         chatSettingsBackdrop.setOnMouseClicked(e -> hideChatSettingsDrawer());
 
@@ -975,23 +986,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         settingsItem.getStyleClass().add("navigation-drawer-item");
         settingsItem.setTitle(i18n("ai.settings"));
         settingsItem.setLeftIcon(SVG.TUNE);
-        settingsItem.setOnAction(e -> Controllers.navigate(new AISettingsPage(
-                aiSettings,
-                discoveryService,
-                () -> {
-                    clearAgentCache();
-                    refreshModelSelector();
-                    AiSession current = sessionStore.getCurrentSession();
-                    if (current != null) {
-                        updateHeader(current);
-                    }
-                },
-                // Share THE instances the chat tools hold (WebSearchTool/OcrImageTool), so edits
-                // made in the settings page take effect in chat immediately — the settings page
-                // used to load its own copies and the tools never saw any change.
-                this.searchConfig,
-                this.ocrConfig
-        )));
+        settingsItem.setOnAction(e -> openSettingsPage());
 
         // Pin "反馈" and "AI settings" as fixed-height rows at the very bottom: they never grow
         // or shrink, so however long the session list gets, the scroll area above absorbs the
@@ -1016,6 +1011,32 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         bottomBox.setMaxHeight(Region.USE_PREF_SIZE);
         sidebarRoot.getChildren().addAll(topBox, sidebarScrollPane, bottomBox);
         refreshSessionList();
+    }
+
+    /// Navigates to the AI settings page. Single entry point shared by the sidebar "AI 设置" row
+    /// and the empty state's "配置模型服务" CTA (A14) — keeps the constructor wiring (shared
+    /// search/OCR config instances, refresh callback) in exactly one place.
+    private void openSettingsPage() {
+        Controllers.navigate(new AISettingsPage(
+                aiSettings,
+                discoveryService,
+                () -> {
+                    clearAgentCache();
+                    refreshModelSelector();
+                    AiSession current = sessionStore.getCurrentSession();
+                    if (current != null) {
+                        updateHeader(current);
+                    }
+                    // The empty state's chips/CTA split depends on whether a usable model exists —
+                    // re-evaluate after settings edits so configuring a provider retires the CTA.
+                    updateEmptyState();
+                },
+                // Share THE instances the chat tools hold (WebSearchTool/OcrImageTool), so edits
+                // made in the settings page take effect in chat immediately — the settings page
+                // used to load its own copies and the tools never saw any change.
+                this.searchConfig,
+                this.ocrConfig
+        ));
     }
 
     private void refreshSessionList() {
@@ -1046,7 +1067,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 ? session.getTitle() : i18n("ai.session.untitled");
 
         AdvancedListItem item = new AdvancedListItem();
-        item.setTitle(session.isPinned() ? "📌 " + labelText : labelText);
+        item.setTitle(labelText);
         boolean streamingHere = currentResponse != null && session.getId().equals(streamSessionId);
         item.setSubtitle(streamingHere ? "正在生成…" : relativeTime(session.getUpdatedAt()));
         if (streamingHere) {
@@ -1056,7 +1077,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             spinner.setRadius(8);
             item.setLeftGraphic(spinner);
         } else {
-            item.setLeftIcon(SVG.CHAT);
+            // Pinned state is expressed by the left icon (pin vs chat), not a "📌 " title prefix.
+            item.setLeftIcon(session.isPinned() ? SVG.KEEP : SVG.CHAT);
         }
         item.setActive(isActive);
         item.getStyleClass().add("navigation-drawer-item");
@@ -1083,50 +1105,41 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return item;
     }
 
-    /// Rename / pin / delete menu for a sidebar session row.
+    /// Rename / pin / delete menu for a sidebar session row — a native PopupMenu +
+    /// IconedMenuItem (same form language as VersionPage's browse/management menus),
+    /// replacing the previous hand-rolled VBox of bare JFXButtons.
     private void showSessionMenu(Node anchor, AiSession session) {
-        VBox box = new VBox();
-        box.getStyleClass().add("ai-session-menu");
-        JFXPopup popup = new JFXPopup(box);
-
-        java.util.function.BiConsumer<String, Runnable> addItem = (text, action) -> {
-            JFXButton b = new JFXButton(text);
-            b.setMaxWidth(Double.MAX_VALUE);
-            b.getStyleClass().add("ai-session-menu-item");
-            b.setOnAction(e -> {
-                popup.hide();
-                action.run();
-            });
-            box.getChildren().add(b);
-        };
-
-        addItem.accept("重命名", () -> Controllers.prompt("重命名会话", (result, handler) -> {
-            String name = result == null ? "" : result.trim();
-            if (!name.isEmpty()) {
-                session.setTitle(name);
-                persistStore();
-                refreshSessionList();
-                AiSession current = sessionStore.getCurrentSession();
-                if (current == session) {
-                    updateHeader(session);
-                }
-            }
-            handler.resolve();
-        }, session.getTitle() == null ? "" : session.getTitle()));
-
-        addItem.accept(session.isPinned() ? "取消置顶" : "置顶", () -> {
-            session.setPinned(!session.isPinned());
-            persistStore();
-            refreshSessionList();
-        });
+        PopupMenu menu = new PopupMenu();
+        JFXPopup popup = new JFXPopup(menu);
 
         String title = session.getTitle() == null || session.getTitle().isBlank()
                 ? i18n("ai.session.untitled") : session.getTitle();
-        addItem.accept("删除", () -> Controllers.confirm(
-                "删除会话「" + title + "」？此操作不可恢复。",
-                i18n("button.remove"),
-                () -> deleteSession(session.getId()),
-                null));
+
+        menu.getContent().setAll(
+                new IconedMenuItem(SVG.EDIT, "重命名", () -> Controllers.prompt("重命名会话", (result, handler) -> { // TODO(i18n)
+                    String name = result == null ? "" : result.trim();
+                    if (!name.isEmpty()) {
+                        session.setTitle(name);
+                        persistStore();
+                        refreshSessionList();
+                        AiSession current = sessionStore.getCurrentSession();
+                        if (current == session) {
+                            updateHeader(session);
+                        }
+                    }
+                    handler.resolve();
+                }, session.getTitle() == null ? "" : session.getTitle()), popup),
+                new IconedMenuItem(SVG.KEEP, session.isPinned() ? "取消置顶" : "置顶", () -> { // TODO(i18n)
+                    session.setPinned(!session.isPinned());
+                    persistStore();
+                    refreshSessionList();
+                }, popup),
+                new MenuSeparator(),
+                new IconedMenuItem(SVG.DELETE, "删除", () -> Controllers.confirm( // TODO(i18n)
+                        "删除会话「" + title + "」？此操作不可恢复。", // TODO(i18n)
+                        i18n("button.remove"),
+                        () -> deleteSession(session.getId()),
+                        null), popup));
 
         popup.show(anchor, JFXPopup.PopupVPosition.TOP, JFXPopup.PopupHPosition.RIGHT, 0, 0);
     }
@@ -1287,8 +1300,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         SVGContainer aiIcon = SVG.AI.createIcon(48);
         aiIcon.setOpacity(0.3);
 
+        Label emptyTitle = new Label("有什么可以帮忙？"); // TODO(i18n)
+        emptyTitle.getStyleClass().add("title-label");
+
         Label emptyText = new Label(i18n("ai.input_placeholder"));
-        emptyText.getStyleClass().add("ai-empty-text");
+        emptyText.getStyleClass().add("subtitle-label");
 
         javafx.scene.layout.FlowPane chips = new javafx.scene.layout.FlowPane();
         chips.setHgap(8);
@@ -1309,9 +1325,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         };
 
         for (String suggestion : suggestions) {
-            Label chip = new Label(suggestion);
-            chip.getStyleClass().add("ai-suggestion-chip");
-            chip.setOnMouseClicked(e -> {
+            JFXButton chip = new JFXButton(suggestion);
+            chip.getStyleClass().add("jfx-button-border");
+            chip.setOnAction(e -> {
                 inputField.setText(suggestion);
                 sendMessage();
             });
@@ -1321,26 +1337,57 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label suggestionsLabel = new Label(i18n("ai.empty_suggestions"));
         suggestionsLabel.getStyleClass().add("ai-suggestions-label");
 
-        VBox suggestionsBox = new VBox(4, suggestionsLabel, chips);
+        suggestionsBox = new VBox(8, suggestionsLabel, chips);
         suggestionsBox.setAlignment(Pos.CENTER);
-        suggestionsBox.getStyleClass().add("ai-suggestions");
 
-        emptyState.getChildren().setAll(aiIcon, emptyText, suggestionsBox);
+        // A14: with no usable model service configured, the suggestion chips would all dead-end —
+        // show an actionable hint + CTA into the settings page instead (mutually exclusive with
+        // the chips; see updateEmptyState).
+        HintPane noProviderHint = new HintPane(org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO);
+        noProviderHint.setText("尚未配置模型服务，完成配置后即可开始对话。"); // TODO(i18n)
+        JFXButton configureBtn = FXUtils.newRaisedButton("配置模型服务"); // TODO(i18n)
+        configureBtn.setOnAction(e -> openSettingsPage());
+        noProviderBox = new VBox(8, noProviderHint, configureBtn);
+        noProviderBox.setAlignment(Pos.CENTER);
+        noProviderBox.setMaxWidth(420);
+        noProviderBox.setVisible(false);
+        noProviderBox.setManaged(false);
+
+        emptyState.getChildren().setAll(aiIcon, emptyTitle, emptyText, suggestionsBox, noProviderBox);
         emptyState.setAlignment(Pos.CENTER);
-        emptyState.getStyleClass().add("ai-empty-state");
+        emptyState.setPadding(new Insets(40));
+    }
+
+    /// Same criterion {@link #setupModelSelector()} uses to decide whether it has anything to
+    /// offer (an ENABLED profile with at least one cached model) — deliberately NOT
+    /// `findSelectedProfile() != null`, so the empty state and the model selector can never
+    /// disagree about whether the launcher is usable (C-16).
+    private boolean hasConfiguredModel() {
+        for (AiProviderProfile p : aiSettings.getProfiles()) {
+            if (p.isEnabled() && !p.getCachedModels().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void updateEmptyState() {
         boolean hasMessages = !messageList.getChildren().isEmpty();
         emptyState.setVisible(!hasMessages);
         emptyState.setManaged(!hasMessages);
+        if (suggestionsBox != null && noProviderBox != null) {
+            boolean configured = hasConfiguredModel();
+            suggestionsBox.setVisible(configured);
+            suggestionsBox.setManaged(configured);
+            noProviderBox.setVisible(!configured);
+            noProviderBox.setManaged(!configured);
+        }
     }
 
     // ---- Header ----
 
     private Node buildHeaderNode() {
-        headerTitle.setStyle("-fx-font-size: 15px; -fx-font-weight: bold;");
-        headerTitle.getStyleClass().add("ai-header-title");
+        headerTitle.getStyleClass().add("ai-header-title"); // 15px bold lives in the CSS rule now
         headerSubtitle.getStyleClass().add("ai-header-subtitle");
         approvalBadge.getStyleClass().add("ai-approval-badge");
         approvalBadge.setVisible(false);
@@ -1362,14 +1409,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         modelSelector.getStyleClass().add("ai-header-selector");
         setupModelSelector();
 
-        JFXButton searchBtn = new JFXButton();
-        searchBtn.setGraphic(SVG.SEARCH.createIcon(16));
-        searchBtn.getStyleClass().add("ai-toolbar-icon-btn");
+        JFXButton searchBtn = FXUtils.newToggleButton4(SVG.SEARCH, 16);
+        FXUtils.installFastTooltip(searchBtn, "搜索会话"); // TODO(i18n)
         searchBtn.setOnAction(e -> showSearchOverlay());
 
-        JFXButton chatSettingsBtn = new JFXButton();
-        chatSettingsBtn.setGraphic(SVG.TUNE.createIcon(16));
-        chatSettingsBtn.getStyleClass().add("ai-toolbar-icon-btn");
+        JFXButton chatSettingsBtn = FXUtils.newToggleButton4(SVG.TUNE, 16);
+        FXUtils.installFastTooltip(chatSettingsBtn, "聊天设置"); // TODO(i18n)
         chatSettingsBtn.setOnAction(e -> showChatSettingsDrawer());
 
         HBox toolbarControls = new HBox(6, modelSelector, searchBtn, chatSettingsBtn);
@@ -1477,6 +1522,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private static String providerPartOf(String label) {
         int idx = label.indexOf(" / ");
         return idx >= 0 ? label.substring(0, idx) : "";
+    }
+
+    /// Human-readable display name for a raw reasoning-effort level id (A12). Display layer
+    /// ONLY — the stored value stays the raw English id, so serialisation is untouched. Shared
+    /// with AISettingsPage's "默认推理强度" row (package-private on purpose).
+    static String reasoningEffortLabel(String level) {
+        if (level == null) return "";
+        return switch (level) { // TODO(i18n): ai.reasoning.effort.* keys, stage C
+            case "", "none" -> "不思考";
+            case "low" -> "快速";
+            case "medium" -> "平衡";
+            case "high" -> "深入";
+            case "xhigh" -> "更深入";
+            case "max" -> "极限";
+            default -> level;
+        };
     }
 
 
@@ -1718,7 +1779,6 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputField.addEventFilter(KeyEvent.KEY_PRESSED, this::handleInputKeyPress);
 
         sendBtn = FXUtils.newRaisedButton(i18n("ai.send"));
-        sendBtn.getStyleClass().add("ai-send-btn");
         // While a response is streaming the button becomes a Stop button.
         sendBtn.setOnAction(e -> {
             if (isStreaming()) {
@@ -1732,9 +1792,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         sendBtn.setDefaultButton(true);
 
-        JFXButton attachBtn = new JFXButton();
-        attachBtn.setGraphic(SVG.FILE_OPEN.createIcon(16));
-        attachBtn.getStyleClass().add("ai-input-attach-btn");
+        JFXButton attachBtn = FXUtils.newToggleButton4(SVG.FILE_OPEN, 16);
         attachBtn.setOnAction(e -> handleFileUpload());
         FXUtils.installFastTooltip(attachBtn, i18n("ai.attach"));
 
@@ -1804,15 +1862,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         inputBar.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
 
         // Thinking level popup button — circular, left of the input
-        JFXButton thinkBtn = new JFXButton();
-        thinkBtn.getStyleClass().add("ai-toolbar-icon-btn");
-        javafx.scene.shape.SVGPath bulbIcon = new javafx.scene.shape.SVGPath();
-        // Material outline (hollow) lightbulb
-        bulbIcon.setContent("M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6C7.8 12.16 7 10.63 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z");
-        thinkBtn.setGraphic(bulbIcon);
+        thinkBtn = FXUtils.newToggleButton4(SVG.LIGHTBULB, 16);
 
         String currentThink = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
-        FXUtils.installFastTooltip(thinkBtn, "思考: " + currentThink);
+        FXUtils.installFastTooltip(thinkBtn, "思考强度：" + reasoningEffortLabel(currentThink)); // TODO(i18n)
         thinkBtn.setOnAction(e -> {
             // Toggle: if the popup is already open, close it instead of stacking another.
             if (thinkingPopup != null && thinkingPopup.isShowing()) {
@@ -1821,31 +1874,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             String[] levels = {"none", "low", "medium", "high", "xhigh", "max"};
             String cur = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
-            VBox popup = new VBox(2);
-            popup.getStyleClass().add("ai-model-picker");
-            popup.setPadding(new Insets(4));
-            popup.setPrefWidth(150);  // compact: a 6-item effort picker shouldn't be a full nav-width menu
+            // Native PopupMenu + IconedMenuItem (A12/C-02): rows show the human-readable effort
+            // name, the ACTIVE level carries a check icon, and each row's tooltip reveals the raw
+            // level id (e.g. "reasoning_effort: high") for troubleshooting.
+            PopupMenu menu = new PopupMenu();
+            JFXPopup popup = new JFXPopup(menu);
             for (String level : levels) {
-                Label lbl = new Label(level);
-                lbl.setMaxWidth(Double.MAX_VALUE);
-                lbl.setPadding(new Insets(6, 14, 6, 12));  // small row height, not the big nav-drawer item
-                if (level.equals(cur)) {
-                    lbl.getStyleClass().add("title-label");  // highlight the active level
-                }
-                org.jackhuang.hmcl.ui.construct.RipplerContainer row = new org.jackhuang.hmcl.ui.construct.RipplerContainer(lbl);
-                FXUtils.onClicked(row, () -> {
+                menu.getContent().add(new IconedMenuItem(level.equals(cur) ? SVG.CHECK : null,
+                        reasoningEffortLabel(level), () -> {
                     aiSettings.reasoningEffortProperty().set(level);
                     // AiSettings has no auto-save — without this the picked level silently
-                    // reverted on restart (P6).
+                    // reverted on restart (P6/C-17).
                     persistAiSettings();
-                    FXUtils.installFastTooltip(thinkBtn, "思考: " + level);
-                    if (thinkingPopup != null) {
-                        thinkingPopup.hide();
-                    }
-                });
-                popup.getChildren().add(row);
+                    FXUtils.installFastTooltip(thinkBtn, "思考强度：" + reasoningEffortLabel(level)); // TODO(i18n)
+                }, popup).addTooltip("reasoning_effort: " + level));
             }
-            thinkingPopup = new JFXPopup(popup);
+            thinkingPopup = popup;
             JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, thinkingPopup);
             thinkingPopup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
                     0,
@@ -2194,7 +2238,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             name.getStyleClass().add("ai-file-chip");
             JFXButton remove = new JFXButton();
             remove.setGraphic(SVG.CLOSE.createIcon(12));
-            remove.getStyleClass().add("ai-file-chip-clear-btn");
+            remove.getStyleClass().add("toggle-icon-tiny"); // native 15px icon button
             remove.setOnAction(e -> {
                 attachedFiles.remove(p); // removes ONLY this file; the draft text is untouched
                 rebuildFileChips();
@@ -2639,6 +2683,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private boolean confirmDangerousOperation(String toolName, String summary) {
         return showConfirmDialog(toolName, extractActionForRemember(summary),
                 i18n("ai.confirm.dangerous.title"), i18n("ai.confirm.dangerous.text", summary),
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.QUESTION,
                 120, true);
     }
 
@@ -2651,9 +2696,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// NEVER offers the "remember this choice" checkbox — this tier is deliberately never
     /// skippable via a remembered preference, see {@link #showConfirmDialog}.
     private boolean confirmCriticalOperation(String toolName, String summary) {
-        return showConfirmDialog(toolName, null, "⛔ 高危操作 · 二次确认",
-                "⛔ 高危操作，可能不可恢复！请仔细确认：\n\n" + summary
+        // Severity is carried by the dialog's native red ERROR icon, not "⛔" characters.
+        return showConfirmDialog(toolName, null, "高危操作 · 二次确认", // TODO(i18n)
+                "高危操作，可能不可恢复！请仔细确认：\n\n" + summary // TODO(i18n)
                         + "\n\n这可能永久修改或删除你的存档/玩家数据/备份。确定要继续吗？",
+                org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.ERROR,
                 180, false);
     }
 
@@ -2684,10 +2731,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// @param action        best-effort tool action for the "remember" override's scoping (see
     ///                      {@link #extractActionForRemember}), or {@code null} to scope tool-wide.
     ///                      Unused when {@code allowRemember} is false.
+    /// @param messageType   dialog severity icon — QUESTION for the normal tier, ERROR (red) for
+    ///                      the critical tier (replaces the former "⛔" title/body characters).
     /// @param allowRemember whether to offer the "remember this choice" checkbox — MUST be
     ///                      {@code false} for the critical/red tier, which is never skippable.
     private boolean showConfirmDialog(String toolName, @Nullable String action, String dialogTitle,
-                                       String dialogText, long timeoutSeconds, boolean allowRemember) {
+                                       String dialogText,
+                                       org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType messageType,
+                                       long timeoutSeconds, boolean allowRemember) {
         final int myGeneration = responseGeneration;
         java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
         java.util.concurrent.atomic.AtomicReference<javafx.scene.layout.Region> paneRef =
@@ -2718,7 +2769,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.Builder builder =
                         new org.jackhuang.hmcl.ui.construct.MessageDialogPane.Builder(
-                                text, title, org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.QUESTION);
+                                text, title, messageType);
                 CheckBox rememberBox = null;
                 if (allowRemember) {
                     rememberBox = new CheckBox(i18n("ai.confirm.remember"));
@@ -3043,10 +3094,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     }
 
     private static JFXButton smallIcon(SVG icon, String tooltip, Runnable action) {
-        JFXButton btn = new JFXButton();
-        btn.setGraphic(icon.createIcon(16));
-        btn.getStyleClass().add("ai-bubble-action-btn");
-        btn.setTooltip(new javafx.scene.control.Tooltip(tooltip));
+        JFXButton btn = FXUtils.newToggleButton4(icon, 16);
+        FXUtils.installFastTooltip(btn, tooltip);
         btn.setOnAction(e -> action.run());
         return btn;
     }
@@ -3139,9 +3188,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         editor.getStyleClass().add("ai-inline-edit");
 
         JFXButton cancel = new JFXButton("取消");
-        cancel.getStyleClass().add("ai-inline-edit-cancel");
+        cancel.getStyleClass().add("dialog-cancel"); // native dialog-button styling
         JFXButton confirm = new JFXButton("确定");
-        confirm.getStyleClass().add("ai-inline-edit-confirm");
+        confirm.getStyleClass().add("dialog-accept");
         HBox btnRow = new HBox(8, cancel, confirm);
         btnRow.setAlignment(Pos.CENTER_RIGHT);
 
@@ -4051,12 +4100,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             VBox body = new VBox();
             body.getStyleClass().add("ai-ask-body");
 
-            JFXButton back = new JFXButton(i18n("ai.ask.back"));
-            back.getStyleClass().add("ai-ask-nav");
-            JFXButton next = new JFXButton(i18n("ai.ask.next"));
-            next.getStyleClass().add("ai-ask-nav");
-            JFXButton confirm = new JFXButton(i18n("ai.ask.confirm"));
-            confirm.getStyleClass().add("ai-ask-confirm");
+            JFXButton back = FXUtils.newBorderButton(i18n("ai.ask.back"));
+            JFXButton next = FXUtils.newBorderButton(i18n("ai.ask.next"));
+            JFXButton confirm = FXUtils.newRaisedButton(i18n("ai.ask.confirm"));
             // While the question panel is up, Enter must submit (the confirm button) and must
             // NOT trigger the Send/Stop button — pressing Enter used to fire Stop (the default
             // button during streaming) and cancel the whole response.
@@ -4272,17 +4318,41 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 message = i18n("ai.error.api_error", error.getMessage());
             }
             setStatus(message);
-            target.getStyleClass().add("ai-bubble-error");
-            // Offer a one-click retry of the failed turn (transient 429 / timeout / connection drop).
-            JFXButton retryBtn = new JFXButton("重试");
-            retryBtn.getStyleClass().add("ai-retry-btn");
+            // A13: the error is a structured panel (red icon + "回复失败" title + message body)
+            // appended below the partial text inside the same bubble column, instead of tinting
+            // the partial-content label itself.
+            if (fullContent.length() == 0) {
+                // No partial text arrived — hide the empty label so it can't render as a bare pill.
+                target.setVisible(false);
+                target.setManaged(false);
+            }
+            Label errTitle = new Label("回复失败"); // TODO(i18n)
+            errTitle.getStyleClass().add("ai-caption-bold"); // rule lands with the B7 css rewrite
+            Label errBody = new Label(message);
+            errBody.setWrapText(true);
+            VBox errCol = new VBox(2, errTitle, errBody);
+            HBox errorBox = new HBox(8, SVG.ERROR.createIcon(16), errCol);
+            errorBox.setAlignment(Pos.TOP_LEFT);
+            errorBox.setMaxWidth(AI_BUBBLE_MAX_WIDTH);
+            errorBox.getStyleClass().addAll("ai-bubble", "ai-bubble-error");
+            if (target.getParent() instanceof VBox bubbleBox) {
+                bubbleBox.getChildren().add(errorBox);
+            } else {
+                messageList.getChildren().add(wrapBubble(errorBox, Pos.CENTER_LEFT));
+            }
+            // Offer a one-click retry of the failed turn (transient 429 / timeout / connection
+            // drop) — a native border button in its own aligned row (2-13/7.11: it used to be a
+            // bare unpositioned JFXButton behind an always-true instanceof condition).
+            JFXButton retryBtn = FXUtils.newBorderButton("重试"); // TODO(i18n)
+            retryBtn.setGraphic(SVG.REFRESH.createIcon(14));
+            HBox retryRow = new HBox(retryBtn);
+            retryRow.setAlignment(Pos.CENTER_LEFT);
+            retryRow.setPadding(new Insets(0, 16, 6, 16));
             retryBtn.setOnAction(e -> {
-                if (target.getParent() instanceof javafx.scene.Parent) {
-                    messageList.getChildren().remove(retryBtn);
-                }
+                messageList.getChildren().remove(retryRow);
                 retryLastTurn();
             });
-            messageList.getChildren().add(retryBtn);
+            messageList.getChildren().add(retryRow);
             scrollToBottom();
             persistStore();
         });
@@ -4982,31 +5052,27 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         chatSettingsDrawer.setVisible(false);
         chatSettingsDrawer.setManaged(false);
 
-        // Header: title + close button
+        // Header: title + close button (drawer title is the same 15px-bold tier as the page header)
         Label headerLabel = new Label(i18n("ai.chat.settings"));
-        headerLabel.getStyleClass().add("ai-chat-settings-header-title");
+        headerLabel.getStyleClass().add("ai-header-title");
 
-        JFXButton closeBtn = new JFXButton();
-        closeBtn.setGraphic(SVG.CLOSE.createIcon(18));
-        closeBtn.getStyleClass().add("jfx-tool-bar-button");  // native round-ripple icon button
+        JFXButton closeBtn = FXUtils.newToggleButton4(SVG.CLOSE, 18);
         closeBtn.setOnAction(e -> hideChatSettingsDrawer());
 
         HBox header = new HBox(headerLabel, closeBtn);
         header.setAlignment(Pos.CENTER_LEFT);
-        header.setPadding(new Insets(14, 14, 12, 14));
-        header.getStyleClass().add("ai-chat-settings-header");
+        header.setPadding(new Insets(10, 16, 10, 16));
         HBox.setHgrow(headerLabel, Priority.ALWAYS);
 
-        // Body: native settings lists
-        VBox body = new VBox(10);
+        // Body: native settings lists. Spacing lives HERE now — the former
+        // .ai-chat-settings-body rule (spacing 12) that silently overrode it is gone.
+        VBox body = new VBox(12);
         body.setPadding(new Insets(4, 14, 14, 14));
-        body.getStyleClass().add("ai-chat-settings-body");
         body.getChildren().setAll(buildChatSettingsContent());
 
         ScrollPane scrollBody = new ScrollPane(body);
         scrollBody.setFitToWidth(true);
         scrollBody.getStyleClass().add("edge-to-edge");
-        scrollBody.getStyleClass().add("ai-chat-settings-scroll");
         VBox.setVgrow(scrollBody, Priority.ALWAYS);
 
         chatSettingsDrawer.getChildren().addAll(header, scrollBody);
