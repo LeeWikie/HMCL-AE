@@ -130,8 +130,8 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 /// - **Left sidebar**: "New Chat" button, scrollable session list with delete-on-hover,
 ///   and a Settings entry at the bottom (sibling navigation target alongside sessions).
 /// - **Main header**: current session title and provider/model metadata.
-/// - **Center**: scrollable message list with suggestion chips as empty-state,
-///   plus a typing indicator status bar below.
+/// - **Center**: scrollable message list with a minimal empty-state (icon + title, plus a
+///   no-provider CTA when nothing is configured), plus a typing indicator status bar below.
 /// - **Bottom composer**: text input field and Send button.
 ///
 /// ## Views
@@ -163,9 +163,10 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 /// internal capability library, preset defaults for context window / max output
 /// are auto-applied.
 ///
-/// ## Suggestions
+/// ## Empty state
 ///
-/// When a session has no messages, suggestion chips appear as starter prompts.
+/// When a session has no messages, the center shows a minimal empty state (icon + title). If no
+/// usable model service is configured, a "配置模型服务" CTA is shown instead to guide setup.
 ///
 /// ## Session auto-titling
 ///
@@ -316,10 +317,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private final Label toolActivityLabel = new Label();
 
     private final VBox emptyState = new VBox(12);
-    /// Suggestion chips block of the empty state — visible only when a usable model is configured.
-    private VBox suggestionsBox;
-    /// "No model service configured" hint + CTA block of the empty state (A14) — the mutually
-    /// exclusive sibling of {@link #suggestionsBox}, visible when nothing usable is configured.
+    /// "No model service configured" hint + CTA block of the empty state (A14) — visible when
+    /// nothing usable is configured. The former suggestion-chip sibling was removed (2026-07-11).
     private VBox noProviderBox;
 
     // ---- Composer ----
@@ -1047,7 +1046,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                     if (current != null) {
                         updateHeader(current);
                     }
-                    // The empty state's chips/CTA split depends on whether a usable model exists —
+                    // The empty state's no-provider CTA depends on whether a usable model exists —
                     // re-evaluate after settings edits so configuring a provider retires the CTA.
                     updateEmptyState();
                 },
@@ -1320,45 +1319,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Label emptyTitle = new Label(i18n("ai.chat.empty.title"));
         emptyTitle.getStyleClass().add("title-label");
 
-        // Suggestion chips: single centered row when wide, 2×2 in a narrow window (FlowPane wrap).
-        // The middle "输入你的问题…" line was removed — it duplicated the composer placeholder (B3).
-        javafx.scene.layout.FlowPane chips = new javafx.scene.layout.FlowPane();
-        chips.setHgap(8);
-        chips.setVgap(8);
-        chips.setAlignment(Pos.CENTER);
-        chips.setMaxWidth(560);
-        chips.setPrefWrapLength(560);
-
-        // Four chips, semantically de-duplicated (B3): crash report / recommend mods / build a
-        // modpack from scratch / why is the game lagging. The former 8 collapsed the near-synonyms
-        // (optimize≈performance, help≈crash) and low-frequency (logs, config) suggestions.
-        String[] suggestions = {
-                i18n("ai.suggestion.crash"),
-                i18n("ai.suggestion.mods"),
-                i18n("ai.suggestion.setup"),
-                i18n("ai.suggestion.performance")
-        };
-
-        for (String suggestion : suggestions) {
-            JFXButton chip = new JFXButton(suggestion);
-            chip.getStyleClass().add("jfx-button-border");
-            chip.setOnAction(e -> {
-                inputField.setText(suggestion);
-                sendMessage();
-            });
-            chips.getChildren().add(chip);
-        }
-
-        Label suggestionsLabel = new Label(i18n("ai.empty_suggestions"));
-        suggestionsLabel.getStyleClass().add("ai-caption");
-        suggestionsLabel.setPadding(new Insets(0, 4, 4, 4)); // old .ai-suggestions-label padding, moved to code
-
-        suggestionsBox = new VBox(8, suggestionsLabel, chips);
-        suggestionsBox.setAlignment(Pos.CENTER);
-
-        // A14: with no usable model service configured, the suggestion chips would all dead-end —
-        // show an actionable hint + CTA into the settings page instead (mutually exclusive with
-        // the chips; see updateEmptyState).
+        // The former "试试问：" suggestion-chip block was removed outright per user feedback
+        // (2026-07-11 真机反馈：还不如移除). The empty state is now just the ✨ icon + title, plus
+        // the no-provider CTA below when nothing usable is configured.
+        //
+        // A14: with no usable model service configured, show an actionable hint + CTA into the
+        // settings page — the functional way forward (kept; NOT a suggestion chip). Visible only
+        // in the unconfigured state; see updateEmptyState.
         HintPane noProviderHint = new HintPane(org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.INFO);
         noProviderHint.setText(i18n("ai.chat.empty.no_provider"));
         JFXButton configureBtn = FXUtils.newRaisedButton(i18n("ai.chat.empty.go_settings"));
@@ -1369,7 +1336,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         noProviderBox.setVisible(false);
         noProviderBox.setManaged(false);
 
-        emptyState.getChildren().setAll(aiIcon, emptyTitle, suggestionsBox, noProviderBox);
+        emptyState.getChildren().setAll(aiIcon, emptyTitle, noProviderBox);
         emptyState.setAlignment(Pos.CENTER);
         emptyState.setPadding(new Insets(40));
     }
@@ -1391,10 +1358,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         boolean hasMessages = !messageList.getChildren().isEmpty();
         emptyState.setVisible(!hasMessages);
         emptyState.setManaged(!hasMessages);
-        if (suggestionsBox != null && noProviderBox != null) {
+        if (noProviderBox != null) {
+            // The no-provider CTA is the only conditional block left in the empty state (the
+            // suggestion chips were removed): shown when nothing usable is configured.
             boolean configured = hasConfiguredModel();
-            suggestionsBox.setVisible(configured);
-            suggestionsBox.setManaged(configured);
             noProviderBox.setVisible(!configured);
             noProviderBox.setManaged(!configured);
         }

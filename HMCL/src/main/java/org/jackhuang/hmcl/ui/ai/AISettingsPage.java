@@ -622,7 +622,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         reasoningField.setPromptText(i18n("ai.settings.model.reasoning_hint"));
         GridPane advGrid = new GridPane();
         advGrid.setHgap(16);
-        advGrid.setVgap(12);
+        advGrid.setVgap(16); // 12→16：字段行更多呼吸感（2026-07-11 真机反馈：依旧挤）
         ColumnConstraints ac1 = new ColumnConstraints();
         ac1.setPercentWidth(50);
         ac1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
@@ -643,7 +643,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         HBox capRow = new HBox(12, capToolsBox, capVisionBox, capReasoningBox);
         capRow.setAlignment(Pos.CENTER_LEFT);
         advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 2, 2, 1);
-        advGrid.setPadding(new Insets(4, 0, 4, 0));
+        advGrid.setPadding(new Insets(10, 0, 10, 0)); // 4→10：分区内上下留白（松密度）
         ComponentSublist advPane = new ComponentSublist();
         advPane.setTitle(i18n("ai.settings.advanced"));
         advPane.getContent().setAll(advGrid);
@@ -655,7 +655,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // 2x2 grid; each field carries its label as small caption text at the top-left.
         GridPane priceGrid = new GridPane();
         priceGrid.setHgap(16);
-        priceGrid.setVgap(12);
+        priceGrid.setVgap(16); // 12→16：与 advGrid 一致的呼吸感
         ColumnConstraints pc1 = new ColumnConstraints();
         pc1.setPercentWidth(50);
         pc1.setHgrow(javafx.scene.layout.Priority.ALWAYS);
@@ -667,7 +667,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         priceGrid.add(captionedField(i18n("ai.settings.model.price_out"), outField), 1, 0);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_write"), cwField), 0, 1);
         priceGrid.add(captionedField(i18n("ai.settings.model.price_cache_read"), crField), 1, 1);
-        priceGrid.setPadding(new Insets(4, 0, 4, 0));
+        priceGrid.setPadding(new Insets(10, 0, 10, 0)); // 4→10：分区内上下留白（松密度）
         ComponentSublist pricePane = new ComponentSublist();
         pricePane.setTitle(i18n("ai.settings.model.pricing"));
         pricePane.getContent().setAll(priceGrid);
@@ -1579,6 +1579,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         countRow.setTitle(i18n("ai.settings.search.max_results"));
         countRow.setSubtitle(i18n("ai.settings.search.max_results.desc"));
         JFXSlider countSlider = new JFXSlider(1, 50, searchConfig.getMaxResults());
+        countSlider.getStyleClass().add("ai-slider"); // hide redundant water-drop indicator (value shown by countValue Label)
         countSlider.setPrefWidth(160);
         countSlider.setMajorTickUnit(1);
         countSlider.setMinorTickCount(0);
@@ -2432,6 +2433,10 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         row.setSubtitle(subtitle);
         int initial = Math.max(min, Math.min(max, prop.get()));
         JFXSlider slider = new JFXSlider(min, max, initial);
+        // The numeric value is shown by the right-side Label below, so the JFXSlider's floating
+        // "water-drop" indicator is redundant and overflows/clips into the previous row — hide it
+        // via .ai-slider (root.css). Scoped to AI sliders only; native sliders keep it.
+        slider.getStyleClass().add("ai-slider");
         slider.setPrefWidth(160);
         Label value = new Label(initial + unit);
         value.setMinWidth(54);

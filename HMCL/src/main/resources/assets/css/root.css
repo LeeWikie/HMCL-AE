@@ -843,6 +843,14 @@
     -fx-background-insets: 0;
 }
 
+/* AI sliders already show their value in a dedicated right-side Label, so the
+   floating "water-drop" value indicator is redundant — and it overflows upward
+   into the previous row and gets clipped by the card bounds. Hide it only on
+   .ai-slider; native JFXSliders keep their indicator. */
+.ai-slider .animated-thumb {
+    -fx-opacity: 0;
+}
+
 /*******************************************************************************
 *                                                                              *
 * JFX Rippler                                                                  *

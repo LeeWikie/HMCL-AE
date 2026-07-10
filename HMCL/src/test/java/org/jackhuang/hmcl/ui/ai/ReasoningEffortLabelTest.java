@@ -28,13 +28,13 @@ public final class ReasoningEffortLabelTest {
 
     @Test
     public void mapsEveryKnownLevelPerArbitrationC01() {
-        assertEquals("不思考", AIMainPage.reasoningEffortLabel(""));
-        assertEquals("不思考", AIMainPage.reasoningEffortLabel("none"));
-        assertEquals("快速", AIMainPage.reasoningEffortLabel("low"));
-        assertEquals("平衡", AIMainPage.reasoningEffortLabel("medium"));
-        assertEquals("深入", AIMainPage.reasoningEffortLabel("high"));
-        assertEquals("更深入", AIMainPage.reasoningEffortLabel("xhigh"));
-        assertEquals("极限", AIMainPage.reasoningEffortLabel("max"));
+        assertEquals("无", AIMainPage.reasoningEffortLabel(""));
+        assertEquals("无", AIMainPage.reasoningEffortLabel("none"));
+        assertEquals("低", AIMainPage.reasoningEffortLabel("low"));
+        assertEquals("中", AIMainPage.reasoningEffortLabel("medium"));
+        assertEquals("高", AIMainPage.reasoningEffortLabel("high"));
+        assertEquals("扩展", AIMainPage.reasoningEffortLabel("xhigh"));
+        assertEquals("最高", AIMainPage.reasoningEffortLabel("max"));
     }
 
     @Test
