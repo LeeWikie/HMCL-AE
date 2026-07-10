@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ai.tools;
 
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
@@ -156,7 +157,7 @@ public final class ShellTool implements ToolSpec {
         if (raw == null) raw = parameters.get("input");
         String command = raw == null ? "" : raw.toString().trim();
         if (command.isEmpty()) {
-            return ToolResult.failure("No command provided (pass the command line as 'command').");
+            return emptyCommandFailure();
         }
 
         try {
@@ -178,7 +179,7 @@ public final class ShellTool implements ToolSpec {
             boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return ToolResult.failure("Command timed out after " + TIMEOUT_SECONDS + "s and was terminated.");
+                return timeoutFailure(TIMEOUT_SECONDS);
             }
 
             String output;
@@ -195,10 +196,54 @@ public final class ShellTool implements ToolSpec {
             String body = output.isBlank() ? "(no output)" : output;
             return ToolResult.success("exit code: " + exit + "\n" + body);
         } catch (IOException e) {
-            return ToolResult.failure("Failed to start process: " + e.getMessage());
+            return startFailure(shellName, e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return ToolResult.failure("Interrupted while waiting for the command.");
+            return interruptedFailure();
         }
+    }
+
+    // Failure texts follow the unified ToolFailures envelope (<what+data>. Retryable: … . Next: …).
+    // Package-private and static so each failure contract is unit-testable without spawning a
+    // process or waiting out the real timeout — same testability convention as buildDescription.
+
+    /// Empty/missing `command` parameter: a pure input fix, so retryable `yes`.
+    static ToolResult emptyCommandFailure() {
+        return ToolFailures.failure(
+                "No command was provided (the 'command' parameter was empty)",
+                ToolFailures.Retryable.YES,
+                "the shell has nothing to run until a command line is supplied",
+                "pass the full command line as 'command' (with a short 'description') and call again");
+    }
+
+    /// Command overran the fixed timeout and was killed. `later`: the budget is fixed, so retry
+    /// only after making the command faster/non-interactive, not by re-running it verbatim.
+    static ToolResult timeoutFailure(int timeoutSeconds) {
+        return ToolFailures.failure(
+                "Command exceeded the " + timeoutSeconds + "s time limit and was forcibly terminated",
+                ToolFailures.Retryable.LATER,
+                "the " + timeoutSeconds + "s budget is fixed — only a faster or non-interactive command can finish within it",
+                "re-run a shorter, non-interactive command, or split the work into steps that each finish under " + timeoutSeconds + "s");
+    }
+
+    /// The shell process could not be launched. `no`: a different command cannot fix a missing or
+    /// misconfigured shell, so the Next step is a non-retry way out (check install / ask the user).
+    static ToolResult startFailure(String shellName, @Nullable String detail) {
+        String reasonDetail = (detail == null || detail.isBlank()) ? "the shell executable could not be launched" : detail;
+        return ToolFailures.failure(
+                "Failed to start the " + shellName + " process: " + reasonDetail,
+                ToolFailures.Retryable.NO,
+                "the shell could not be launched, which a different command cannot fix",
+                "check that " + shellName + " is installed and on PATH, or ask the user to verify their shell configuration");
+    }
+
+    /// The wait was interrupted before the command finished. `later`: no command error occurred,
+    /// so retry once the launcher is idle (checking state first if the command had side effects).
+    static ToolResult interruptedFailure() {
+        return ToolFailures.failure(
+                "Interrupted while waiting for the command to finish (it may still be running or left incomplete)",
+                ToolFailures.Retryable.LATER,
+                "the wait was cut short by an interruption, not by a command error",
+                "re-run the command once the launcher is idle, checking the current state first if the command had side effects");
     }
 }
