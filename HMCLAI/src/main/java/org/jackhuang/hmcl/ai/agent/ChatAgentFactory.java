@@ -189,9 +189,16 @@ public final class ChatAgentFactory {
         // permissive mode, as before the SAFE/ASK/YOLO merge) — with a single Auto mode there is no
         // "more permissive mode" left to fake it with, and AiExecutionPolicy.check() already treats
         // this flag as the one true skip-everything escape hatch (see its own doc).
+        // Approval mode + dangerous-confirmation are threaded as LIVE SUPPLIERS (re-read from
+        // settings on every tool call — same idiom as planMode/unattended), NOT baked in at build
+        // time. So flipping the header approval pill (Auto/Manual/yolo) or the dangerous-confirmation
+        // toggle takes effect on this same agent's next tool call, with no clearAgentCache required
+        // and no way to silently leave a live agent enforcing a stale, more-permissive mode. Only
+        // dangerouslySkipPermissions stays build-time-fixed — toggling it also changes whether the
+        // confirm handlers are wired at all, which needs a rebuild regardless.
         org.jackhuang.hmcl.ai.tools.AiExecutionPolicy policy =
                 new org.jackhuang.hmcl.ai.tools.AiExecutionPolicy(
-                        settings.getApprovalModeEnum(), settings.isDangerousActionConfirmationEnabled(),
+                        settings::getApprovalModeEnum, settings::isDangerousActionConfirmationEnabled,
                         settings.isDangerouslySkipPermissions());
         AiChatClient client = resolveClient(config, tools, policy, confirmHandler, criticalConfirmHandler,
                 session.getId(), permissionStore, planMode, unattended);
@@ -207,7 +214,13 @@ public final class ChatAgentFactory {
         // ChatAgent.buildMessages — the session itself always keeps the FULL history
         // (an earlier design pruned the stored session, permanently deleting the
         // user's earliest messages from disk whenever a small window was configured).
-        return new ChatAgent(client, session, settings, promptBuilder);
+        //
+        // Provenance snapshot (spec §3.6): hand the agent the model id THIS config resolved to, so
+        // the turn-end setModel(...) tags each reply with the model that actually served it — not a
+        // live settings.getModel() read that a mid-turn model/profile switch could have moved. The
+        // agent is rebuilt (clearAgentCache) whenever the model changes, so this snapshot stays
+        // correct for the agent's whole life.
+        return new ChatAgent(client, session, settings, promptBuilder, config.getModel());
     }
 
     /// Tests the connection to the configured LLM endpoint with a lightweight
@@ -406,23 +419,34 @@ public final class ChatAgentFactory {
     /// @param settings the AI settings; must not be {@code null}
     /// @return a new immutable configuration
     private static LlmConfig buildConfig(AiSettings settings) {
+        // Single-source the model + per-model generation params (model id / temperature / max output
+        // / context window / reasoning effort) from the SELECTED PROFILE and its AiModelEntry, with
+        // the flat global fields as the fallback (see AiSettings#resolveEffectiveModelConfig). The
+        // old path read only the flat fields, so a per-model temperature/reasoning override the user
+        // set in the model editor was silently dropped, and the model itself relied on the flat
+        // `model` cache being kept in sync by every profile-selection code path.
+        AiSettings.EffectiveModelConfig eff = settings.resolveEffectiveModelConfig();
         return new LlmConfig(
                 settings.getEndpoint(),
                 settings.getApiKey(),
-                settings.getModel(),
+                eff.modelId(),
                 settings.getProvider(),
-                settings.getMaxTokens(),
-                settings.getTemperature(),
+                // Both the maxTokens and maxOutputTokens slots carry the SAME resolved output cap:
+                // the model factory now consumes getMaxOutputTokens() as the real output limit (and
+                // maps it to max_tokens vs. max_completion_tokens per provider/reasoning), so the two
+                // can never disagree and the previously-unconsumed maxOutputTokens field is now live.
+                eff.maxOutputTokens(),
+                eff.temperature(),
                 java.time.Duration.ofSeconds(settings.getRequestTimeoutSeconds() > 0
                         ? settings.getRequestTimeoutSeconds()
                         : LlmConfig.DEFAULT_TIMEOUT.getSeconds()),
-                settings.getContextWindow(),
-                settings.getMaxOutputTokens(),
+                eff.contextWindow(),
+                eff.maxOutputTokens(),
                 settings.getTopP(),
                 settings.getPresencePenalty(),
                 settings.getFrequencyPenalty(),
                 settings.getSeed(),
-                settings.getReasoningEffort().isEmpty() ? null : settings.getReasoningEffort(),
+                eff.reasoningEffort(),
                 settings.isStream(),
                 settings.getStopSequences()
         );

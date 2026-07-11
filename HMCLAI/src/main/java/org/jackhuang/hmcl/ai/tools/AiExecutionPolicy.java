@@ -21,6 +21,9 @@ import org.jackhuang.hmcl.ai.AiApprovalMode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+
 /// Decides whether a tool invocation is allowed, given its {@link ToolPermission}, whether Plan
 /// Mode is active, and whether the current turn may be running unattended.
 ///
@@ -99,17 +102,28 @@ public final class AiExecutionPolicy {
         }
     }
 
-    private final AiApprovalMode mode;
-    private final boolean dangerousConfirmationEnabled;
+    /// The approval mode, re-queried on EVERY {@link #evaluate} rather than captured once — so a
+    /// header/pill mode switch takes effect on the very next tool call of a long-lived agent WITHOUT
+    /// rebuilding it (no {@code clearAgentCache} needed), and can therefore never silently leave a
+    /// live agent enforcing the OLD mode. Same live-supplier idiom as {@code planModeSupplier}/
+    /// {@code unattendedSupplier} in {@link LangChain4jToolAdapter}. Callers that have a fixed mode
+    /// (tests, the connection-test path) get a constant supplier via the value constructors below.
+    private final Supplier<AiApprovalMode> modeSupplier;
+    /// The dangerous-confirmation toggle, likewise re-queried on every evaluate (see
+    /// {@link #modeSupplier}) so flipping it mid-session takes effect immediately.
+    private final BooleanSupplier dangerousConfirmationSupplier;
     /// Developer-only bypass: when true, {@link #check} allow-alls every permission,
     /// regardless of mode/confirmation flags. See {@code AiSettings.dangerouslySkipPermissions}.
+    /// Left build-time-fixed (not a live supplier): toggling it also flips whether confirm handlers
+    /// are wired at all, which inherently requires an agent rebuild regardless.
     private final boolean dangerouslySkipPermissions;
 
+    /// Fixed-value constructor: wraps the given mode / dangerous-confirmation as constant suppliers.
+    /// Used by tests and non-interactive paths (connection test) that have no live settings to track.
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled,
                              boolean dangerouslySkipPermissions) {
-        this.mode = mode;
-        this.dangerousConfirmationEnabled = dangerousConfirmationEnabled;
-        this.dangerouslySkipPermissions = dangerouslySkipPermissions;
+        this((Supplier<AiApprovalMode>) () -> mode, () -> dangerousConfirmationEnabled,
+                dangerouslySkipPermissions);
     }
 
     public AiExecutionPolicy(AiApprovalMode mode, boolean dangerousConfirmationEnabled) {
@@ -118,6 +132,18 @@ public final class AiExecutionPolicy {
 
     public AiExecutionPolicy() {
         this(AiApprovalMode.AUTO, true, false);
+    }
+
+    /// Live-supplier constructor (the production path — see {@code ChatAgentFactory.build}): both the
+    /// approval mode and the dangerous-confirmation toggle are re-read from settings on every
+    /// {@link #evaluate}, so a change to either takes effect on the next tool call of an already-built
+    /// agent. See {@link #modeSupplier}.
+    public AiExecutionPolicy(Supplier<AiApprovalMode> modeSupplier,
+                             BooleanSupplier dangerousConfirmationSupplier,
+                             boolean dangerouslySkipPermissions) {
+        this.modeSupplier = modeSupplier;
+        this.dangerousConfirmationSupplier = dangerousConfirmationSupplier;
+        this.dangerouslySkipPermissions = dangerouslySkipPermissions;
     }
 
     /// Evaluates whether a tool with the given permission is allowed.
@@ -197,6 +223,9 @@ public final class AiExecutionPolicy {
         if (unattended && permission == ToolPermission.DANGEROUS_WRITE) {
             return Verdict.block(BlockReason.UNATTENDED_DANGEROUS);
         }
+        // Live-read the mode for THIS call (see modeSupplier's doc) — never a value captured at
+        // construction, so a mid-session mode switch is honoured without rebuilding the agent.
+        AiApprovalMode mode = modeSupplier.get();
         return switch (mode) {
             // MANUAL (named ASK before a later pure-rename pass) is deliberately the most
             // conservative pick: every call asks, full stop — that is the entire reason a user
@@ -222,7 +251,7 @@ public final class AiExecutionPolicy {
         boolean forcedAsk = toolName != null && permission == ToolPermission.CONTROLLED_WRITE
                 && EditOrRemoveActions.isEditOrRemove(toolName, action);
         if (permission == ToolPermission.DANGEROUS_WRITE) {
-            return dangerousConfirmationEnabled ? Verdict.ASK : Verdict.ALLOW;
+            return dangerousConfirmationSupplier.getAsBoolean() ? Verdict.ASK : Verdict.ALLOW;
         }
         if (forcedAsk) {
             return Verdict.ASK;
@@ -235,15 +264,16 @@ public final class AiExecutionPolicy {
     /// the dangerous-confirmation / dangerously-skip-permissions flags already configured on this
     /// instance.
     public AiExecutionPolicy withMode(AiApprovalMode newMode) {
-        return new AiExecutionPolicy(newMode, dangerousConfirmationEnabled, dangerouslySkipPermissions);
+        return new AiExecutionPolicy((Supplier<AiApprovalMode>) () -> newMode,
+                dangerousConfirmationSupplier, dangerouslySkipPermissions);
     }
 
     public AiApprovalMode getMode() {
-        return mode;
+        return modeSupplier.get();
     }
 
     public boolean isDangerousConfirmationEnabled() {
-        return dangerousConfirmationEnabled;
+        return dangerousConfirmationSupplier.getAsBoolean();
     }
 
     public boolean isDangerouslySkipPermissions() {

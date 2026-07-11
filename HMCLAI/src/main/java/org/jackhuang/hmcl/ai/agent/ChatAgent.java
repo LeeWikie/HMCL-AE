@@ -19,7 +19,6 @@ package org.jackhuang.hmcl.ai.agent;
 
 import org.jackhuang.hmcl.ai.AiSession;
 import org.jackhuang.hmcl.ai.AiSettings;
-import org.jackhuang.hmcl.ai.ModelLibrary;
 import org.jackhuang.hmcl.ai.langchain4j.AiChatClient;
 import org.jackhuang.hmcl.ai.llm.LlmException;
 import org.jackhuang.hmcl.ai.llm.LlmMessage;
@@ -64,9 +63,6 @@ public final class ChatAgent {
     /// auto-compacted before the NEXT turn, so long tool-heavy chats never hard-overflow.
     private static final double AUTO_COMPACT_RATIO = 0.9;
 
-    /// Context window (tokens) used when neither the model library nor the user settings know it.
-    private static final int DEFAULT_CONTEXT_WINDOW = 128_000;
-
     /// Rough chars-per-token heuristic for the local context-size estimate (matches AiSession).
     private static final int CHARS_PER_TOKEN = 4;
 
@@ -83,6 +79,14 @@ public final class ChatAgent {
     private final ExecutorService executor;
     private final AiSettings settings;
     private final AiPromptBuilder promptBuilder;
+
+    /// The model id this agent was built to call, snapshotted at construction from the resolved
+    /// request config (see {@code ChatAgentFactory.build}, spec §3.6). Every turn-end
+    /// {@link LlmMessage#setModel} stamps THIS, never a live {@code settings.getModel()} read — so a
+    /// model/profile switch that happens mid-turn (the agent is rebuilt on the NEXT turn) can never
+    /// retroactively mislabel the reply that the OLD model actually produced, keeping trace and cost
+    /// provenance honest.
+    private final String requestModel;
 
     /// Skill names whose triggers/BM25 matched THIS turn's user message — rendered by
     /// {@link AiPromptBuilder#buildVolatileSuffix} as the current turn's short
@@ -101,12 +105,20 @@ public final class ChatAgent {
     /// {@code volatile} for cross-thread visibility. Reset to {@code 0} after a compaction.
     private volatile int lastPromptTokens = 0;
 
+    /// Convenience overload used by tests / callers that don't track a resolved model id — the
+    /// provenance model falls back to the live {@link AiSettings#getModel()} at construction time.
     public ChatAgent(AiChatClient client, AiSession session, AiSettings settings,
                      AiPromptBuilder promptBuilder) {
+        this(client, session, settings, promptBuilder, settings.getModel());
+    }
+
+    public ChatAgent(AiChatClient client, AiSession session, AiSettings settings,
+                     AiPromptBuilder promptBuilder, String requestModel) {
         this.client = client;
         this.session = session;
         this.settings = settings;
         this.promptBuilder = promptBuilder;
+        this.requestModel = requestModel != null ? requestModel : "";
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "chat-agent");
             t.setDaemon(true);
@@ -285,9 +297,10 @@ public final class ChatAgent {
         }
     }
 
-    /// Resolves the active model's context window in tokens. The {@link ModelLibrary} entry for
-    /// the configured model wins (authoritative per-model value), then the user-configured
-    /// {@link AiSettings#getContextWindow()}, then a {@value #DEFAULT_CONTEXT_WINDOW}-token fallback.
+    /// Resolves the active model's context window in tokens. Delegates to the single-source
+    /// {@link AiSettings#resolveEffectiveModelConfig()} (per-model entry override → model-library
+    /// catalog → global setting → 128k default), so the compaction/eviction budget here, the request
+    /// budget, and the composer's context ring all read the identical number (spec §3.2③).
     private int resolveContextWindow() {
         return resolveContextWindow(settings);
     }
@@ -295,12 +308,7 @@ public final class ChatAgent {
     /// Static variant of {@link #resolveContextWindow()} for callers that only have the
     /// settings (e.g. the factory wiring the adapter's context budget).
     public static int resolveContextWindow(AiSettings settings) {
-        ModelLibrary.ModelInfo info = ModelLibrary.find(settings.getModel());
-        if (info != null && info.getContextWindow() > 0) {
-            return info.getContextWindow();
-        }
-        int configured = settings.getContextWindow();
-        return configured > 0 ? configured : DEFAULT_CONTEXT_WINDOW;
+        return settings.resolveEffectiveModelConfig().contextWindow();
     }
 
     /// Estimates the token size of the prompt the NEXT turn would send: the system prompt plus
@@ -491,7 +499,7 @@ public final class ChatAgent {
                     partial.isEmpty() ? "（本回合已被用户中断，未产出内容）"
                             : partial + "\n\n（本回合已被用户中断）");
             interrupted.setTurnId(turnId);
-            interrupted.setModel(settings.getModel());
+            interrupted.setModel(requestModel);
             session.addMessage(interrupted);
         };
         interruptPersist.set(persister);
@@ -572,7 +580,7 @@ public final class ChatAgent {
                 // streaming were previously getting collapsed into one on reload.
                 LlmMessage segMessage = new LlmMessage("assistant", segment);
                 segMessage.setTurnId(turnId);
-                segMessage.setModel(settings.getModel());
+                segMessage.setModel(requestModel);
                 if (usage != null) {
                     segMessage.setUsage(usage);
                 }
@@ -620,7 +628,7 @@ public final class ChatAgent {
                             aiMessage.setReasoning(r);
                         }
                         aiMessage.setTurnId(turnId);
-                        aiMessage.setModel(settings.getModel());
+                        aiMessage.setModel(requestModel);
                         session.addMessage(aiMessage);
                     }
                 } else if (usage != null) {

@@ -25,10 +25,12 @@ import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.jackhuang.hmcl.ai.LlmConfig;
 import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.net.ProxySelector;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.Locale;
 
 /// Builds LangChain4j chat and streaming models from HMCL's
 /// [`LlmConfig`][org.jackhuang.hmcl.ai.LlmConfig], handling the
@@ -102,8 +104,8 @@ public final class LangChain4jModelFactory {
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
                 .temperature(config.getTemperature())
-                .maxTokens(config.getMaxTokens())
                 .timeout(config.getTimeout());
+        applyOpenAiReasoningAndOutputCap(builder, config);
 
         if (config.getTopP() != LlmConfig.DEFAULT_TOP_P) {
             builder.topP(config.getTopP());
@@ -142,8 +144,8 @@ public final class LangChain4jModelFactory {
                         .apiKey(config.getApiKey())
                         .modelName(config.getModel())
                         .temperature(config.getTemperature())
-                        .maxTokens(config.getMaxTokens())
                         .timeout(config.getTimeout());
+        applyOpenAiReasoningAndOutputCap(builder, config);
 
         if (config.getTopP() != LlmConfig.DEFAULT_TOP_P) {
             builder.topP(config.getTopP());
@@ -173,13 +175,20 @@ public final class LangChain4jModelFactory {
 
     /// Builds a LangChain4j Anthropic ChatModel from the given configuration.
     public ChatModel buildAnthropicChatModel(LlmConfig config) {
+        int thinkingBudget = clampAnthropicThinkingBudget(
+                mapAnthropicThinkingBudget(config.getReasoningEffort()), config.getMaxOutputTokens());
         var builder = dev.langchain4j.model.anthropic.AnthropicChatModel.builder()
                 .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
-                .temperature(config.getTemperature())
-                .maxTokens(config.getMaxTokens())
+                // Extended thinking requires temperature = 1 (the Anthropic API rejects any other
+                // value when thinking is enabled); otherwise honour the configured temperature.
+                .temperature(thinkingBudget > 0 ? 1.0 : config.getTemperature())
+                .maxTokens(config.getMaxOutputTokens())
                 .timeout(config.getTimeout());
+        if (thinkingBudget > 0) {
+            builder.thinkingType("enabled").thinkingBudgetTokens(thinkingBudget);
+        }
         String base = extractAnthropicBaseUrl(config.getEndpoint());
         if (base != null && !base.isBlank()) {
             builder.baseUrl(base);
@@ -189,18 +198,103 @@ public final class LangChain4jModelFactory {
 
     /// Builds a LangChain4j Anthropic StreamingChatModel from the given configuration.
     public StreamingChatModel buildAnthropicStreamingChatModel(LlmConfig config) {
+        int thinkingBudget = clampAnthropicThinkingBudget(
+                mapAnthropicThinkingBudget(config.getReasoningEffort()), config.getMaxOutputTokens());
         var builder = dev.langchain4j.model.anthropic.AnthropicStreamingChatModel.builder()
                 .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .apiKey(config.getApiKey())
                 .modelName(config.getModel())
-                .temperature(config.getTemperature())
-                .maxTokens(config.getMaxTokens())
+                .temperature(thinkingBudget > 0 ? 1.0 : config.getTemperature())
+                .maxTokens(config.getMaxOutputTokens())
                 .timeout(config.getTimeout());
+        if (thinkingBudget > 0) {
+            builder.thinkingType("enabled").thinkingBudgetTokens(thinkingBudget);
+        }
         String base = extractAnthropicBaseUrl(config.getEndpoint());
         if (base != null && !base.isBlank()) {
             builder.baseUrl(base);
         }
+        builder.returnThinking(true);
         return builder.build();
+    }
+
+    // ---- Reasoning-effort → provider request-parameter mapping (spec §3.2②) ---------------------
+
+    /// Applies the reasoning effort and the output-token cap to an OpenAI(-compatible) chat builder.
+    /// When a reasoning effort is present the model is a reasoning model, so the cap is sent as
+    /// {@code max_completion_tokens} (reasoning models reject {@code max_tokens}) and
+    /// {@code reasoning_effort} is set; otherwise the cap is the ordinary {@code max_tokens}.
+    private static void applyOpenAiReasoningAndOutputCap(
+            OpenAiChatModel.OpenAiChatModelBuilder builder, LlmConfig config) {
+        String effort = mapOpenAiReasoningEffort(config.getReasoningEffort());
+        if (effort != null) {
+            builder.reasoningEffort(effort).maxCompletionTokens(config.getMaxOutputTokens());
+        } else {
+            builder.maxTokens(config.getMaxOutputTokens());
+        }
+    }
+
+    /// Streaming-builder overload of {@link #applyOpenAiReasoningAndOutputCap(OpenAiChatModel.OpenAiChatModelBuilder, LlmConfig)}
+    /// — the two OpenAI builders share no common supertype exposing these setters, so the identical
+    /// logic is duplicated across a typed overload rather than reflected.
+    private static void applyOpenAiReasoningAndOutputCap(
+            OpenAiStreamingChatModel.OpenAiStreamingChatModelBuilder builder, LlmConfig config) {
+        String effort = mapOpenAiReasoningEffort(config.getReasoningEffort());
+        if (effort != null) {
+            builder.reasoningEffort(effort).maxCompletionTokens(config.getMaxOutputTokens());
+        } else {
+            builder.maxTokens(config.getMaxOutputTokens());
+        }
+    }
+
+    /// Maps HMCL's reasoning-effort level to a value the OpenAI {@code reasoning_effort} parameter
+    /// accepts, or {@code null} to omit it. HMCL's two extra levels collapse to the API ceiling
+    /// {@code "high"}; a blank value or {@code "none"} omit the parameter entirely so non-reasoning
+    /// models and the connection test (which sends {@code "none"}) are unaffected.
+    @Nullable
+    static String mapOpenAiReasoningEffort(@Nullable String effort) {
+        if (effort == null) {
+            return null;
+        }
+        return switch (effort.trim().toLowerCase(Locale.ROOT)) {
+            case "low" -> "low";
+            case "medium" -> "medium";
+            case "high", "xhigh", "max" -> "high";
+            default -> null; // "", "none", or anything unrecognised → omit
+        };
+    }
+
+    /// Maps HMCL's reasoning-effort level to an Anthropic extended-thinking token budget
+    /// ({@code 0} = thinking disabled). Anthropic has no effort enum — it takes a token budget — so
+    /// each level is assigned a representative budget, clamped later against the output cap by
+    /// {@link #clampAnthropicThinkingBudget(int, int)}.
+    static int mapAnthropicThinkingBudget(@Nullable String effort) {
+        if (effort == null) {
+            return 0;
+        }
+        return switch (effort.trim().toLowerCase(Locale.ROOT)) {
+            case "low" -> 2048;
+            case "medium" -> 8192;
+            case "high" -> 16384;
+            case "xhigh" -> 24576;
+            case "max" -> 32768;
+            default -> 0; // "", "none", or anything unrecognised → thinking off
+        };
+    }
+
+    /// Clamps an Anthropic thinking budget so it stays valid: the API requires the budget to be
+    /// below {@code max_tokens}, and a minimum of 1024. Reserves 1024 tokens of head-room for the
+    /// visible answer; if the output cap is too small to fit both thinking and an answer, thinking is
+    /// disabled ({@code 0}) rather than sending an invalid request.
+    static int clampAnthropicThinkingBudget(int budget, int maxOutputTokens) {
+        if (budget <= 0) {
+            return 0;
+        }
+        int cap = maxOutputTokens - 1024;
+        if (cap < 1024) {
+            return 0;
+        }
+        return Math.min(budget, cap);
     }
 
     /// Maps a configured Anthropic endpoint to the base URL the Anthropic client expects.

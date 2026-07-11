@@ -1067,6 +1067,100 @@ public final class AiSettings {
         provider.set(profile.getProtocolFamily());
     }
 
+    // ---- Single-source request-config derivation --------------------------------------------
+
+    /// The fully-resolved per-request parameters for the CURRENTLY-selected provider profile and its
+    /// effective model. This is THE one place that reconciles the two configuration sources the
+    /// settings expose — the provider profile + its per-model {@link AiModelEntry} overrides
+    /// (source B) and the flat global fields (source A) — so a per-model value can never be silently
+    /// dropped on the way to a request. Everything downstream reads through here:
+    /// {@code ChatAgentFactory.buildConfig} (the request), {@code ChatAgent.resolveContextWindow}
+    /// (compaction/eviction budget), and the composer's context ring — one口径, so the three can
+    /// never disagree.
+    ///
+    /// @param modelId         the model id actually requested — the selected profile's effective
+    ///                        model (its `defaultModelId`, else its first configured model); falls
+    ///                        back to the flat {@link #getModel()} cache only when no profile exists
+    ///                        yet (migration / bare tests)
+    /// @param temperature     per-model override when set, else the global temperature
+    /// @param maxOutputTokens per-model override when > 0, else the global max-output cap
+    /// @param contextWindow   per-model override (> 0) → {@link ModelLibrary} catalog (> 0) →
+    ///                        global {@link #getContextWindow()} (> 0) → 128k default
+    /// @param reasoningEffort per-model override when set, else the global reasoning effort;
+    ///                        normalised so `""`/`"none"` collapse to {@code null} (parameter omitted)
+    public record EffectiveModelConfig(String modelId, double temperature, int maxOutputTokens,
+                                       int contextWindow, @Nullable String reasoningEffort) {
+    }
+
+    /// Resolves the {@link EffectiveModelConfig} for the current selection — see its own doc. Reads
+    /// the selected profile directly (not via the flat `model` cache), so it stays correct even if a
+    /// caller mutated the profile's default model without going back through
+    /// {@link #setSelectedProfileId} to re-apply it into the flat properties.
+    public EffectiveModelConfig resolveEffectiveModelConfig() {
+        AiProviderProfile profile = findSelectedProfile();
+        String modelId = profile != null ? profile.getEffectiveModelId() : null;
+        if (modelId == null || modelId.isEmpty()) {
+            // No profile / empty profile: fall back to the flat model. It is a DERIVED CACHE of the
+            // selected profile's effective model (kept in sync by applyProfileToProperties), never a
+            // second independent source of truth — this branch only carries the legacy no-profiles
+            // case (fresh install before migration, or bare unit tests).
+            modelId = getModel();
+        }
+        if (modelId == null || modelId.isEmpty()) {
+            modelId = LlmConfig.DEFAULT_MODEL;
+        }
+        AiModelEntry entry = profile != null ? profile.getModel(modelId) : null;
+        ModelLibrary.ModelInfo lib = ModelLibrary.find(modelId);
+
+        double temperature = entry != null && entry.hasTemperature()
+                ? entry.getTemperature() : getTemperature();
+        int maxOutput = entry != null && entry.getMaxOutputTokens() > 0
+                ? entry.getMaxOutputTokens() : effectiveGlobalMaxOutput();
+        int contextWindow = resolveContextWindow(entry, lib);
+        String reasoning = resolveReasoningEffort(entry);
+        return new EffectiveModelConfig(modelId, temperature, maxOutput, contextWindow, reasoning);
+    }
+
+    /// The global output-token cap: the dedicated max-output field when configured, else the older
+    /// {@code maxTokens} field (both default to 4096) — so whichever the user's persisted file
+    /// carries, a sane positive cap is always produced.
+    private int effectiveGlobalMaxOutput() {
+        int mo = getMaxOutputTokens();
+        return mo > 0 ? mo : getMaxTokens();
+    }
+
+    /// Unified context-window resolution shared by request side and UI (spec §3.2③): per-model entry
+    /// override → {@link ModelLibrary} catalog value → global setting → 128k default. Kept here (not
+    /// in ChatAgent) so the request budget, the compaction/eviction budget, and the composer ring
+    /// all read the identical number.
+    private int resolveContextWindow(@Nullable AiModelEntry entry, ModelLibrary.@Nullable ModelInfo lib) {
+        if (entry != null && entry.getContextWindow() > 0) {
+            return entry.getContextWindow();
+        }
+        if (lib != null && lib.getContextWindow() > 0) {
+            return lib.getContextWindow();
+        }
+        int configured = getContextWindow();
+        return configured > 0 ? configured : LlmConfig.DEFAULT_CONTEXT_WINDOW;
+    }
+
+    /// Resolves the reasoning-effort level to send: per-model entry override when non-blank, else the
+    /// global reasoning effort. Normalised so a blank value or the literal {@code "none"} both
+    /// collapse to {@code null} — meaning "omit the reasoning parameter", which keeps non-reasoning
+    /// models and the connection test unaffected. The returned value is HMCL's own level string
+    /// (`low`/`medium`/`high`/`xhigh`/`max`); mapping it to each provider's concrete request
+    /// parameter is the model factory's job.
+    @Nullable
+    private String resolveReasoningEffort(@Nullable AiModelEntry entry) {
+        String raw = entry != null && !entry.getReasoningEffort().isEmpty()
+                ? entry.getReasoningEffort() : getReasoningEffort();
+        if (raw == null) {
+            return null;
+        }
+        raw = raw.trim();
+        return raw.isEmpty() || "none".equalsIgnoreCase(raw) ? null : raw;
+    }
+
     // ---- Persistence ---------------------------------------------------------------
 
     /// Loads settings from the JSON file. If the file does not exist or is

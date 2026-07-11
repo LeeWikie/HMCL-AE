@@ -1564,12 +1564,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 if (!p.isEnabled() || !p.getDisplayName().equals(parts[0])) continue;
                 for (String m : p.getCachedModels()) {
                     if (p.getModelAliasOrId(m).equals(parts[1]) || m.equals(parts[1])) {
-                        // Order matters: update the profile's default model FIRST, then
-                        // select the profile. setSelectedProfileId() re-applies the profile's
-                        // effective model into the flat `model` property that the agent actually
-                        // reads (settings.getModel()). Doing it the other way round left the flat
-                        // model on the OLD default — the dropdown/header showed the new model but
-                        // every request still went to the old one.
+                        // Single-sourced (spec §3.1): buildConfig now reads the model straight from
+                        // findSelectedProfile().getEffectiveModelId(), so correctness no longer hinges
+                        // on setSelectedProfileId() re-applying the flat `model` cache. We still set
+                        // the default model and select the profile (keeps the flat cache + header in
+                        // sync), then clearAgentCache() so the next turn rebuilds against the new model
+                        // — the model name is baked into the LangChain4j model at build time, so a
+                        // cached agent would otherwise keep calling the old one — and persist.
                         p.setDefaultModelId(m);
                         aiSettings.setSelectedProfileId(p.getId());
                         clearAgentCache();
@@ -2265,6 +2266,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             String persisted = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
             if (!level.equals(persisted)) {
                 aiSettings.reasoningEffortProperty().set(level);
+                // Reasoning effort is baked into the LangChain4j model at BUILD time (it maps to the
+                // OpenAI reasoning_effort / Anthropic thinking-budget request parameter — see
+                // LangChain4jModelFactory), so a cached agent keeps the OLD effort until rebuilt.
+                // Unlike the approval mode (now a live supplier), this is not re-read per call, so the
+                // cache must be dropped for the change to take effect on the next turn.
+                clearAgentCache();
                 persistAiSettings();
             }
         });
@@ -2341,13 +2348,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// model's configured context window (0 when unknown). Reuses the very data the usage footer
     /// already shows — no new counting.
     private int[] contextUsage() {
-        int total = 0;
-        org.jackhuang.hmcl.ai.AiProviderProfile active = aiSettings.findSelectedProfile();
-        if (active != null) {
-            String modelId = active.getDefaultModelId();
-            org.jackhuang.hmcl.ai.AiModelEntry model = (modelId != null) ? active.getModel(modelId) : null;
-            if (model != null) total = model.getContextWindow();
-        }
+        // Same unified context-window口径 the request budget and compaction use (spec §3.2③):
+        // per-model entry override → model-library catalog → global setting → 128k default, via the
+        // single-source resolver — so the ring can never show a different window than the one the
+        // agent actually budgets against.
+        int total = aiSettings.resolveEffectiveModelConfig().contextWindow();
         int used = 0;
         AiSession session = sessionStore.getCurrentSession();
         if (session != null) {
@@ -2619,6 +2624,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// {@code mode} is already the persisted one, but ALWAYS refreshes the pill regardless — the
     /// caller may have just turned Plan Mode off with the mode otherwise unchanged, and the pill
     /// must stop showing "Plan" even though the persisted mode string didn't need rewriting.
+    ///
+    /// Deliberately does NOT call {@link #clearAgentCache()} (spec §3.3): {@code AiExecutionPolicy}'s
+    /// mode + dangerous-confirmation are now live suppliers re-read from settings on every tool call
+    /// (see {@code ChatAgentFactory.build}), so setting the property alone is enough — a live agent
+    /// picks up the new mode on its next call, and a tightening (e.g. Auto→Manual) can never be
+    /// silently ignored by a still-cached agent as it was before the supplier-ization.
     private void setApprovalMode(AiApprovalMode mode) {
         if (AiApprovalMode.fromId(aiSettings.getApprovalMode()) != mode) {
             aiSettings.approvalModeProperty().set(mode.getId());
