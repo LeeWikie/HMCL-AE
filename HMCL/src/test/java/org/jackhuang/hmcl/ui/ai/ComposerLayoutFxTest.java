@@ -21,7 +21,10 @@ import com.jfoenix.controls.JFXButton;
 import javafx.geometry.Bounds;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.junit.jupiter.api.AfterAll;
@@ -31,7 +34,9 @@ import org.junit.jupiter.api.Test;
 import org.testfx.api.FxToolkit;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.jackhuang.hmcl.ui.ai.AiMainPageFxTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -174,7 +179,12 @@ public final class ComposerLayoutFxTest {
 
     @Test
     public void composerEmptyStateIsCompact() throws Exception {
-        AIMainPage page = showPage();
+        // v4 (2026-07-11): now loads root.css so it measures the REAL, styled empty-state geometry
+        // (the card's -fx-padding/border, the send square's height, the toolbar's divider padding)
+        // instead of the unstyled numbers the bare showPage() used to report — the "no-CSS blind
+        // spot" the band-fix spec called out. Heights are a touch taller than the unstyled run but
+        // still nowhere near the pre-fix ~133px.
+        AIMainPage page = showStyledPage();
 
         javafx.scene.control.TextArea inputField =
                 (javafx.scene.control.TextArea) getField(page, "inputField");
@@ -196,27 +206,30 @@ public final class ComposerLayoutFxTest {
                         + inputField.getMinHeight());
         assertEquals(inputField.getMinHeight(), inputField.getPrefHeight(), 0.01,
                 "empty-state input field must rest exactly at its min-height floor (no content to grow for)");
+        // The input row's real height is now driven by the taller child: the 28px send square (CSS)
+        // over the 26px field. Bounded loosely enough to absorb font/DPI drift, tight enough to fail
+        // if the row ever balloons again.
         double inputRowH = inputRow.getLayoutBounds().getHeight();
-        assertEquals(26.0, inputRowH, 2.0,
-                "input row's real layout height must be ~26px in the empty state — was " + inputRowH);
+        assertTrue(inputRowH >= 25.0 && inputRowH <= 34.0,
+                "input row's real layout height must be a compact single row (~28px) — was " + inputRowH);
 
-        // ② the toolbar row is a slim strip now that no child forces a 48px floor — measured exactly
-        // 25px on this machine (every child is the same ~25px .ai-toolbar-pill height); loosely
-        // bounded so minor font/DPI drift elsewhere doesn't make this test flaky, but tight enough
-        // to fail hard if the old 48px floor (which alone pushed this to ~55px) ever comes back.
+        // ② the toolbar row is a slim strip now that no child forces a 48px floor — every child is
+        // the same ~25px .ai-toolbar-pill height plus the 3px divider padding. Loosely bounded so
+        // minor font/DPI drift doesn't make this test flaky, but tight enough to fail hard if the old
+        // 48px floor (which alone pushed this to ~55px) ever comes back.
         double toolbarH = toolbar.getLayoutBounds().getHeight();
-        assertTrue(toolbarH > 15 && toolbarH < 35,
-                "toolbar row must be a compact strip (~25px), not ballooned by the old 48px "
+        assertTrue(toolbarH > 15 && toolbarH < 40,
+                "toolbar row must be a compact strip (~29px), not ballooned by the old 48px "
                         + "LineComponent floor (~55px+) — was " + toolbarH);
 
-        // ③ the whole composer card in the empty state is compact overall — measured 59px on this
-        // machine, nowhere near the pre-fix ~133px (modelSelector's 48px floor alone pushed the
-        // toolbar to ~55px and the whole card past ~130px; see modelSelectorIsCompactPill()) and
-        // comfortably under the ~84px target given in the bug report.
+        // ③ the whole styled composer card in the empty state is compact overall — nowhere near the
+        // pre-fix ~133px (modelSelector's 48px floor alone pushed the toolbar to ~55px and the whole
+        // card past ~130px; see modelSelectorIsCompactPill()) and comfortably under the ~84px target
+        // given in the bug report.
         double cardH = composerCard.getLayoutBounds().getHeight();
-        assertTrue(cardH > 40 && cardH < 90,
-                "composer card must be compact overall in the empty state (~59-84px), not the "
-                        + "pre-fix ~133px — was " + cardH);
+        assertTrue(cardH > 55 && cardH < 100,
+                "composer card must be compact overall in the empty state, not the pre-fix ~133px — was "
+                        + cardH);
     }
 
     @Test
@@ -289,6 +302,79 @@ public final class ComposerLayoutFxTest {
         Object aiSettings = getField(page, "aiSettings");
         String effort = (String) invoke(aiSettings, "getReasoningEffort", new Class<?>[0]);
         assertEquals("high", effort, "dragging the slider to index 3 must persist effort=high");
+    }
+
+    @Test
+    public void messageToComposerBandIsTight() throws Exception {
+        // v4 (2026-07-11 反馈, 4th pass) — the ONE region three prior "fixed the composer gap" passes
+        // never actually measured: the vertical empty band between the last message and the composer
+        // card's top border. It was ~34px (messageList's 24px bottom padding STACKED on composerArea's
+        // 10px top padding); trimmed to 8 + 6 it is now ~14px. Unlike the historical blind-spot test,
+        // this one (a) loads REAL root.css and (b) measures a NON-EMPTY, scrolled-to-bottom
+        // conversation, pinning the band the user actually circled.
+        AIMainPage page = showStyledPage();
+        VBox messageList = (VBox) getField(page, "messageList");
+        ScrollPane scrollPane = (ScrollPane) getField(page, "scrollPane");
+
+        // Fill past the viewport so scrolled-to-bottom pins content bottom to viewport bottom, making
+        // the band a deterministic function of the two paddings (not of leftover viewport slack).
+        WaitForAsyncUtils.asyncFx(() -> {
+            try {
+                for (int i = 0; i < 60; i++) {
+                    invoke(page, "addUserBubble", new Class<?>[]{String.class, boolean.class},
+                            "conversation line " + i, true);
+                }
+                invoke(page, "updateEmptyState", new Class<?>[0]);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        WaitForAsyncUtils.asyncFx(() -> {
+            page.applyCss();
+            page.layout();
+            scrollPane.setVvalue(1.0);
+        }).get(10, TimeUnit.SECONDS);
+        WaitForAsyncUtils.waitForFxEvents();
+
+        double[] m = WaitForAsyncUtils.asyncFx(() -> {
+            Node card = page.lookup(".ai-composer");
+            Node last = messageList.getChildren().get(messageList.getChildren().size() - 1);
+            Bounds cardB = card.localToScene(card.getBoundsInLocal());
+            Bounds lastB = last.localToScene(last.getBoundsInLocal());
+            double contentH = scrollPane.getContent().getLayoutBounds().getHeight();
+            double viewportH = scrollPane.getViewportBounds().getHeight();
+            return new double[]{cardB.getMinY() - lastB.getMaxY(), contentH, viewportH};
+        }).get(10, TimeUnit.SECONDS);
+
+        double band = m[0], contentH = m[1], viewportH = m[2];
+        // Guard: the conversation really overflowed (otherwise leftover viewport slack, not the
+        // paddings, would set the gap and the assertion below would be meaningless).
+        assertTrue(contentH > viewportH,
+                "test setup must overflow the viewport (content=" + contentH + " viewport=" + viewportH + ")");
+        assertTrue(band > 0.0 && band < 16.0,
+                "the band between the last message block and the composer card top must be tight "
+                        + "(<16px, was ~34px before the fix) — was " + band + "px");
+    }
+
+    /// Like {@link AiMainPageFxTestSupport#showPage()} but with root.css attached, so heights/paddings
+    /// reflect the REAL styled composer instead of the unstyled shell (see MessageActionsHoverFxTest
+    /// for the same pattern). Used by the band + empty-state geometry tests.
+    private static AIMainPage showStyledPage() throws Exception {
+        AtomicReference<AIMainPage> ref = new AtomicReference<>();
+        FxToolkit.setupSceneRoot(() -> {
+            AIMainPage page = new AIMainPage();
+            ref.set(page);
+            StackPane root = new StackPane(page);
+            root.setPrefSize(1100, 750);
+            root.getStylesheets().add(Objects.requireNonNull(
+                    ComposerLayoutFxTest.class.getResource("/assets/css/root.css")).toExternalForm());
+            return root;
+        });
+        FxToolkit.showStage();
+        WaitForAsyncUtils.waitForFxEvents();
+        return ref.get();
     }
 
     private static boolean hasAncestorWithStyleClass(Node node, String styleClass) {

@@ -119,6 +119,13 @@ import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 public final class AISettingsPage extends DecoratorAnimatedPage implements DecoratorPage, PageAware {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+    /// Master switch for the model editor's 定价 (pricing) collapsible pane — mirrors
+    /// {@link AIMainPage#PRICING_UI_ENABLED} (keep the two in lockstep). While {@code false} the
+    /// 定价 pane is not added to the model dialog (2026-07-11 反馈:"暂时把定价相关选项全部隐藏"); the
+    /// price fields' construction / auto-fill / save all stay wired (harmless, no data loss), so
+    /// flipping this back to {@code true} fully restores the pricing UI.
+    static final boolean PRICING_UI_ENABLED = AIMainPage.PRICING_UI_ENABLED;
+
     /// Bounded pool for the batch model-connection-test dialog: selecting many models across
     /// providers used to spawn one unbounded, un-pooled raw Thread per row with no throttling —
     /// a small fixed pool of daemon threads caps concurrency regardless of selection size.
@@ -665,9 +672,15 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         pricePane.getContent().setAll(priceGrid);
 
         // Collapsible (default-folded) 高级/定价 sections, wrapped in a ComponentList for
-        // the native collapsible-card chrome.
+        // the native collapsible-card chrome. The 定价 pane is gated off while PRICING_UI_ENABLED is
+        // false (2026-07-11 反馈:"暂时把定价相关选项全部隐藏") — its fields above are still built and
+        // still saved, they simply aren't shown; flip the switch to bring the pane back.
         ComponentList collapsibles = new ComponentList();
-        collapsibles.getContent().addAll(advPane, pricePane);
+        if (PRICING_UI_ENABLED) {
+            collapsibles.getContent().addAll(advPane, pricePane);
+        } else {
+            collapsibles.getContent().add(advPane);
+        }
 
         // Auto-fill from the bundled model library: when ADDING a new model, once a known model id
         // lands in the combo (typed then focus left, or picked from the fetched dropdown), pre-fill

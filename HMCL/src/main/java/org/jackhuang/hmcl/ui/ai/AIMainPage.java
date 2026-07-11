@@ -262,6 +262,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// so the active highlight can be updated without rebuilding the list.
     private static final String SESSION_ID_KEY = "ai.sessionId";
 
+    /// Master switch for ALL cost/pricing-related UI (2026-07-11 用户反馈:"暂时把定价相关选项全部隐藏").
+    /// Flip to {@code true} to restore: the model editor's 定价 collapsible pane
+    /// ({@link AISettingsPage#PRICING_UI_ENABLED} mirrors this there), the "显示成本" chat-settings
+    /// toggle, and the per-response cost suffix in the usage footer ({@link #formatUsage}). All the
+    /// underlying pricing fields/persistence stay wired up (harmless) — only the UI surfaces are
+    /// gated — so re-enabling is a one-line flip with no data loss.
+    static final boolean PRICING_UI_ENABLED = false;
+
     private final VBox sessionListBox = new VBox(2);
     @Nullable
     private AdvancedListBox sidebarScrollPane;
@@ -1335,12 +1343,26 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         scrollPane.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, e -> {
             if (e.getDeltaY() > 0) {
                 stickToBottom = false;
-            } else if (e.getDeltaY() < 0 && scrollPane.getVvalue() >= 0.97) {
+            } else if (e.getDeltaY() < 0 && scrollPane.getVvalue() >= 0.95) {
                 stickToBottom = true;
             }
         });
+        // Wheel events alone miss dragging the scrollbar thumb (and PgUp/Home) — those only move
+        // vvalue, no ScrollEvent — so streaming would yank the user back down while they drag up to
+        // read history ("和往上翻的操作冲突", 2026-07-11 反馈 #3). We do NOT naively watch vvalue
+        // (content growth drifts it and would false-trigger); instead, once the skin has built the
+        // vertical ScrollBar, we react to its value ONLY while the user is actively driving it
+        // (isValueChanging while dragging the thumb, or isPressed on the track) — content growth
+        // never sets those, so the streaming-drift immunity the wheel design bought is preserved.
+        installScrollBarDragDetection();
 
-        messageList.setPadding(new Insets(16, 16, 24, 16));
+        // Bottom padding trimmed 24 → 8: it stacked with composerArea's top padding to form the
+        // fat empty band the user kept circling above the input box (2026-07-11 反馈, 4th pass). 8px
+        // still gives the last message a little breathing room; the composer's top border now sits
+        // ~14px below the last message instead of ~34px. BOTTOM_LEFT keeps the last message pinned to
+        // the composer's upper edge in short conversations too (no tail gap from VGROW filling).
+        messageList.setPadding(new Insets(16, 16, 8, 16));
+        messageList.setAlignment(Pos.BOTTOM_LEFT);
         messageList.getStyleClass().add("ai-message-list");
 
         buildEmptyState();
@@ -1610,21 +1632,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         AiProviderProfile active = aiSettings.findSelectedProfile();
         if (active != null) {
-            StringBuilder sb = new StringBuilder();
-            String displayName = active.getDisplayName();
-            if (displayName != null && !displayName.isEmpty()) {
-                sb.append(displayName);
-            } else {
-                sb.append(active.getProtocolFamily());
-            }
+            // Subtitle shows ONLY the model alias (e.g. "DeepSeek-v4-Pro"): the alias already carries
+            // the brand, so the old "<provider> \u00b7 <alias>" prefix was redundant (2026-07-11 \u53cd\u9988:
+            // "\u8fd9\u91cc\u53ea\u9700\u8981\u663e\u793a DeepSeek-v4-Pro \u5c31\u884c"). Falls back to the provider display name only when
+            // no default model is set.
             String defaultModel = active.getDefaultModelId();
             if (defaultModel != null && !defaultModel.isEmpty()) {
-                // Show the user's display alias (e.g. "DeepSeek-v4-Pro"), not the raw id \u2014 the
-                // dropdown already resolves it via getModelAliasOrId, so the header must match
-                // (2026-07-11 feedback: header still showed the raw "deepseek-v4-pro").
-                sb.append(" \u00b7 ").append(active.getModelAliasOrId(defaultModel));
+                headerSubtitle.setText(active.getModelAliasOrId(defaultModel));
+            } else {
+                String displayName = active.getDisplayName();
+                headerSubtitle.setText(displayName != null && !displayName.isEmpty()
+                        ? displayName : active.getProtocolFamily());
             }
-            headerSubtitle.setText(sb.toString());
         } else {
             headerSubtitle.setText("");
         }
@@ -2123,7 +2142,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // ---- Composer card: input row (top) + toolbar (bottom), one rounded bordered box ----
         // Spacing 8 = the gap between the input row and the toolbar row in the empty-state target
         // (jobsPane/askPanel/fileChipArea are unmanaged when hidden and contribute no gap).
-        VBox composerCard = new VBox(8, jobsPane, askPanel, fileChipArea, inputRow, toolbar);
+        // Spacing 4 (was 8): the input row and the bottom toolbar are one card — a tighter gap kills
+        // the dead strip between the field and the toolbar (audit A, 2026-07-11).
+        VBox composerCard = new VBox(4, jobsPane, askPanel, fileChipArea, inputRow, toolbar);
         composerCard.getStyleClass().add("ai-composer");
         composerCard.setMaxWidth(Double.MAX_VALUE);
         // The composer must never be squeezed away in a short window.
@@ -2141,7 +2162,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
 
         VBox composerArea = new VBox(composerCard);
         composerArea.getStyleClass().add("ai-composer-area");
-        composerArea.setPadding(new Insets(10, 16, 12, 16));
+        // Top padding trimmed 10 → 6: it stacked with messageList's bottom padding to form the fat
+        // band above the input box; the "conversation ↔ composer" gap is now one thin divider, not
+        // two padded ones (2026-07-11 反馈, 4th pass).
+        composerArea.setPadding(new Insets(6, 16, 12, 16));
         composerArea.setMinHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
         return composerArea;
     }
@@ -2350,10 +2374,34 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (hot) contextArc.getStyleClass().add("ai-ring-hot");
     }
 
+    /// Compact token count with a k (千) and M (百万) tier. A whole million renders as "1M" (not the
+    /// ugly "1000.0k" the old k-only path produced for a 1M context window), 1.05M / 1.1M keep up to
+    /// two significant fraction digits with trailing zeros trimmed; the k tier likewise trims so
+    /// 128000 → "128k" and 58399 → "58.4k". Locale.ROOT so the decimal separator is always a dot.
     private static String formatTokens(int n) {
-        return n >= 1000
-                ? String.format(java.util.Locale.ROOT, "%.1fk", n / 1000.0)
-                : String.valueOf(n);
+        if (n >= 1_000_000) {
+            return trimTrailingZeros(String.format(java.util.Locale.ROOT, "%.2f", n / 1_000_000.0)) + "M";
+        }
+        if (n >= 1000) {
+            return trimTrailingZeros(String.format(java.util.Locale.ROOT, "%.1f", n / 1000.0)) + "k";
+        }
+        return String.valueOf(n);
+    }
+
+    /// Drops a trailing ".0"/".00"/… (and a bare trailing dot) from a fixed-point string so integral
+    /// values read cleanly ("1.00" → "1", "1.10" → "1.1", "58.4" → "58.4").
+    private static String trimTrailingZeros(String s) {
+        if (s.indexOf('.') < 0) {
+            return s;
+        }
+        int end = s.length();
+        while (end > 0 && s.charAt(end - 1) == '0') {
+            end--;
+        }
+        if (end > 0 && s.charAt(end - 1) == '.') {
+            end--;
+        }
+        return s.substring(0, end);
     }
 
     /// Pops the context-usage detail panel from the ring (v2 §5): "上下文窗口 <used> / <total>
@@ -2382,7 +2430,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         HBox row = new HBox(12, title, rowSpacer, val);
         row.setAlignment(Pos.BASELINE_LEFT);
 
-        javafx.scene.control.ProgressBar bar = new javafx.scene.control.ProgressBar(frac);
+        // Reuse HMCL's native download/task progress bar: a JFXProgressBar wears the shared
+        // `.jfx-progress-bar` style (the exact bar TaskListPane uses — track/bar colours, radius and
+        // the JFoenix determinate reveal animation) instead of a bare, unstyled JavaFX ProgressBar
+        // rendered as a thin line (2026-07-11 反馈:"可复用 HMCL 原生的下载进度条的那个动画和进度条").
+        // `.ai-ctx-bar` now only bumps the thickness + adds the >=90% red "hot" state on top.
+        JFXProgressBar bar = new JFXProgressBar();
+        bar.setProgress(frac);
         bar.getStyleClass().add("ai-ctx-bar");
         if (hot) bar.getStyleClass().add("ai-ctx-bar-hot");
         bar.setMaxWidth(Double.MAX_VALUE);
@@ -3876,7 +3930,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (event) {
             addEventPill(text);
         } else {
+            // A real user send is an explicit "show me my latest message" intent: re-pin to the
+            // bottom even if the user had scrolled up to read history (otherwise addUserBubble's own
+            // scrollToBottom no-ops on !stickToBottom and the send lands off-screen), then force the
+            // scroll through a path that ignores the autoScroll toggle. (2026-07-11 反馈 #1)
+            stickToBottom = true;
             addUserBubble(text);
+            forceScrollToBottom();
         }
         persistStore();
 
@@ -5161,7 +5221,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 String.valueOf(usage.getTotalTokens()),
                 String.valueOf(usage.getPromptTokens()),
                 String.valueOf(usage.getCompletionTokens()));
-        if (chatSettings.showCost) {
+        // Gated by PRICING_UI_ENABLED so a previously-persisted showCost=true never re-surfaces the
+        // cost suffix while pricing UI is hidden (2026-07-11 反馈).
+        if (PRICING_UI_ENABLED && chatSettings.showCost) {
             double cost = estimateCost(usage);
             if (cost > 0) {
                 text += i18n("ai.usage.cost", String.format(java.util.Locale.ROOT, "%.6f", cost));
@@ -5577,6 +5639,73 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         Platform.runLater(() -> scrollPane.setVvalue(1.0));
     }
 
+    /// Wires {@link #stickToBottom} to the vertical scrollbar's drag state — the half of the
+    /// stick-to-bottom detection that wheel events miss (dragging the thumb / clicking the track only
+    /// moves {@code value}, it dispatches no ScrollEvent). The scrollbar node only exists once the
+    /// ScrollPane skin is built, so the lookup is deferred; if the skin isn't ready yet we retry once
+    /// on the next pulse.
+    ///
+    /// We deliberately do NOT naively watch {@code value}: streaming content growth drifts it (taller
+    /// content at the same pixel offset = a smaller fraction) and would false-detach, which is the
+    /// exact reason the original design used wheel events. Instead we track whether the user is
+    /// PHYSICALLY driving the bar via its own mouse press/release (a mouse-press on the thumb or track
+    /// is caught by an event filter on the bar during the capturing phase; content growth carries no
+    /// mouse button, so it never trips this) and only then re-evaluate stick-to-bottom from position.
+    private void installScrollBarDragDetection() {
+        installScrollBarDragDetection(true);
+    }
+
+    private void installScrollBarDragDetection(boolean retry) {
+        Platform.runLater(() -> {
+            javafx.scene.control.ScrollBar vbar = null;
+            for (Node n : scrollPane.lookupAll(".scroll-bar")) {
+                if (n instanceof javafx.scene.control.ScrollBar sb
+                        && sb.getOrientation() == javafx.geometry.Orientation.VERTICAL) {
+                    vbar = sb;
+                    break;
+                }
+            }
+            if (vbar == null) {
+                if (retry) installScrollBarDragDetection(false);
+                return;
+            }
+            final javafx.scene.control.ScrollBar bar = vbar;
+            final boolean[] userDriving = {false};
+            bar.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> userDriving[0] = true);
+            bar.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_RELEASED, e -> {
+                userDriving[0] = false;
+                updateStickFromScrollBar(bar); // a release at (near) the bottom resumes follow
+            });
+            bar.valueProperty().addListener((o, ov, nv) -> {
+                if (userDriving[0]) {
+                    updateStickFromScrollBar(bar);
+                }
+            });
+        });
+    }
+
+    private void updateStickFromScrollBar(javafx.scene.control.ScrollBar bar) {
+        double max = bar.getMax();
+        double frac = max > 0 ? bar.getValue() / max : 1.0;
+        stickToBottom = frac >= 0.95;
+    }
+
+    /// Unconditional jump to the bottom for an EXPLICIT user intent (sending a message): unlike
+    /// {@link #scrollToBottom()} it honours neither {@link #stickToBottom} nor the autoScroll toggle
+    /// — those two govern streaming auto-follow, not "show me the message I just sent". A bubble
+    /// appended this same pulse is not laid out yet, so a single {@code setVvalue(1)} would land on
+    /// the PRE-append bottom; we force a layout pass first (and defer through a second runLater) so
+    /// the scroll lands on the real, post-append bottom. (2026-07-11 反馈 #1)
+    private void forceScrollToBottom() {
+        Platform.runLater(() -> {
+            scrollPane.applyCss();
+            scrollPane.layout();
+            scrollPane.setVvalue(1.0);
+            // A second pass catches any late height change from the freshly-added node's own layout.
+            Platform.runLater(() -> scrollPane.setVvalue(1.0));
+        });
+    }
+
     // ---- Chat Settings Persistence ----
 
     /// Loads chat settings from the JSON file on disk, returning defaults if the file is absent or corrupt.
@@ -5789,16 +5918,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         });
         usage.getContent().add(estimate);
 
-        LineToggleButton cost = new LineToggleButton();
-        cost.setTitle(i18n("ai.chat.settings.cost"));
-        cost.setSubtitle(i18n("ai.chat.settings.cost.desc"));
-        cost.setSelected(chatSettings.showCost);
-        cost.selectedProperty().addListener((o, ov, nv) -> {
-            chatSettings.showCost = nv;
-            saveChatSettings();
-            refreshMessageList();
-        });
-        usage.getContent().add(cost);
+        // "显示成本" toggle is hidden while pricing UI is gated off (2026-07-11 反馈); the persisted
+        // showCost value is left untouched so it comes back as-was when PRICING_UI_ENABLED flips true.
+        if (PRICING_UI_ENABLED) {
+            LineToggleButton cost = new LineToggleButton();
+            cost.setTitle(i18n("ai.chat.settings.cost"));
+            cost.setSubtitle(i18n("ai.chat.settings.cost.desc"));
+            cost.setSelected(chatSettings.showCost);
+            cost.selectedProperty().addListener((o, ov, nv) -> {
+                chatSettings.showCost = nv;
+                saveChatSettings();
+                refreshMessageList();
+            });
+            usage.getContent().add(cost);
+        }
 
         // ---- 交互 ----
         ComponentList interaction = new ComponentList();

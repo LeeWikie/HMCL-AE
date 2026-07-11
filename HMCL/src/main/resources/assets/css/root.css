@@ -2548,7 +2548,7 @@
 .ai-composer-toolbar {
     -fx-border-color: -monet-outline-variant;
     -fx-border-width: 1 0 0 0;
-    -fx-padding: 6 0 0 0;
+    -fx-padding: 3 0 0 0; /* was 6 — tighten the divider gap above the toolbar (audit A, 2026-07-11) */
 }
 
 /* Toolbar pills (v2 §2 colour convergence): all NEUTRAL chips (grey fill, muted text). Only the
@@ -2629,13 +2629,15 @@
 }
 
 /* ===== Send/Stop square (v2 §7): compact accent square in the input area's top-right ===== */
+/* 28 (was 30): closer to the input field's 26px min-height so the square no longer overhangs the
+   one-line field and leave a dead strip in the input row (audit A, 2026-07-11). */
 .ai-send-square {
-    -fx-min-width: 30;
-    -fx-pref-width: 30;
-    -fx-max-width: 30;
-    -fx-min-height: 30;
-    -fx-pref-height: 30;
-    -fx-max-height: 30;
+    -fx-min-width: 28;
+    -fx-pref-width: 28;
+    -fx-max-width: 28;
+    -fx-min-height: 28;
+    -fx-pref-height: 28;
+    -fx-max-height: 28;
     -fx-padding: 0;
     -fx-background-color: -monet-primary;
     -fx-background-radius: 8;
@@ -2741,18 +2743,15 @@
     -fx-font-weight: bold;
 }
 
+/* Context-usage bar: a JFXProgressBar reusing HMCL's native download/task bar look (the shared
+   `.jfx-progress-bar` rules above give it the track/bar colours, 2px radius and the JFoenix reveal
+   animation TaskListPane's download bar uses). We only bump the popup thickness here and paint the
+   bar red in the >=90% "hot" state — everything else is inherited from `.jfx-progress-bar`. */
 .ai-ctx-bar {
-    -fx-pref-height: 8;
-}
-
-.ai-ctx-bar > .track {
-    -fx-background-color: -monet-surface-container-highest;
-    -fx-background-radius: 5;
+    -fx-pref-height: 10;
 }
 
 .ai-ctx-bar > .bar {
-    -fx-background-color: -monet-primary;
-    -fx-background-radius: 5;
     -fx-padding: 4;
 }
 
