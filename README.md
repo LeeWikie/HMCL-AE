@@ -74,9 +74,6 @@ cd HMCL-AE
 
 HMCL-AE 是 [HMCL](https://github.com/HMCL-dev/HMCL) 的修改版，保留其原始版权声明。感谢 HMCL 及其自 2015 年以来的全体贡献者。
 
-<details>
-<summary>其它语言文档</summary>
+[English](docs/README.md)
 
-[English](docs/README.md) · [简体中文](docs/README_zh.md) · [繁體中文](docs/README_zh_Hant.md) · [日本語](docs/README_ja.md) · [español](docs/README_es.md) · [русский](docs/README_ru.md) · [українська](docs/README_uk.md)
-
-</details>
+> 其它语言版本（简体中文 / 繁體中文 / 日本語 / español / русский / українська）暂时还是未同步的上游 HMCL 原文，尚未跟进 AE 的 AI 功能，先移除对应链接避免误导；欢迎帮忙翻译。
