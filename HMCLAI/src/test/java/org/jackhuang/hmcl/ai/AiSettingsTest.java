@@ -491,6 +491,54 @@ public final class AiSettingsTest {
         }
     }
 
+    /// Regression for the header model-dropdown switch bug: the agent reads the flat
+    /// {@link AiSettings#getModel()} property, which is (re)populated from the selected
+    /// profile's effective model whenever a profile is selected. So when the UI changes a
+    /// profile's default model, it MUST update the profile default BEFORE re-selecting it —
+    /// otherwise selecting first re-applies the OLD default and the later
+    /// {@code setDefaultModelId} never reaches the flat model, so requests keep hitting the
+    /// old model while the UI shows the new one.
+    ///
+    /// This test locks the invariant the UI ordering depends on: after
+    /// {@code setDefaultModelId(new)} then {@code setSelectedProfileId(id)}, {@code getModel()}
+    /// reflects the new model.
+    @Test
+    public void testSelectingProfileAppliesUpdatedDefaultModelToFlatModel() throws IOException {
+        Path tempDir = Files.createTempDirectory("hmcl-ai-test-");
+        try {
+            AiSettings settings = new AiSettings(tempDir);
+            AiProviderProfile profile = new AiProviderProfile(
+                    "p-switch", "Switcher",
+                    AiProtocolFamily.OPENAI_COMPLETIONS.getId(),
+                    "https://api.example.com/v1", "sk-x", "model-old",
+                    List.of("model-old", "model-new"), true);
+            settings.setProfiles(List.of(profile));
+            settings.setSelectedProfileId("p-switch");
+            assertEquals("model-old", settings.getModel(),
+                    "flat model should start at the profile's default");
+
+            // Mutate the shared profile instance (as the header dropdown listener does), then
+            // re-select in the fixed order.
+            AiProviderProfile live = settings.findSelectedProfile();
+            assertNotNull(live);
+            live.setDefaultModelId("model-new");
+            settings.setSelectedProfileId("p-switch");
+
+            assertEquals("model-new", settings.getModel(),
+                    "after updating the default model then re-selecting, the flat model the agent "
+                            + "reads must be the NEW model");
+        } finally {
+            try {
+                Files.walk(tempDir)
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> {
+                            try { Files.deleteIfExists(p); } catch (IOException ignored) { }
+                        });
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
     /// Verifies that the new global AI behaviour settings round-trip correctly
     /// through save and load, including approval mode and analysis toggles.
     @Test

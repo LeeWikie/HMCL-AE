@@ -866,13 +866,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (aiSettings.isShellToolEnabled()) {
             toolRegistry.register(new ShellTool());
         }
-        // 联网工具热生效：绑定 webAccessEnabled → 注册/注销 web_fetch + web_search。开关关闭时
-        // 这两个工具从注册表整体移除（模型的工具列表里根本没有、不可发现），开启立即恢复——
-        // 取代旧的"启动时一次性 if 注册 + 重启后生效"。见 WebAccessToolsBinder。
+        // 联网工具热生效：webAccessEnabled 开关即时注册/注销 web 工具（关闭后模型工具表里根本
+        // 没有、不可发现，开启立即恢复），取代旧的"启动时一次性 if + 重启才生效"。见
+        // WebAccessToolsBinder。web_fetch 只受 webAccess 控；web_search 额外要求"联网搜索已启用"
+        // ——全新安装默认 webAccess=on、searchConfig=off，若只 gate 在 webAccess 会让 web_search
+        // 出现在工具表却一调即回 "Web search is disabled"，白费一轮。仅在 searchConfig 启用时才把
+        // web_search 交给 binder，注册态遂 = webAccess && searchConfig；提示词（AiPromptBuilder）
+        // 按同一条件宣告，两者语义一致、消除幽灵工具。WebSearchTool 执行期 guard 作纵深保留。
+        java.util.List<org.jackhuang.hmcl.ai.tools.Tool> webTools = new java.util.ArrayList<>();
+        webTools.add(new WebFetchTool());
+        if (searchConfig.isEnabled()) {
+            webTools.add(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
+        }
         org.jackhuang.hmcl.ai.tools.WebAccessToolsBinder.bind(
                 aiSettings.webAccessEnabledProperty(), toolRegistry,
-                new WebFetchTool(),
-                new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
+                webTools.toArray(new org.jackhuang.hmcl.ai.tools.Tool[0]));
         toolRegistry.register(gameContextTool);
         // Local instance/mod/world/content-management domain (merged facade — see InstanceTool).
         instanceTool = new org.jackhuang.hmcl.ui.ai.tools.InstanceTool(
@@ -903,7 +911,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Diagnostics (reuse HMCL SystemInfo hardware detection).
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.SystemInfoTool());
         // OCR a screenshot/image into text (crash/error shots) — backend chosen in AI 设置 > OCR.
-        toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
+        // Only expose ocr_image when OCR is actually enabled: the OCR settings toggle promises
+        // "把 ocr_image 工具暴露给 AI", so registering it unconditionally made that toggle a lie and
+        // left a ghost tool that always failed until a backend was configured.
+        if (ocrConfig.isEnabled()) {
+            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
+        }
         // Lists the instance's screenshots/ directory (file name/size/mtime) so the model can find
         // a file name to pass to ocr_image above instead of guessing — see OcrImageTool's own
         // description ("pair with list_screenshots").
@@ -1529,8 +1542,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 if (!p.isEnabled() || !p.getDisplayName().equals(parts[0])) continue;
                 for (String m : p.getCachedModels()) {
                     if (p.getModelAliasOrId(m).equals(parts[1]) || m.equals(parts[1])) {
-                        aiSettings.setSelectedProfileId(p.getId());
+                        // Order matters: update the profile's default model FIRST, then
+                        // select the profile. setSelectedProfileId() re-applies the profile's
+                        // effective model into the flat `model` property that the agent actually
+                        // reads (settings.getModel()). Doing it the other way round left the flat
+                        // model on the OLD default — the dropdown/header showed the new model but
+                        // every request still went to the old one.
                         p.setDefaultModelId(m);
+                        aiSettings.setSelectedProfileId(p.getId());
                         clearAgentCache();
                         persistAiSettings();
                         // After deleting the last session there is no current session — the
