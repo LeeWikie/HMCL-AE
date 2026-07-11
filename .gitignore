@@ -86,3 +86,4 @@ packaging/aur/
 
 # 运行时状态目录(任意层级),不应入库
 .hmcl/
+ScreenShots/
