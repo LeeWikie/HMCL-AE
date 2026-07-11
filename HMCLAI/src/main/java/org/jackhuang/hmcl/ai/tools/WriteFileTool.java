@@ -53,6 +53,51 @@ public final class WriteFileTool implements ToolSpec {
         if (!roots.contains(normalized)) roots.add(normalized);
     }
 
+    @Nullable
+    private Path instanceRoot;
+    @Nullable
+    private List<Path> staticRootsSnapshot;
+
+    /// Rebases the single per-instance allowed root (§3.8): replaces the previously-set instance
+    /// root rather than accumulating, and {@code null} clears it — so a previously-selected
+    /// instance's files stop being reachable the moment the user switches instances. Static roots
+    /// present at the first call (config dir, HMCL home) are never removed here. See
+    /// {@code FileReadTool#setInstanceRoot} for the full rationale.
+    public void setInstanceRoot(@Nullable Path root) {
+        if (staticRootsSnapshot == null) {
+            staticRootsSnapshot = List.copyOf(roots);
+        }
+        Path normalized = root == null ? null : root.toAbsolutePath().normalize();
+        if (java.util.Objects.equals(instanceRoot, normalized)) {
+            return;
+        }
+        if (instanceRoot != null && !staticRootsSnapshot.contains(instanceRoot)) {
+            roots.remove(instanceRoot);
+        }
+        instanceRoot = normalized;
+        if (normalized != null && !roots.contains(normalized)) {
+            roots.add(normalized);
+        }
+    }
+
+    /// Non-fatal advisory when a write lands OUTSIDE the currently-selected instance's root but
+    /// still inside a broader allowed root (the HMCL home contains every instance's tree), a likely
+    /// mis-targeted write while a different instance is selected (§3.8). The launcher config root
+    /// ({@code roots.get(0)}) is instance-agnostic and exempt, as is the case where no instance root
+    /// is set. Returns {@code null} when nothing is amiss.
+    @Nullable
+    private String crossInstanceWarning(Path resolved) {
+        if (instanceRoot == null || resolved.startsWith(instanceRoot)) {
+            return null;
+        }
+        if (!roots.isEmpty() && resolved.startsWith(roots.get(0))) {
+            return null;
+        }
+        return "Note: this path is outside the currently-selected instance's directory ("
+                + instanceRoot + "). If you meant to modify the selected instance, double-check the "
+                + "path; otherwise confirm you intend to touch another instance's files.";
+    }
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.CONTROLLED_WRITE;
@@ -184,6 +229,10 @@ public final class WriteFileTool implements ToolSpec {
             }
             if (warning != null) {
                 receipt.append('\n').append(warning);
+            }
+            String crossInstance = crossInstanceWarning(resolved);
+            if (crossInstance != null) {
+                receipt.append('\n').append(crossInstance);
             }
             return ToolResult.success(receipt.toString());
         } catch (IOException e) {

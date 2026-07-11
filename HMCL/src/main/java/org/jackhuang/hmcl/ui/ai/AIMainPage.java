@@ -1011,12 +1011,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             gameContextTool.setInstanceInfo(null, false);
             gameContextTool.setVersionInfo(null, null);
         }
+        // §3.8: rebase the per-instance allowed root as a single REPLACED slot (not accumulate),
+        // and clear it when there is no selected instance (runDir == null). The old addRoot() left
+        // every previously-selected instance's dir allowed forever, so after switching A -> B the
+        // agent could still read/write instance A's files — a confinement leak. setInstanceRoot
+        // drops the prior instance's root on each switch; the static config/HMCL-home roots are
+        // untouched.
+        fileReadTool.setInstanceRoot(runDir);
+        fileWriteTool.setInstanceRoot(runDir);
+        editTool.setInstanceRoot(runDir);
+        grepTool.setInstanceRoot(runDir);
+        globTool.setInstanceRoot(runDir);
         if (runDir != null) {
-            fileReadTool.addRoot(runDir);
-            fileWriteTool.addRoot(runDir);
-            editTool.addRoot(runDir);
-            grepTool.addRoot(runDir);
-            globTool.addRoot(runDir);
             // mods_install needs the current instance's run dir; re-target on every switch.
             instanceTool.refreshRunDir(runDir);
         }
@@ -1157,6 +1163,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 () -> {
                     clearAgentCache();
                     refreshModelSelector();
+                    // §3.9: re-scan skills so a skill added/removed/re-enabled while this chat page
+                    // stayed open is seen on the next turn. The chat page and the settings page each
+                    // hold their own SkillRegistry over the SAME skills dir (enabled/disabled state
+                    // already cross-syncs via the .disabled file), but a brand-NEW skill folder is
+                    // only picked up by refresh()'s directory rescan — without this it stayed
+                    // invisible to this session until a restart.
+                    skillRegistry.refresh();
                     AiSession current = sessionStore.getCurrentSession();
                     if (current != null) {
                         updateHeader(current);
@@ -5846,8 +5859,25 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// initial button-side sync then never triggers a redundant write, and a change made from the
     /// settings page merely saves once more (idempotent).
     private void bindPersisted(LineToggleButton btn, javafx.beans.property.BooleanProperty prop) {
+        bindPersisted(btn, prop, false);
+    }
+
+    /// @param rebuildAgentOnChange when true, also drop the agent cache on every change — for
+    ///                            settings baked into the LangChain4j client at agent BUILD time
+    ///                            (e.g. the streaming flag, read once in {@code ChatAgentFactory}),
+    ///                            so the toggle takes effect on the next turn instead of silently
+    ///                            only after a restart (§3.9 stale-state). Pure-UI toggles
+    ///                            (auto-scroll, enter-to-send) pass false — they never touch the
+    ///                            agent, so evicting live agents for them would be wasteful.
+    private void bindPersisted(LineToggleButton btn, javafx.beans.property.BooleanProperty prop,
+                               boolean rebuildAgentOnChange) {
         btn.selectedProperty().bindBidirectional(prop);
-        prop.addListener((o, ov, nv) -> persistAiSettings());
+        prop.addListener((o, ov, nv) -> {
+            persistAiSettings();
+            if (rebuildAgentOnChange) {
+                clearAgentCache();
+            }
+        });
     }
 
     /// Builds the chat-settings drawer content using native HMCL list components.
@@ -5978,7 +6008,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         LineToggleButton stream = new LineToggleButton();
         stream.setTitle(i18n("ai.chat.settings.stream"));
         stream.setSubtitle(i18n("ai.chat.settings.stream.desc"));
-        bindPersisted(stream, aiSettings.streamProperty());
+        // isStream() is baked into the agent at build time (ChatAgentFactory) — rebuild on change.
+        bindPersisted(stream, aiSettings.streamProperty(), true);
         interaction.getContent().add(stream);
 
         LineToggleButton shortcut = new LineToggleButton();

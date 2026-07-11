@@ -62,6 +62,35 @@ public final class FileReadTool implements ToolSpec {
         roots.set(0, primaryRoot.toAbsolutePath().normalize());
     }
 
+    @Nullable
+    private Path instanceRoot;
+    @Nullable
+    private List<Path> staticRootsSnapshot;
+
+    /// Rebases the single per-instance allowed root (§3.8): removes the previously-set instance
+    /// root (unless it coincides with a static root added before instance-rebasing began) and, when
+    /// {@code root} is non-null, adds the new one. Passing {@code null} clears it entirely. Unlike
+    /// {@link #addRoot(Path)} (accumulate-only), this REPLACES the slot, so a previously-selected
+    /// instance's files stop being reachable the moment the user switches instances — the
+    /// confinement leak this fixes. The roots present at the first call are snapshotted as "static"
+    /// (config dir, HMCL home) and never removed here.
+    public void setInstanceRoot(@Nullable Path root) {
+        if (staticRootsSnapshot == null) {
+            staticRootsSnapshot = List.copyOf(roots);
+        }
+        Path normalized = root == null ? null : root.toAbsolutePath().normalize();
+        if (java.util.Objects.equals(instanceRoot, normalized)) {
+            return;
+        }
+        if (instanceRoot != null && !staticRootsSnapshot.contains(instanceRoot)) {
+            roots.remove(instanceRoot);
+        }
+        instanceRoot = normalized;
+        if (normalized != null && !roots.contains(normalized)) {
+            roots.add(normalized);
+        }
+    }
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.READ_ONLY;

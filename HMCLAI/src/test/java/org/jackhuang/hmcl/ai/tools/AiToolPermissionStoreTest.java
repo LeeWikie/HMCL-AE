@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Comparator;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -176,6 +177,52 @@ public final class AiToolPermissionStoreTest {
             assertEquals(AiExecutionPolicy.Decision.BLOCK,
                     AiToolPermissionStore.OverrideMode.FOLLOW_GLOBAL.apply(AiExecutionPolicy.Decision.BLOCK, permission));
         }
+    }
+
+    // ---- §3.7: cross-instance mtime self-sync on read ----
+
+    @Test
+    void getOverridePicksUpATighteningWrittenByAnotherInstanceOnDisk() throws IOException {
+        // The security-critical direction: the chat page's live store must NOT keep auto-allowing a
+        // tool the settings page (a SEPARATE store over the same file) just moved back to ALWAYS_ASK.
+        AiToolPermissionStore writer = new AiToolPermissionStore(file);
+        writer.setOverride("write", AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW);
+        writer.save();
+
+        AiToolPermissionStore reader = new AiToolPermissionStore(file);
+        reader.load();
+        assertEquals(AiToolPermissionStore.OverrideMode.ALWAYS_ALLOW, reader.getOverride("write"));
+
+        // Another instance tightens the same tool on disk.
+        writer.setOverride("write", AiToolPermissionStore.OverrideMode.ALWAYS_ASK);
+        writer.save();
+        // Force a distinct mtime so the change is observable even on coarse-granularity clocks.
+        bumpMtime(file);
+
+        assertEquals(AiToolPermissionStore.OverrideMode.ALWAYS_ASK, reader.getOverride("write"),
+                "a tightening written by another instance must be re-synced on the next read");
+    }
+
+    @Test
+    void getOverrideWithPathPicksUpANewPathRuleWrittenByAnotherInstance() throws IOException {
+        AiToolPermissionStore reader = new AiToolPermissionStore(file);
+        reader.load();
+        assertEquals(AiToolPermissionStore.OverrideMode.FOLLOW_GLOBAL,
+                reader.getOverride("write", null, "saves/world1/level.dat"));
+
+        AiToolPermissionStore writer = new AiToolPermissionStore(file);
+        writer.load();
+        writer.setPathOverride("write", "saves/**", AiToolPermissionStore.OverrideMode.ALWAYS_ASK);
+        writer.save();
+        bumpMtime(file);
+
+        assertEquals(AiToolPermissionStore.OverrideMode.ALWAYS_ASK,
+                reader.getOverride("write", null, "saves/world1/level.dat"));
+        assertEquals(1, reader.getPathOverrides("write").size());
+    }
+
+    private static void bumpMtime(Path f) throws IOException {
+        Files.setLastModifiedTime(f, FileTime.fromMillis(Files.getLastModifiedTime(f).toMillis() + 5000));
     }
 
     // ---- Part D: path-glob overrides ----

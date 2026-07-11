@@ -153,11 +153,18 @@ public final class GameContextTool implements ToolSpec {
             }
             sb.append('\n');
         }
+        // §3.9: derive the isolation label from the REAL resolved gameDir above rather than
+        // hard-asserting the versions/<name>/ convention. An isolated instance's own directory is
+        // exactly `gameDir` (already reported as gameDirectory) — which may be a CUSTOM path, not
+        // literally versions/<name>/ — so the label points at that concrete dir instead of a
+        // convention that can be wrong.
         sb.append("versionIsolation: ").append(isolated
-                ? "ON (mods/saves/config under versions/" + (instanceName != null ? instanceName : "<name>") + "/)"
-                : "OFF (follows the global/parent preset's own directory setting instead of its own "
-                + "versions/<name>/ folder — commonly the shared base .minecraft, but check the actual "
-                + "current global default)").append('\n');
+                ? "ON (this instance has its OWN isolated game directory — the gameDirectory shown "
+                + "above; its mods/saves/config live under that dir, not the shared base .minecraft)"
+                : "OFF (follows the global/parent preset's own directory setting instead of an "
+                + "isolated per-instance folder — commonly the shared base .minecraft, but check the "
+                + "actual current global default; the gameDirectory shown above is the resolved "
+                + "result either way)").append('\n');
         for (var entry : paths.entrySet()) {
             sb.append(entry.getKey()).append(": ").append(entry.getValue());
             if (Files.isDirectory(Path.of(entry.getValue()))) {

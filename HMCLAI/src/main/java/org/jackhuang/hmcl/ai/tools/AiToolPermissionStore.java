@@ -40,6 +40,24 @@ import java.util.regex.Pattern;
 /// The global approval mode still lives in {@code AiSettings}; this store only
 /// records per-tool overrides. A missing tool entry means "follow global".
 ///
+/// ## Two instances over one file — self-syncing on read (§3.7)
+///
+/// The chat page ({@code AIMainPage}) and the settings page ({@code AISettingsPage}) each hold
+/// their OWN instance of this store, both pointing at the same {@code ai-tool-permissions.json}.
+/// The chat page's instance is the one consulted by {@code LangChain4jToolAdapter} on EVERY tool
+/// call. Without cross-instance sync, tightening a tool from "always allow" back to "always ask"
+/// in settings wrote the file but left the chat page's in-memory copy stale, so the next
+/// write/edit was still silently auto-allowed until a restart — a silent security downgrade.
+///
+/// The fix mirrors {@code SkillRegistry#syncDisabledFromDisk}: every read entry point
+/// ({@code getOverride*}, {@code getPathOverrides}, {@code getOverrides}) calls
+/// {@link #syncFromDisk()} first, which re-reads the file only when its mtime changed since the
+/// last read. Reads/writes are {@code synchronized} because the chat instance is read on the
+/// agent's worker thread while the "remember this choice" checkbox and the settings page write on
+/// the FX thread (§3.9 shared-mutable-state self-synchronization). The disk re-read is atomic
+/// (parse into fresh maps, swap only on success) so a concurrent partial/corrupt write never wipes
+/// a live override into a looser state.
+///
 /// ## Shape, independent of how many global approval modes exist
 ///
 /// Before the original approval-mode merge (see {@link org.jackhuang.hmcl.ai.AiApprovalMode}'s own
@@ -156,43 +174,92 @@ public final class AiToolPermissionStore {
     /// Tool name -> ordered list of path-glob rules (see {@link PathOverride}). Empty/absent for
     /// every tool until the user adds one via the settings page.
     private final Map<String, List<PathOverride>> pathOverrides = new LinkedHashMap<>();
+    /// Last-seen modification time of {@link #file} (0 = absent, -1 = never read). Drives
+    /// {@link #syncFromDisk()}'s "re-read only when the other instance changed it" check.
+    private long fileSeenAt = -1;
 
     public AiToolPermissionStore(Path file) {
         this.file = file;
     }
 
-    public void load() throws IOException, JsonParseException {
-        overrides.clear();
-        pathOverrides.clear();
-        if (!Files.exists(file)) return;
+    public synchronized void load() throws IOException, JsonParseException {
+        readFromDisk();
+        fileSeenAt = currentMtime();
+    }
+
+    /// Parses {@link #file} into fresh local maps and swaps them in only on success, so a throw
+    /// (missing file aside) never leaves the store half-cleared. A missing file resets to empty,
+    /// exactly as the old upfront-clear did.
+    private void readFromDisk() throws IOException, JsonParseException {
+        if (!Files.exists(file)) {
+            overrides.clear();
+            pathOverrides.clear();
+            return;
+        }
         String json = Files.readString(file, StandardCharsets.UTF_8);
         PersistedData data = GSON.fromJson(json, PersistedData.class);
-        if (data == null) return;
-        if (data.toolOverrides != null) {
-            for (Map.Entry<String, String> entry : data.toolOverrides.entrySet()) {
-                OverrideMode mode = OverrideMode.fromId(entry.getValue());
-                if (mode != OverrideMode.FOLLOW_GLOBAL) {
-                    overrides.put(entry.getKey(), mode);
+        Map<String, OverrideMode> newOverrides = new LinkedHashMap<>();
+        Map<String, List<PathOverride>> newPathOverrides = new LinkedHashMap<>();
+        if (data != null) {
+            if (data.toolOverrides != null) {
+                for (Map.Entry<String, String> entry : data.toolOverrides.entrySet()) {
+                    OverrideMode mode = OverrideMode.fromId(entry.getValue());
+                    if (mode != OverrideMode.FOLLOW_GLOBAL) {
+                        newOverrides.put(entry.getKey(), mode);
+                    }
+                }
+            }
+            if (data.pathOverrides != null) {
+                for (Map.Entry<String, List<PersistedPathOverride>> entry : data.pathOverrides.entrySet()) {
+                    List<PathOverride> rules = new ArrayList<>();
+                    for (PersistedPathOverride p : entry.getValue()) {
+                        if (p == null || p.glob == null || p.glob.isBlank()) continue;
+                        OverrideMode mode = OverrideMode.fromId(p.mode);
+                        if (mode == OverrideMode.FOLLOW_GLOBAL) continue;
+                        rules.add(new PathOverride(p.glob, mode));
+                    }
+                    if (!rules.isEmpty()) {
+                        newPathOverrides.put(entry.getKey(), rules);
+                    }
                 }
             }
         }
-        if (data.pathOverrides != null) {
-            for (Map.Entry<String, List<PersistedPathOverride>> entry : data.pathOverrides.entrySet()) {
-                List<PathOverride> rules = new ArrayList<>();
-                for (PersistedPathOverride p : entry.getValue()) {
-                    if (p == null || p.glob == null || p.glob.isBlank()) continue;
-                    OverrideMode mode = OverrideMode.fromId(p.mode);
-                    if (mode == OverrideMode.FOLLOW_GLOBAL) continue;
-                    rules.add(new PathOverride(p.glob, mode));
-                }
-                if (!rules.isEmpty()) {
-                    pathOverrides.put(entry.getKey(), rules);
-                }
-            }
+        overrides.clear();
+        overrides.putAll(newOverrides);
+        pathOverrides.clear();
+        pathOverrides.putAll(newPathOverrides);
+    }
+
+    /// Current mtime of {@link #file} in millis (0 if absent, -1 if unreadable — which forces the
+    /// next {@link #syncFromDisk()} to attempt a re-read rather than short-circuit).
+    private long currentMtime() {
+        try {
+            return Files.exists(file) ? Files.getLastModifiedTime(file).toMillis() : 0;
+        } catch (IOException e) {
+            return -1;
         }
     }
 
-    public void save() throws IOException {
+    /// Re-reads the persisted overrides when the on-disk file changed since we last read it — the
+    /// settings page and the chat page each hold their OWN store over the SAME file, so a
+    /// permission TIGHTENED in one must be picked up by the other before its next decision, or a
+    /// call the user just moved back to "always ask" would keep being silently auto-allowed from
+    /// stale memory. Mirrors {@code SkillRegistry#syncDisabledFromDisk}. Best-effort: an
+    /// unreadable/corrupt file leaves the current in-memory state intact (readFromDisk swaps only
+    /// on a successful parse).
+    private void syncFromDisk() {
+        long mtime = currentMtime();
+        if (mtime == fileSeenAt) {
+            return;
+        }
+        try {
+            readFromDisk();
+            fileSeenAt = mtime;
+        } catch (IOException | JsonParseException ignored) {
+        }
+    }
+
+    public synchronized void save() throws IOException {
         Files.createDirectories(file.getParent());
         PersistedData data = new PersistedData();
         data.toolOverrides = new LinkedHashMap<>();
@@ -215,9 +282,13 @@ public final class AiToolPermissionStore {
             }
         }
         Files.writeString(file, GSON.toJson(data), StandardCharsets.UTF_8);
+        // Record our own write's mtime so the very next getOverride* on this same instance doesn't
+        // needlessly re-read the file we just authored.
+        fileSeenAt = currentMtime();
     }
 
-    public OverrideMode getOverride(String toolName) {
+    public synchronized OverrideMode getOverride(String toolName) {
+        syncFromDisk();
         return overrides.getOrDefault(toolName, OverrideMode.FOLLOW_GLOBAL);
     }
 
@@ -227,7 +298,8 @@ public final class AiToolPermissionStore {
     /// `instance.delete` still gets `instance`'s tool-wide setting (or global) for every other
     /// action, rather than silently losing per-tool control after tools get merged into domains.
     /// Pass {@code action == null} (or blank) to skip straight to the tool-wide lookup.
-    public OverrideMode getOverride(String toolName, @Nullable String action) {
+    public synchronized OverrideMode getOverride(String toolName, @Nullable String action) {
+        syncFromDisk();
         if (action != null && !action.isBlank()) {
             OverrideMode scoped = overrides.get(actionKey(toolName, action));
             if (scoped != null) {
@@ -237,7 +309,8 @@ public final class AiToolPermissionStore {
         return getOverride(toolName);
     }
 
-    public void setOverride(String toolName, OverrideMode mode) {
+    public synchronized void setOverride(String toolName, OverrideMode mode) {
+        syncFromDisk();
         if (mode == OverrideMode.FOLLOW_GLOBAL) {
             overrides.remove(toolName);
         } else {
@@ -248,7 +321,8 @@ public final class AiToolPermissionStore {
     /// Sets an override scoped to one action of a domain tool (key {@code "<toolName>.<action>"}).
     /// {@code FOLLOW_GLOBAL} removes the action-scoped override so the lookup falls back to the
     /// tool-wide key, not necessarily to the global default.
-    public void setOverride(String toolName, String action, OverrideMode mode) {
+    public synchronized void setOverride(String toolName, String action, OverrideMode mode) {
+        syncFromDisk();
         String key = actionKey(toolName, action);
         if (mode == OverrideMode.FOLLOW_GLOBAL) {
             overrides.remove(key);
@@ -261,8 +335,9 @@ public final class AiToolPermissionStore {
         return toolName + "." + action;
     }
 
-    public Map<String, OverrideMode> getOverrides() {
-        return Collections.unmodifiableMap(overrides);
+    public synchronized Map<String, OverrideMode> getOverrides() {
+        syncFromDisk();
+        return Collections.unmodifiableMap(new LinkedHashMap<>(overrides));
     }
 
     /// Resolves the override for a call that ALSO carries a file-path-like parameter (e.g.
@@ -277,7 +352,8 @@ public final class AiToolPermissionStore {
     /// @param path     the call's resolved path-like parameter, or {@code null}/blank if the tool
     ///                 has none (or this call didn't supply one) — skips straight to the ordinary
     ///                 lookup in that case
-    public OverrideMode getOverride(String toolName, @Nullable String action, @Nullable String path) {
+    public synchronized OverrideMode getOverride(String toolName, @Nullable String action, @Nullable String path) {
+        syncFromDisk();
         if (path != null && !path.isBlank()) {
             for (PathOverride rule : pathOverrides.getOrDefault(toolName, Collections.emptyList())) {
                 if (matchesGlob(rule.glob(), path)) {
@@ -289,13 +365,15 @@ public final class AiToolPermissionStore {
     }
 
     /// Returns {@code toolName}'s path-glob rules, in match-priority (insertion) order.
-    public List<PathOverride> getPathOverrides(String toolName) {
-        return Collections.unmodifiableList(pathOverrides.getOrDefault(toolName, Collections.emptyList()));
+    public synchronized List<PathOverride> getPathOverrides(String toolName) {
+        syncFromDisk();
+        return List.copyOf(pathOverrides.getOrDefault(toolName, Collections.emptyList()));
     }
 
     /// Adds (or replaces, if {@code glob} already has a rule for this tool) a path-glob override
     /// row. {@code FOLLOW_GLOBAL} removes the rule instead of storing a no-op one.
-    public void setPathOverride(String toolName, String glob, OverrideMode mode) {
+    public synchronized void setPathOverride(String toolName, String glob, OverrideMode mode) {
+        syncFromDisk();
         List<PathOverride> rules = pathOverrides.computeIfAbsent(toolName, k -> new ArrayList<>());
         rules.removeIf(r -> r.glob().equals(glob));
         if (mode != OverrideMode.FOLLOW_GLOBAL) {
@@ -307,7 +385,8 @@ public final class AiToolPermissionStore {
     }
 
     /// Removes {@code toolName}'s path-glob rule for {@code glob}, if any.
-    public void removePathOverride(String toolName, String glob) {
+    public synchronized void removePathOverride(String toolName, String glob) {
+        syncFromDisk();
         List<PathOverride> rules = pathOverrides.get(toolName);
         if (rules == null) return;
         rules.removeIf(r -> r.glob().equals(glob));

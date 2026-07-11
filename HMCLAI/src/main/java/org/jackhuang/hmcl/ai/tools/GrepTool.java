@@ -51,6 +51,33 @@ public final class GrepTool implements ToolSpec {
         if (!roots.contains(normalized)) roots.add(normalized);
     }
 
+    @Nullable
+    private Path instanceRoot;
+    @Nullable
+    private List<Path> staticRootsSnapshot;
+
+    /// Rebases the single per-instance allowed root (§3.8): replaces the previously-set instance
+    /// root rather than accumulating, and {@code null} clears it — so a previously-selected
+    /// instance's files stop being reachable the moment the user switches instances. Static roots
+    /// present at the first call (config dir, HMCL home) are never removed here. See
+    /// {@code FileReadTool#setInstanceRoot} for the full rationale.
+    public void setInstanceRoot(@Nullable Path root) {
+        if (staticRootsSnapshot == null) {
+            staticRootsSnapshot = List.copyOf(roots);
+        }
+        Path normalized = root == null ? null : root.toAbsolutePath().normalize();
+        if (java.util.Objects.equals(instanceRoot, normalized)) {
+            return;
+        }
+        if (instanceRoot != null && !staticRootsSnapshot.contains(instanceRoot)) {
+            roots.remove(instanceRoot);
+        }
+        instanceRoot = normalized;
+        if (normalized != null && !roots.contains(normalized)) {
+            roots.add(normalized);
+        }
+    }
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.READ_ONLY;
