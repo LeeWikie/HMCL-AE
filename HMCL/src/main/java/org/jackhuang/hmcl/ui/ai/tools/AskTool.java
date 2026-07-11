@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai.tools;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSource;
@@ -65,6 +66,16 @@ public final class AskTool implements ToolSpec {
 
     /// A single question presented to the user.
     public record Question(String question, String type, List<String> options, boolean allowCustom) {
+    }
+
+    /// Thrown by {@link #parseQuestions} when the 'questions' string isn't valid JSON at all
+    /// (as opposed to valid JSON with missing/blank/wrong-typed fields, which {@link #parseQuestions}
+    /// silently skips instead — that ambiguity is fine there, but {@link #execute} needs to tell the
+    /// two failure modes apart to give the model a message it can actually act on).
+    private static final class QuestionParseException extends RuntimeException {
+        QuestionParseException(String message) {
+            super(message);
+        }
     }
 
     /// UI bridge: render the questions and complete the returned future with one
@@ -152,7 +163,18 @@ public final class AskTool implements ToolSpec {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
-        List<Question> questions = parseQuestions(parameters.get("questions"));
+        List<Question> questions;
+        try {
+            questions = parseQuestions(parameters.get("questions"));
+        } catch (QuestionParseException e) {
+            // Distinct from the generic "fields missing" failure below: the JSON itself didn't
+            // parse (typically an unescaped quote or a raw newline inside a string), so surface
+            // GSON's own message (usually carries a line/column) instead of a one-size-fits-all
+            // hint — a weak model can often self-correct from that in one try instead of guessing.
+            return ToolResult.failure("ask: 'questions' JSON syntax error: " + e.getMessage()
+                    + " — check for unescaped quotes or raw newlines inside string values "
+                    + "(escape as \\\" or use 「」 instead of \" inside question/option text).");
+        }
         if (questions.isEmpty()) {
             Object q = parameters.get("query");
             if (q != null && !q.toString().isBlank()) {
@@ -161,7 +183,8 @@ public final class AskTool implements ToolSpec {
         }
         if (questions.isEmpty()) {
             return ToolResult.failure("ask: provide 'questions' as a JSON array of objects, each "
-                    + "{question, type:single|multi|text, options:[...], allowCustom:bool}.");
+                    + "{question, type:single|multi|text, options:[...], allowCustom:bool} — a "
+                    + "required field (e.g. 'question') was missing, blank, or the wrong type.");
         }
 
         CompletableFuture<List<String>> future;
@@ -209,8 +232,9 @@ public final class AskTool implements ToolSpec {
             Object parsed;
             try {
                 parsed = GSON.fromJson(s, Object.class);
-            } catch (RuntimeException e) {
-                return List.of();
+            } catch (JsonSyntaxException e) {
+                throw new QuestionParseException(e.getMessage() != null
+                        ? e.getMessage() : e.getClass().getSimpleName());
             }
             if (parsed instanceof List<?> l2) {
                 list = l2;
