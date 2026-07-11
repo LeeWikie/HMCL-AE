@@ -17,12 +17,21 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.addon.resourcepack.ResourcePackFile;
+import org.jackhuang.hmcl.addon.resourcepack.ResourcePackManager;
+import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
+import org.jackhuang.hmcl.game.HMCLGameRepository;
+import org.jackhuang.hmcl.setting.Profile;
+import org.jackhuang.hmcl.setting.Profiles;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -89,6 +98,7 @@ public final class InstanceTool implements ToolSpec {
     private final InstallResourcePackTool resourcepacksInstall = new InstallResourcePackTool();
     private final DeleteResourcePackTool resourcepacksDelete;
     private final InstallShaderTool shadersInstall = new InstallShaderTool();
+    private final ToggleShaderTool shadersToggle = new ToggleShaderTool();
     private final DeleteShaderTool shadersDelete;
     private final InstallModpackTool modpacksInstall = new InstallModpackTool();
     private final ExportModpackTool modpacksExport = new ExportModpackTool();
@@ -165,8 +175,11 @@ public final class InstanceTool implements ToolSpec {
                 + "worlds_backup_restore (world, backupId, DANGEROUS — auto-backs-up current world first), "
                 + "worlds_datapacks_list (world), worlds_datapacks_install (world, source).\n"
                 + "- Content already installed locally: packs_list_local (resource packs), "
-                + "resourcepacks_install (id), resourcepacks_delete (pack, DANGEROUS), "
-                + "shaders_install (id), shaders_delete (shader, DANGEROUS), "
+                + "resourcepacks_install (id), resourcepacks_toggle (pack, enable — flips options.txt "
+                + "enablement, no file renaming), resourcepacks_delete (pack, DANGEROUS), "
+                + "shaders_install (id), shaders_toggle (shader, enable — renames the shaderpacks entry "
+                + "with a '.disabled' suffix, mirroring mods_toggle since shader packs have no options.txt "
+                + "enablement state), shaders_delete (shader, DANGEROUS), "
                 + "modpacks_install (id), modpacks_export.";
     }
 
@@ -197,7 +210,7 @@ public final class InstanceTool implements ToolSpec {
                    "name": {"type": "string", "description": "create: optional new instance name."},
                    "maxMemoryMB": {"type": "integer", "description": "set_memory: -Xmx in MiB; omit to only report the current value."},
                    "jvmArgs": {"type": "string", "description": "set_jvm_args: custom JVM/GC arguments string (e.g. '-XX:+UseG1GC'); omit to only report the current value, pass an empty string to clear it. Do not put -Xmx/-Xms here, use maxMemoryMB via set_memory instead."},
-                   "enable": {"type": "boolean", "description": "set_isolation: true to isolate this instance, false to follow the global default; omit to only report the current state."},
+                   "enable": {"type": "boolean", "description": "set_isolation: true to isolate this instance, false to follow the global default; omit to only report the current state. mods_toggle/resourcepacks_toggle/shaders_toggle: true forces enable, false forces disable; omit to toggle the current state."},
                    "key": {"type": "string", "description": "get_options/set_option: options.txt key."},
                    "value": {"type": "string", "description": "set_option: the new value."},
                    "keep": {"type": "integer", "description": "clean_logs: how many recent log files to keep."},
@@ -208,8 +221,8 @@ public final class InstanceTool implements ToolSpec {
                    "world": {"type": "string", "description": "worlds_*: the save folder name under 'saves/'."},
                    "zip": {"type": "string", "description": "worlds_import: absolute local path of the .zip world archive."},
                    "backupId": {"type": "string", "description": "worlds_backup_restore: the snapshot id from worlds_backup_list."},
-                   "pack": {"type": "string", "description": "resourcepacks_delete: the resource pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."},
-                   "shader": {"type": "string", "description": "shaders_delete: the shader pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."}
+                   "pack": {"type": "string", "description": "resourcepacks_toggle/resourcepacks_delete: the resource pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."},
+                   "shader": {"type": "string", "description": "shaders_toggle/shaders_delete: the shader pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."}
                  },
                  "required": ["action"]
                }
@@ -291,8 +304,10 @@ public final class InstanceTool implements ToolSpec {
 
             case "packs_list_local" -> packsListLocal.execute(parameters);
             case "resourcepacks_install" -> resourcepacksInstall.execute(parameters);
+            case "resourcepacks_toggle" -> toggleResourcePack(parameters);
             case "resourcepacks_delete" -> resourcepacksDelete.execute(parameters);
             case "shaders_install" -> shadersInstall.execute(parameters);
+            case "shaders_toggle" -> shadersToggle.execute(parameters);
             case "shaders_delete" -> shadersDelete.execute(parameters);
             case "modpacks_install" -> modpacksInstall.execute(parameters);
             case "modpacks_export" -> modpacksExport.execute(parameters);
@@ -300,6 +315,127 @@ public final class InstanceTool implements ToolSpec {
             default -> ToolResult.failure("Unknown action '" + action + "'. See the tool description for the "
                     + "full list of valid actions.");
         };
+    }
+
+    /// Resolves and flips a single resource pack's enabled state through the native
+    /// [ResourcePackManager] (the same `options.txt` `resourcePacks`/`incompatibleResourcePacks`
+    /// state machine backing HMCL's resource pack page) — unlike the sibling `shaders_toggle`
+    /// action, resource packs have no `.disabled` file-renaming convention, enablement lives
+    /// entirely in `options.txt`, so this stays a thin inline wrapper around the manager instead
+    /// of a separate leaf tool that would just re-expose the same three manager calls.
+    /// Parameters ('pack', 'enable', 'instance') mirror `mods_toggle`/`shaders_toggle`.
+    private ToolResult toggleResourcePack(Map<String, Object> parameters) {
+        Object packObj = parameters.get("pack");
+        if (packObj == null || packObj.toString().trim().isEmpty()) {
+            return ToolResult.failure("Missing required parameter 'pack' (the resource pack file/folder name or a substring of it).");
+        }
+        String packQuery = packObj.toString().trim();
+
+        Boolean forceEnable = null;
+        Object enableObj = parameters.get("enable");
+        if (enableObj != null) {
+            if (enableObj instanceof Boolean b) {
+                forceEnable = b;
+            } else {
+                String s = enableObj.toString().trim().toLowerCase(Locale.ROOT);
+                if (s.equals("true")) {
+                    forceEnable = Boolean.TRUE;
+                } else if (s.equals("false")) {
+                    forceEnable = Boolean.FALSE;
+                } else if (!s.isEmpty()) {
+                    return ToolResult.failure("Parameter 'enable' must be a boolean (true/false), got: " + enableObj);
+                }
+            }
+        }
+
+        Profile profile;
+        try {
+            profile = Profiles.getSelectedProfile();
+        } catch (Throwable e) {
+            return ToolResult.failure("No profile is currently selected: " + e.getMessage());
+        }
+        HMCLGameRepository repository = profile.getRepository();
+
+        if (!repository.isLoaded()) {
+            try {
+                repository.refreshVersions();
+            } catch (Throwable e) {
+                return ToolResult.failure("Failed to load installed instances: " + e.getMessage());
+            }
+        }
+
+        InstanceToolSupport.ResolvedInstance resolvedTarget =
+                InstanceToolSupport.resolveInstance(repository, parameters, false);
+        if (resolvedTarget.failure() != null) {
+            return resolvedTarget.failure();
+        }
+        String instanceId = resolvedTarget.name();
+
+        ResourcePackManager manager = new ResourcePackManager(repository, instanceId);
+        List<ResourcePackFile> all;
+        try {
+            all = manager.getLocalFiles();
+        } catch (IOException e) {
+            return ToolResult.failure("Failed to read resource packs of instance '" + instanceId + "': " + e.getMessage());
+        }
+
+        String needle = packQuery.toLowerCase(Locale.ROOT);
+        List<ResourcePackFile> candidates = new ArrayList<>();
+        for (ResourcePackFile pack : all) {
+            if (pack.getFileNameWithExtension().toLowerCase(Locale.ROOT).contains(needle)
+                    || pack.getFileName().toLowerCase(Locale.ROOT).contains(needle)) {
+                candidates.add(pack);
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            StringBuilder names = new StringBuilder();
+            if (all.isEmpty()) {
+                names.append("(none — the resourcepacks folder is empty)");
+            } else {
+                int shown = Math.min(all.size(), 10);
+                for (int i = 0; i < shown; i++) {
+                    if (i > 0) names.append(", ");
+                    names.append(all.get(i).getFileNameWithExtension());
+                }
+                if (all.size() > shown) names.append(", ... (").append(all.size() - shown).append(" more)");
+            }
+            return ToolFailures.failure(
+                    "No resource pack matching '" + packQuery + "' was found for instance '" + instanceId + "'",
+                    ToolFailures.Retryable.YES,
+                    "no installed resource pack name contains this substring, which is usually a typo",
+                    "installed packs: " + names + "; use packs_list_local for the full list, or refine the query");
+        }
+        if (candidates.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Ambiguous: '").append(packQuery).append("' matches ").append(candidates.size()).append(" packs:\n");
+            for (ResourcePackFile p : candidates) {
+                sb.append("  - ").append(p.getFileNameWithExtension()).append('\n');
+            }
+            sb.append("Please refine the 'pack' parameter to match exactly one entry.");
+            return ToolResult.failure(sb.toString().trim());
+        }
+
+        ResourcePackFile pack = candidates.get(0);
+        boolean currentlyEnabled = manager.isEnabled(pack);
+        boolean targetEnabled = forceEnable != null ? forceEnable : !currentlyEnabled;
+
+        if (targetEnabled == currentlyEnabled) {
+            return ToolResult.success("Resource pack '" + pack.getFileNameWithExtension() + "' is already "
+                    + (currentlyEnabled ? "enabled" : "disabled") + "; no change made.");
+        }
+
+        boolean modified = targetEnabled
+                ? manager.enableResourcePacks(List.of(pack))
+                : manager.disableResourcePacks(List.of(pack));
+        if (!modified) {
+            return ToolResult.failure("Failed to " + (targetEnabled ? "enable" : "disable")
+                    + " resource pack '" + pack.getFileNameWithExtension() + "': options.txt was not modified.");
+        }
+
+        return ToolResult.success("Resource pack " + (targetEnabled ? "enabled" : "disabled") + " in instance '" + instanceId + "'.\n"
+                + "  pack : " + pack.getFileNameWithExtension() + "\n"
+                + "  state: " + (targetEnabled ? "enabled" : "disabled"));
     }
 
     private static String actionOf(Map<String, Object> parameters) {
