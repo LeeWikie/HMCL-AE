@@ -29,6 +29,51 @@ import java.util.Map;
 /// Fetches a URL over HTTP(S) and returns the response body as text. Useful for reading
 /// install instructions / READMEs (e.g. a skill manifest or an MCP setup page) before
 /// acting on them. Read-only.
+///
+/// ### SSRF guard — what it defends against, and what it does not (read before touching this file)
+/// [`#blockedReason`] resolves the target host locally and refuses loopback / any-local /
+/// link-local (incl. the `169.254.169.254` cloud-metadata address) / RFC1918 site-local /
+/// IPv6 unique-local / multicast addresses. It runs unconditionally — on the initial URL and on
+/// every redirect hop — **regardless of whether HMCL has a proxy configured**. Do not add a
+/// "skip the check when a proxy is active" branch; that would silently reopen the exact hole
+/// described below, and was deliberately rejected when this doc was written.
+///
+/// There are two residual gaps, both stemming from host resolution happening in more than one
+/// place. Neither is fully closable from this class, and both are recorded here on purpose
+/// instead of being an unstated assumption:
+///
+///  - **Class A — direct connections (no proxy), TOCTOU.** [`#blockedReason`] resolves `host`
+///    once for validation; `HttpClient.send` triggers an independent JDK-internal resolution
+///    when it actually opens the connection. The two lookups are not pinned together, so a
+///    short-TTL "DNS rebinding" attacker who controls the answer could in theory return a public
+///    address for the first lookup and a blocked one for the second. In practice the JDK's
+///    default `networkaddress.cache.ttl` (~30s positive-cache) makes the two lookups very likely
+///    to agree, but that is an *implementation default*, not a contract this class can rely on or
+///    claim as a hard security boundary.
+///  - **Class B — via a configured HTTP/HTTPS proxy. More serious: deterministic, not a timing
+///    race.** Once a proxy is set (see the `.proxy(...)` call below), `java.net.http.HttpClient`
+///    never resolves the target host itself: HTTPS is tunnelled with a literal `CONNECT
+///    host:port` and plain HTTP is sent as an absolute-form request line — either way the
+///    hostname goes out on the wire as-is and **the proxy resolves and connects to it on its own
+///    network**. This class's local resolution has *no binding power whatsoever* over what the
+///    proxy resolves to. An attacker who controls a domain's authoritative DNS can serve a
+///    public address to this process's resolver (passing the guard below) while serving an
+///    internal/metadata address to the proxy's resolver (split-horizon DNS) — no race window
+///    needed, this is deterministic every time. There is no client-side fix for this that keeps
+///    proxy support working: pinning the connection to the locally-resolved IP would either
+///    break TLS (the CONNECT target / certificate subject must match the *name*, not whatever IP
+///    this process resolved it to) or silently bypass the very proxy the user configured for
+///    connectivity (many HMCL-AE users are behind one precisely because direct access is
+///    blocked). Configuring a forwarding proxy inherently extends to its operator the same
+///    network trust the user places in this launcher — that boundary cannot be enforced from
+///    the client side, only disclosed.
+///
+/// Net effect: this guard reliably blocks *lazy / non-adversarial* misuse (a prompt-injected
+/// page telling the agent to fetch a literal `169.254.169.254` or `10.x.x.x` URL) in both direct
+/// and proxied modes. It does **not** guarantee protection against a targeted split-horizon-DNS
+/// attack mounted through a proxy the user has chosen to trust. See `WebFetchToolTest` for the
+/// regression tests locking in "the guard still runs when a proxy is configured" and "a
+/// legitimate public target is not over-blocked just because a proxy is configured".
 @NotNullByDefault
 public final class WebFetchTool implements ToolSpec {
 
@@ -102,6 +147,14 @@ public final class WebFetchTool implements ToolSpec {
         // SSRF guard: the agent ingests untrusted text (logs, web pages, mod/MCP manifests); a
         // prompt-injection could point web_fetch at localhost / LAN / cloud-metadata. Refuse any
         // non-public target, and re-check on every redirect hop (we follow redirects manually).
+        //
+        // This MUST run before the HttpClient/proxy is even built, and unconditionally — i.e.
+        // NOT gated behind "is a proxy configured" (do not add such a branch; see the class docs
+        // for why that used to be — and must not become — a bypass). When the user has a proxy
+        // configured, the proxy resolves the host itself (class docs, "Class B") so this local
+        // check cannot fully validate that case, but it still must run for the defense-in-depth
+        // it does provide (catching obvious internal/metadata literals) and must never be
+        // silently skipped by a future refactor of the proxy wiring below.
         String blocked = blockedReason(initial);
         if (blocked != null) {
             return ToolResult.failure("Refused to fetch a non-public/internal address (SSRF guard): " + blocked);
@@ -142,6 +195,8 @@ public final class WebFetchTool implements ToolSpec {
                 if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
                     return ToolResult.failure("Refused redirect to a non-http(s) URL: " + next);
                 }
+                // Same guard, same caveats (class docs) — re-checked per hop since a redirect
+                // target is attacker-influenced content just like the initial URL.
                 String redirectBlocked = blockedReason(next);
                 if (redirectBlocked != null) {
                     return ToolResult.failure("Refused to follow a redirect to a non-public/internal address (SSRF guard): " + redirectBlocked);
@@ -180,6 +235,14 @@ public final class WebFetchTool implements ToolSpec {
     /// Returns a human-readable reason if the URI's host resolves to a non-public address that must
     /// not be fetched (loopback, any-local, link-local incl. 169.254.169.254 cloud-metadata,
     /// site-local RFC1918, IPv6 unique-local, or multicast), or {@code null} if the host is public.
+    ///
+    /// Always resolves `host` locally via [`java.net.InetAddress#getAllByName`], unconditionally
+    /// — this method has no notion of "a proxy is configured" and must never grow one. See the
+    /// class docs for the two residual gaps this local resolution cannot close on its own: a
+    /// TOCTOU race on direct (non-proxied) connections, and — the more serious, deterministic one
+    /// — a configured proxy resolving the host on its own network, entirely independent of
+    /// whatever this method resolves it to here.
+    ///
     /// Package-private for unit testing.
     static String blockedReason(URI uri) {
         String host = uri.getHost();
