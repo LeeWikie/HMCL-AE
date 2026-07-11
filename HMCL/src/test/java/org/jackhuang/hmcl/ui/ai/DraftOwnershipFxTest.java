@@ -45,6 +45,7 @@ public final class DraftOwnershipFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -54,6 +55,7 @@ public final class DraftOwnershipFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach

@@ -48,6 +48,7 @@ public final class TokenBatchingFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -57,6 +58,7 @@ public final class TokenBatchingFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach
@@ -68,92 +70,102 @@ public final class TokenBatchingFxTest {
     public void rapidTokenBurstRendersCompleteAndInOrder() throws Exception {
         AIMainPage page = showPage();
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
-        int generation = (Integer) getField(page, "responseGeneration");
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test from ambient store state (see MessageActionsHoverFxTest).
+        AiSession session = store.createSession();
+        try {
+            int generation = (Integer) getField(page, "responseGeneration");
 
-        StringBuilder fullContent = new StringBuilder();
-        StringBuilder segment = new StringBuilder();
-        LlmStreamCallback callback = page.createStreamCallback(
-                null, session, generation, fullContent, segment, new AtomicReference<LlmUsage>());
+            StringBuilder fullContent = new StringBuilder();
+            StringBuilder segment = new StringBuilder();
+            LlmStreamCallback callback = page.createStreamCallback(
+                    null, session, generation, fullContent, segment, new AtomicReference<LlmUsage>());
 
-        // ---- burst 1: 500 tokens from a NON-FX thread ----
-        StringBuilder expectedFirst = new StringBuilder();
-        Thread producer = new Thread(() -> {
+            // ---- burst 1: 500 tokens from a NON-FX thread ----
+            StringBuilder expectedFirst = new StringBuilder();
+            Thread producer = new Thread(() -> {
+                for (int i = 0; i < 500; i++) {
+                    callback.onToken("t" + i + " ");
+                }
+            }, "test-token-producer");
             for (int i = 0; i < 500; i++) {
-                callback.onToken("t" + i + " ");
+                expectedFirst.append("t").append(i).append(" ");
             }
-        }, "test-token-producer");
-        for (int i = 0; i < 500; i++) {
-            expectedFirst.append("t").append(i).append(" ");
-        }
-        producer.start();
-        producer.join(10_000);
-        WaitForAsyncUtils.waitForFxEvents();
+            producer.start();
+            producer.join(10_000);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        Label firstBubble = (Label) getField(page, "streamingBubble");
-        assertNotNull(firstBubble, "a streaming bubble must exist after the first tokens");
-        assertEquals(expectedFirst.toString(), firstBubble.getText(),
-                "batched rendering must lose and reorder nothing");
-        assertEquals(expectedFirst.toString(), segment.toString(),
-                "segment must hold every token of the current segment");
-        assertEquals(expectedFirst.toString(), fullContent.toString());
+            Label firstBubble = (Label) getField(page, "streamingBubble");
+            assertNotNull(firstBubble, "a streaming bubble must exist after the first tokens");
+            assertEquals(expectedFirst.toString(), firstBubble.getText(),
+                    "batched rendering must lose and reorder nothing");
+            assertEquals(expectedFirst.toString(), segment.toString(),
+                    "segment must hold every token of the current segment");
+            assertEquals(expectedFirst.toString(), fullContent.toString());
 
-        // ---- interleaved tool call: finalizes segment 1 with EXACTLY its own tokens ----
-        Thread interleaver = new Thread(() -> {
-            callback.onToolActivity("demo_tool", "{}");
+            // ---- interleaved tool call: finalizes segment 1 with EXACTLY its own tokens ----
+            Thread interleaver = new Thread(() -> {
+                callback.onToolActivity("demo_tool", "{}");
+                for (int i = 0; i < 100; i++) {
+                    callback.onToken("s" + i + " ");
+                }
+            }, "test-token-interleaver");
+            StringBuilder expectedSecond = new StringBuilder();
             for (int i = 0; i < 100; i++) {
-                callback.onToken("s" + i + " ");
+                expectedSecond.append("s").append(i).append(" ");
             }
-        }, "test-token-interleaver");
-        StringBuilder expectedSecond = new StringBuilder();
-        for (int i = 0; i < 100; i++) {
-            expectedSecond.append("s").append(i).append(" ");
-        }
-        interleaver.start();
-        interleaver.join(10_000);
-        WaitForAsyncUtils.waitForFxEvents();
+            interleaver.start();
+            interleaver.join(10_000);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        assertEquals(expectedFirst.toString(), firstBubble.getText(),
-                "the finalized first segment must contain exactly its own tokens — no bleed "
-                        + "from the second segment (FIFO drain-before-finalize ordering)");
-        Label secondBubble = (Label) getField(page, "streamingBubble");
-        assertNotNull(secondBubble, "text after a tool call starts a NEW segment bubble");
-        assertNotSame(firstBubble, secondBubble);
-        assertEquals(expectedSecond.toString(), secondBubble.getText());
-        assertEquals(expectedFirst + expectedSecond.toString(), fullContent.toString(),
-                "fullContent accumulates the whole turn across segments");
+            assertEquals(expectedFirst.toString(), firstBubble.getText(),
+                    "the finalized first segment must contain exactly its own tokens — no bleed "
+                            + "from the second segment (FIFO drain-before-finalize ordering)");
+            Label secondBubble = (Label) getField(page, "streamingBubble");
+            assertNotNull(secondBubble, "text after a tool call starts a NEW segment bubble");
+            assertNotSame(firstBubble, secondBubble);
+            assertEquals(expectedSecond.toString(), secondBubble.getText());
+            assertEquals(expectedFirst + expectedSecond.toString(), fullContent.toString(),
+                    "fullContent accumulates the whole turn across segments");
+        } finally {
+            store.deleteSession(session.getId());
+        }
     }
 
     @Test
     public void reasoningTokensBatchIntoTheLiveCard() throws Exception {
         AIMainPage page = showPage();
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
-        int generation = (Integer) getField(page, "responseGeneration");
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test from ambient store state (see MessageActionsHoverFxTest).
+        AiSession session = store.createSession();
+        try {
+            int generation = (Integer) getField(page, "responseGeneration");
 
-        LlmStreamCallback callback = page.createStreamCallback(
-                null, session, generation, new StringBuilder(), new StringBuilder(),
-                new AtomicReference<LlmUsage>());
+            LlmStreamCallback callback = page.createStreamCallback(
+                    null, session, generation, new StringBuilder(), new StringBuilder(),
+                    new AtomicReference<LlmUsage>());
 
-        StringBuilder expected = new StringBuilder();
-        Thread producer = new Thread(() -> {
+            StringBuilder expected = new StringBuilder();
+            Thread producer = new Thread(() -> {
+                for (int i = 0; i < 300; i++) {
+                    callback.onReasoningToken("r" + i + " ");
+                }
+            }, "test-reasoning-producer");
             for (int i = 0; i < 300; i++) {
-                callback.onReasoningToken("r" + i + " ");
+                expected.append("r").append(i).append(" ");
             }
-        }, "test-reasoning-producer");
-        for (int i = 0; i < 300; i++) {
-            expected.append("r").append(i).append(" ");
-        }
-        producer.start();
-        producer.join(10_000);
-        WaitForAsyncUtils.waitForFxEvents();
+            producer.start();
+            producer.join(10_000);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        AIMainPage.ReasoningCard card = (AIMainPage.ReasoningCard) getField(page, "reasoningLiveCard");
-        assertNotNull(card, "reasoning tokens must create the live card");
-        Label content = (Label) getField(card, "content");
-        assertEquals(expected.toString(), content.getText(),
-                "batched reasoning stream must be complete and in order");
+            AIMainPage.ReasoningCard card = (AIMainPage.ReasoningCard) getField(page, "reasoningLiveCard");
+            assertNotNull(card, "reasoning tokens must create the live card");
+            Label content = (Label) getField(card, "content");
+            assertEquals(expected.toString(), content.getText(),
+                    "batched reasoning stream must be complete and in order");
+        } finally {
+            store.deleteSession(session.getId());
+        }
     }
 }

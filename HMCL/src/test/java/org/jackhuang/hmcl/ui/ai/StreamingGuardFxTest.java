@@ -57,6 +57,7 @@ public final class StreamingGuardFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -66,6 +67,7 @@ public final class StreamingGuardFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach
@@ -101,47 +103,51 @@ public final class StreamingGuardFxTest {
         AIMainPage page = showPage();
         AiSettings settings = (AiSettings) getField(page, "aiSettings");
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
-
-        ChatAgent streamingAgent = newStubAgent(settings, session);
-        ChatAgent idleAgent = newStubAgent(settings, session);
-        Map<String, ChatAgent> cache = (Map<String, ChatAgent>) getField(page, "agentCache");
-        Set<String> deferred = (Set<String>) getField(page, "deferredEvictions");
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test from ambient store state (see MessageActionsHoverFxTest).
+        AiSession session = store.createSession();
         try {
-            WaitForAsyncUtils.asyncFx(() -> {
-                try {
-                    cache.put(session.getId(), streamingAgent);
-                    cache.put("idle-session", idleAgent);
-                    // Simulate a live stream owned by the current session.
-                    setField(page, "streamSessionId", session.getId());
-                    setField(page, "currentResponse", new CompletableFuture<Void>());
-                    invoke(page, "clearAgentCache", new Class<?>[0]);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }).get(10, java.util.concurrent.TimeUnit.SECONDS);
-            WaitForAsyncUtils.waitForFxEvents();
+            ChatAgent streamingAgent = newStubAgent(settings, session);
+            ChatAgent idleAgent = newStubAgent(settings, session);
+            Map<String, ChatAgent> cache = (Map<String, ChatAgent>) getField(page, "agentCache");
+            Set<String> deferred = (Set<String>) getField(page, "deferredEvictions");
+            try {
+                WaitForAsyncUtils.asyncFx(() -> {
+                    try {
+                        cache.put(session.getId(), streamingAgent);
+                        cache.put("idle-session", idleAgent);
+                        // Simulate a live stream owned by the current session.
+                        setField(page, "streamSessionId", session.getId());
+                        setField(page, "currentResponse", new CompletableFuture<Void>());
+                        invoke(page, "clearAgentCache", new Class<?>[0]);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }).get(10, java.util.concurrent.TimeUnit.SECONDS);
+                WaitForAsyncUtils.waitForFxEvents();
 
-            assertFalse(isAgentExecutorShutdown(streamingAgent),
-                    "the STREAMING agent must not be shutdownNow'd mid-turn (3a)");
-            assertTrue(cache.containsKey(session.getId()),
-                    "the streaming agent must stay cached until its turn ends");
-            assertTrue(deferred.contains(session.getId()),
-                    "its eviction must be recorded for exitStreamingState");
-            assertTrue(isAgentExecutorShutdown(idleAgent),
-                    "a NON-streaming cached agent is still evicted immediately");
-            assertFalse(cache.containsKey("idle-session"));
+                assertFalse(isAgentExecutorShutdown(streamingAgent),
+                        "the STREAMING agent must not be shutdownNow'd mid-turn (3a)");
+                assertTrue(cache.containsKey(session.getId()),
+                        "the streaming agent must stay cached until its turn ends");
+                assertTrue(deferred.contains(session.getId()),
+                        "its eviction must be recorded for exitStreamingState");
+                assertTrue(isAgentExecutorShutdown(idleAgent),
+                        "a NON-streaming cached agent is still evicted immediately");
+                assertFalse(cache.containsKey("idle-session"));
 
-            // Turn ends → the deferred eviction is executed and the ledger cleared.
-            invokeFx(page, "exitStreamingState");
-            assertTrue(isAgentExecutorShutdown(streamingAgent),
-                    "deferred agent must be shut down once the turn is over");
-            assertFalse(cache.containsKey(session.getId()));
-            assertTrue(deferred.isEmpty(), "deferredEvictions must be drained");
+                // Turn ends → the deferred eviction is executed and the ledger cleared.
+                invokeFx(page, "exitStreamingState");
+                assertTrue(isAgentExecutorShutdown(streamingAgent),
+                        "deferred agent must be shut down once the turn is over");
+                assertFalse(cache.containsKey(session.getId()));
+                assertTrue(deferred.isEmpty(), "deferredEvictions must be drained");
+            } finally {
+                streamingAgent.shutdown();
+                idleAgent.shutdown();
+            }
         } finally {
-            streamingAgent.shutdown();
-            idleAgent.shutdown();
+            store.deleteSession(session.getId());
         }
     }
 
@@ -151,8 +157,11 @@ public final class StreamingGuardFxTest {
         AIMainPage page = showPage();
         AiSettings settings = (AiSettings) getField(page, "aiSettings");
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test from ambient store state (see MessageActionsHoverFxTest).
+        // The test itself deletes this session as part of the behavior under test, so there is no
+        // extra store.deleteSession() cleanup needed afterward.
+        AiSession session = store.createSession();
 
         ChatAgent agent = newStubAgent(settings, session);
         Map<String, ChatAgent> cache = (Map<String, ChatAgent>) getField(page, "agentCache");

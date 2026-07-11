@@ -130,11 +130,18 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// Uniform fixed width for this page's dialog form bodies (single source; native precedent
     /// for fixed dialog-form widths: PromptDialogPane 560, InputDialogPane 400 — 480 sits between).
     private static final double FORM_WIDTH = 480;
-    private static final Path MCP_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
-    private static final Path SEARCH_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
-    private static final Path OCR_CONFIG_FILE = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
-    private static final Path TOOL_PERMISSION_FILE = SettingsManager.localConfigDirectory().resolve("ai-tool-permissions.json");
-    private static final Path SKILLS_DIR = SettingsManager.localConfigDirectory().resolve("ai-skills");
+    // Instance fields, NOT static: SettingsManager.localConfigDirectory() is overridden per test
+    // class by the AI FX test suite (see AiMainPageFxTestSupport#useIsolatedConfigDirectory), so
+    // resolving these once per CLASS-LOAD (the previous `static final`) baked in whichever test
+    // happened to load this class first — every later test class's AISettingsPage kept reading
+    // and writing that first class's (by-then-deleted) temp directory instead of its own. Resolving
+    // once per INSTANCE CONSTRUCTION instead gives the same "computed once" semantics in production
+    // (a single AISettingsPage instance per app run) while re-resolving fresh for every test.
+    private final Path mcpConfigFile = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
+    private final Path searchConfigFile = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
+    private final Path ocrConfigFile = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
+    private final Path toolPermissionFile = SettingsManager.localConfigDirectory().resolve("ai-tool-permissions.json");
+    private final Path skillsDirPath = SettingsManager.localConfigDirectory().resolve("ai-skills");
 
     private final ReadOnlyObjectWrapper<State> state = new ReadOnlyObjectWrapper<>(State.fromTitle(i18n("ai.settings")));
     private final AiSettings aiSettings;
@@ -144,7 +151,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private final ToolRegistry mcpToolRegistry = new ToolRegistry();
     private final McpClientManager mcpClientManager = new McpClientManager(mcpToolRegistry);
     private final SkillRegistry skillRegistry = new SkillRegistry();
-    private final AiToolPermissionStore toolPermissionStore = new AiToolPermissionStore(TOOL_PERMISSION_FILE);
+    private final AiToolPermissionStore toolPermissionStore = new AiToolPermissionStore(toolPermissionFile);
     private final List<AiMcpServerConfig> mcpServers = new ArrayList<>();
     /// Shared with AIMainPage (constructor-injected): the chat page's WebSearchTool/OcrImageTool
     /// hold a reference to THE SAME instance, so edits made here are visible to the tools
@@ -190,7 +197,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         this.searchConfig = searchConfig;
         this.ocrConfig = ocrConfig;
 
-        skillRegistry.setSkillsDir(SKILLS_DIR);
+        skillRegistry.setSkillsDir(skillsDirPath);
         loadMcpServers();
         loadToolPermissions();
         refreshSkills();
@@ -1900,7 +1907,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     // by AIMainPage (the single startup read point). Only saving stays local.
     private void saveOcrConfig() {
         try {
-            Files.writeString(OCR_CONFIG_FILE, GSON.toJson(ocrConfig), StandardCharsets.UTF_8);
+            Files.writeString(ocrConfigFile, GSON.toJson(ocrConfig), StandardCharsets.UTF_8);
         } catch (IOException e) {
             org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save OCR config", e);
         }
@@ -2108,9 +2115,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         LineButton skillsDir = new LineButton();
         skillsDir.setTitle(i18n("ai.settings.data.skills_dir"));
-        skillsDir.setSubtitle(SKILLS_DIR + i18n("ai.settings.data.skills_dir.note"));
+        skillsDir.setSubtitle(skillsDirPath + i18n("ai.settings.data.skills_dir.note"));
         skillsDir.setTrailingIcon(SVG.FOLDER_OPEN);
-        skillsDir.setOnAction(e -> FXUtils.openFolder(SKILLS_DIR));
+        skillsDir.setOnAction(e -> FXUtils.openFolder(skillsDirPath));
         list.getContent().add(skillsDir);
 
         return list;
@@ -2720,8 +2727,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private void loadMcpServers() {
         mcpServers.clear();
         try {
-            if (!Files.exists(MCP_CONFIG_FILE)) return;
-            String json = Files.readString(MCP_CONFIG_FILE, StandardCharsets.UTF_8);
+            if (!Files.exists(mcpConfigFile)) return;
+            String json = Files.readString(mcpConfigFile, StandardCharsets.UTF_8);
             List<AiMcpServerConfig> loaded = GSON.fromJson(json, new TypeToken<List<AiMcpServerConfig>>(){}.getType());
             if (loaded != null) mcpServers.addAll(loaded);
         } catch (Exception e) {
@@ -2731,7 +2738,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private void saveMcpServers() {
         try {
-            Files.writeString(MCP_CONFIG_FILE, GSON.toJson(mcpServers), StandardCharsets.UTF_8);
+            Files.writeString(mcpConfigFile, GSON.toJson(mcpServers), StandardCharsets.UTF_8);
         } catch (IOException e) {
             org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save MCP server config", e);
         }
@@ -2741,7 +2748,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     // by AIMainPage (the single startup read point). Only saving stays local.
     private void saveSearchConfig() {
         try {
-            Files.writeString(SEARCH_CONFIG_FILE, GSON.toJson(searchConfig), StandardCharsets.UTF_8);
+            Files.writeString(searchConfigFile, GSON.toJson(searchConfig), StandardCharsets.UTF_8);
         } catch (IOException e) {
             org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save search config", e);
         }
@@ -2765,7 +2772,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     private void refreshSkills() {
         try {
-            Files.createDirectories(SKILLS_DIR);
+            Files.createDirectories(skillsDirPath);
         } catch (IOException ignored) {
         }
         skillRegistry.refresh();

@@ -361,9 +361,25 @@ public final class SettingsManager {
         return authlibInjectorServerMetadataCache;
     }
 
+    /// Test-only override for {@link #localConfigDirectory()}. `null` in production; the AI FX
+    /// test suite points this at a disposable temp directory (via reflection — see
+    /// AiMainPageFxTestSupport) so constructing an AIMainPage in a test never touches the real
+    /// per-workspace `.hmcl/` (ai-sessions.json and every other file AIMainPage owns are resolved
+    /// through this one method).
+    private static volatile Path localConfigDirectoryOverride;
+
     /// Returns the current per-workspace config directory path.
     public static Path localConfigDirectory() {
-        return Metadata.HMCL_LOCAL_HOME;
+        Path override = localConfigDirectoryOverride;
+        return override != null ? override : Metadata.HMCL_LOCAL_HOME;
+    }
+
+    /// Returns whether {@link #localConfigDirectory()} is currently redirected away from the real
+    /// `.hmcl/` by a test. Lets callers that register process-wide resources tied to that
+    /// directory (e.g. AIMainPage's per-instance JVM shutdown hook) skip doing so under test,
+    /// where the directory is disposable and torn down long before the JVM actually exits.
+    public static boolean isLocalConfigDirectoryOverridden() {
+        return localConfigDirectoryOverride != null;
     }
 
     /// Returns the current per-workspace settings path.

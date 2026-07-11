@@ -52,6 +52,7 @@ public final class ModelSelectorListenerFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -61,6 +62,7 @@ public final class ModelSelectorListenerFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach
@@ -107,70 +109,76 @@ public final class ModelSelectorListenerFxTest {
         AIMainPage page = showPage();
         AiSettings settings = (AiSettings) getField(page, "aiSettings");
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
-
-        LineSelectButton<String> selector = (LineSelectButton<String>) getField(page, "modelSelector");
-        Integer countBefore = tryCountListeners(selector.valueProperty());
-
-        // A cached agent is the canary: before P2, every refresh's setValue fired the accumulated
-        // listeners, each of which cleared (shutdownNow'd) the agent cache.
-        Map<String, Object> cache = (Map<String, Object>) getField(page, "agentCache");
-        Object canary = new Object() {
-        };
-        // A real ChatAgent isn't needed — clearAgentCache would remove the entry; use presence as
-        // the signal. (Map is typed Map<String,ChatAgent> at runtime-erased generics.)
-        ((Map<String, Object>) cache).put("canary-session", canary);
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test from ambient store state (see MessageActionsHoverFxTest).
+        AiSession session = store.createSession();
         try {
-            for (int i = 0; i < 3; i++) {
+            assertNotNull(session);
+
+            LineSelectButton<String> selector = (LineSelectButton<String>) getField(page, "modelSelector");
+            Integer countBefore = tryCountListeners(selector.valueProperty());
+
+            // A cached agent is the canary: before P2, every refresh's setValue fired the accumulated
+            // listeners, each of which cleared (shutdownNow'd) the agent cache.
+            Map<String, Object> cache = (Map<String, Object>) getField(page, "agentCache");
+            Object canary = new Object() {
+            };
+            // A real ChatAgent isn't needed — clearAgentCache would remove the entry; use presence as
+            // the signal. (Map is typed Map<String,ChatAgent> at runtime-erased generics.)
+            ((Map<String, Object>) cache).put("canary-session", canary);
+            try {
+                for (int i = 0; i < 3; i++) {
+                    invokeFx(page, "refreshModelSelector");
+                }
+                assertSame(canary, cache.get("canary-session"),
+                        "a pure refresh must NOT fire the model-switch listener "
+                                + "(which clears the agent cache) — P2 regression");
+
+                Integer countAfter = tryCountListeners(selector.valueProperty());
+                if (countBefore != null && countAfter != null) {
+                    assertEquals(countBefore, countAfter,
+                            "listener count on valueProperty must not grow with refreshes (P2)");
+                }
+            } finally {
+                cache.remove("canary-session");
+            }
+
+            // ③ a real user selection still works after the listener moved out of setupModelSelector.
+            // Two models: the refresh itself pins the selector to model-a (latched, no side effects);
+            // switching to model-b is then a REAL value change that must fire the listener.
+            String originalSelected = settings.getSelectedProfileId();
+            AiProviderProfile testProfile = new AiProviderProfile(
+                    "fxtest-p2-profile", "FxTestProv", "openai-completions",
+                    "http://localhost:1/v1", "sk-test", "fxtest-model-a",
+                    List.of("fxtest-model-a", "fxtest-model-b"), true);
+            settings.putProfile(testProfile);
+            try {
                 invokeFx(page, "refreshModelSelector");
-            }
-            assertSame(canary, cache.get("canary-session"),
-                    "a pure refresh must NOT fire the model-switch listener "
-                            + "(which clears the agent cache) — P2 regression");
-
-            Integer countAfter = tryCountListeners(selector.valueProperty());
-            if (countBefore != null && countAfter != null) {
-                assertEquals(countBefore, countAfter,
-                        "listener count on valueProperty must not grow with refreshes (P2)");
+                WaitForAsyncUtils.asyncFx(() -> selector.setValue("FxTestProv / fxtest-model-b"))
+                        .get(10, TimeUnit.SECONDS);
+                WaitForAsyncUtils.waitForFxEvents();
+                assertEquals("fxtest-p2-profile", settings.getSelectedProfileId(),
+                        "a genuine selection must still switch the active profile");
+                assertEquals("fxtest-model-b", testProfile.getDefaultModelId(),
+                        "a genuine selection must still set the default model");
+            } finally {
+                settings.removeProfile(testProfile.getId());
+                WaitForAsyncUtils.asyncFx(() -> {
+                    settings.setSelectedProfileId(originalSelected);
+                    try {
+                        settings.save();
+                    } catch (Exception ignored) {
+                    }
+                    try {
+                        invoke(page, "refreshModelSelector", new Class<?>[0]);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }).get(10, TimeUnit.SECONDS);
+                WaitForAsyncUtils.waitForFxEvents();
             }
         } finally {
-            cache.remove("canary-session");
-        }
-
-        // ③ a real user selection still works after the listener moved out of setupModelSelector.
-        // Two models: the refresh itself pins the selector to model-a (latched, no side effects);
-        // switching to model-b is then a REAL value change that must fire the listener.
-        String originalSelected = settings.getSelectedProfileId();
-        AiProviderProfile testProfile = new AiProviderProfile(
-                "fxtest-p2-profile", "FxTestProv", "openai-completions",
-                "http://localhost:1/v1", "sk-test", "fxtest-model-a",
-                List.of("fxtest-model-a", "fxtest-model-b"), true);
-        settings.putProfile(testProfile);
-        try {
-            invokeFx(page, "refreshModelSelector");
-            WaitForAsyncUtils.asyncFx(() -> selector.setValue("FxTestProv / fxtest-model-b"))
-                    .get(10, TimeUnit.SECONDS);
-            WaitForAsyncUtils.waitForFxEvents();
-            assertEquals("fxtest-p2-profile", settings.getSelectedProfileId(),
-                    "a genuine selection must still switch the active profile");
-            assertEquals("fxtest-model-b", testProfile.getDefaultModelId(),
-                    "a genuine selection must still set the default model");
-        } finally {
-            settings.removeProfile(testProfile.getId());
-            WaitForAsyncUtils.asyncFx(() -> {
-                settings.setSelectedProfileId(originalSelected);
-                try {
-                    settings.save();
-                } catch (Exception ignored) {
-                }
-                try {
-                    invoke(page, "refreshModelSelector", new Class<?>[0]);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }).get(10, TimeUnit.SECONDS);
-            WaitForAsyncUtils.waitForFxEvents();
+            store.deleteSession(session.getId());
         }
     }
 }

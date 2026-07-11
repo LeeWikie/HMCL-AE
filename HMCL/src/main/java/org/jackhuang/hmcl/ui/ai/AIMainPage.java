@@ -687,12 +687,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // last synchronous snapshot on normal JVM exit so a save still sitting in the queue can't
         // be lost. save() is synchronized, so this simply serialises with any in-flight async
         // save and the LAST write is always the final in-memory state.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                sessionStore.save();
-            } catch (Exception ignored) {
-            }
-        }, "ai-session-save-flush"));
+        //
+        // Skipped when the config directory is a test override: AIMainPage is an application-level
+        // singleton in production (one instance, one hook, ever), but the AI FX test suite
+        // constructs a fresh instance per test method — without this guard every one of those
+        // instances would register its own hook, all racing on the SAME file at JVM exit (the
+        // original source of the ai-sessions.json.corrupt-* quarantine files). Tests that need a
+        // persisted snapshot already call save()/persistStore() explicitly.
+        if (!SettingsManager.isLocalConfigDirectoryOverridden()) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    sessionStore.save();
+                } catch (Exception ignored) {
+                }
+            }, "ai-session-save-flush"));
+        }
 
         this.chatSettings = loadChatSettings();
         this.searchConfig = loadSearchConfig();

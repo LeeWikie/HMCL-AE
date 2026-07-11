@@ -69,6 +69,7 @@ public final class ComposerLayoutFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -78,6 +79,7 @@ public final class ComposerLayoutFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach

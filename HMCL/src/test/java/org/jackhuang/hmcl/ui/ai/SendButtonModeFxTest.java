@@ -47,6 +47,7 @@ public final class SendButtonModeFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -56,6 +57,7 @@ public final class SendButtonModeFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach
@@ -67,42 +69,48 @@ public final class SendButtonModeFxTest {
     public void sendButtonFlipsBetweenSendAndStopModes() throws Exception {
         AIMainPage page = showPage();
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
-        JFXButton sendBtn = (JFXButton) getField(page, "sendBtn");
+        // A freshly created session, not whatever the constructor happened to auto-create/reuse as
+        // "current" — isolates this test's session id from ambient store state (see
+        // MessageActionsHoverFxTest).
+        AiSession session = store.createSession();
+        try {
+            JFXButton sendBtn = (JFXButton) getField(page, "sendBtn");
 
-        // Streaming the CURRENT session → Stop mode with the danger class.
-        WaitForAsyncUtils.asyncFx(() -> {
-            try {
-                setField(page, "streamSessionId", session.getId());
-                setField(page, "currentResponse", new CompletableFuture<Void>());
-                invoke(page, "updateSendButtonMode", new Class<?>[0]);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }).get(10, TimeUnit.SECONDS);
-        WaitForAsyncUtils.waitForFxEvents();
+            // Streaming the CURRENT session → Stop mode with the danger class.
+            WaitForAsyncUtils.asyncFx(() -> {
+                try {
+                    setField(page, "streamSessionId", session.getId());
+                    setField(page, "currentResponse", new CompletableFuture<Void>());
+                    invoke(page, "updateSendButtonMode", new Class<?>[0]);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }).get(10, TimeUnit.SECONDS);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        assertEquals(i18n("ai.stop"), sendBtn.getText());
-        assertTrue(sendBtn.getStyleClass().contains("ai-stop-btn"),
-                "stop mode must carry the ai-stop-btn class (danger colours + behaviour hook)");
-        assertTrue(sendBtn.getStyleClass().contains("jfx-button-raised"),
-                "the button stays a native raised button in both modes");
+            assertEquals(i18n("ai.stop"), sendBtn.getText());
+            assertTrue(sendBtn.getStyleClass().contains("ai-stop-btn"),
+                    "stop mode must carry the ai-stop-btn class (danger colours + behaviour hook)");
+            assertTrue(sendBtn.getStyleClass().contains("jfx-button-raised"),
+                    "the button stays a native raised button in both modes");
 
-        // Idle again → Send mode, class removed.
-        WaitForAsyncUtils.asyncFx(() -> {
-            try {
-                setField(page, "streamSessionId", null);
-                setField(page, "currentResponse", null);
-                invoke(page, "updateSendButtonMode", new Class<?>[0]);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }).get(10, TimeUnit.SECONDS);
-        WaitForAsyncUtils.waitForFxEvents();
+            // Idle again → Send mode, class removed.
+            WaitForAsyncUtils.asyncFx(() -> {
+                try {
+                    setField(page, "streamSessionId", null);
+                    setField(page, "currentResponse", null);
+                    invoke(page, "updateSendButtonMode", new Class<?>[0]);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }).get(10, TimeUnit.SECONDS);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        assertEquals(i18n("ai.send"), sendBtn.getText());
-        assertFalse(sendBtn.getStyleClass().contains("ai-stop-btn"),
-                "idle mode must drop the ai-stop-btn class");
+            assertEquals(i18n("ai.send"), sendBtn.getText());
+            assertFalse(sendBtn.getStyleClass().contains("ai-stop-btn"),
+                    "idle mode must drop the ai-stop-btn class");
+        } finally {
+            store.deleteSession(session.getId());
+        }
     }
 }

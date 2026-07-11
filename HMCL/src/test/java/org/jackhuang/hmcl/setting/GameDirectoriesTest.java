@@ -23,8 +23,12 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.ObjectPropertyBase;
 import javafx.collections.ObservableList;
 import org.jackhuang.hmcl.Metadata;
+import org.jackhuang.hmcl.event.EventBus;
+import org.jackhuang.hmcl.event.EventManager;
+import org.jackhuang.hmcl.event.RefreshedVersionsEvent;
 import org.jackhuang.hmcl.util.FileSaver;
 import org.jackhuang.hmcl.util.PortablePath;
 import org.jackhuang.hmcl.util.gson.JsonSchema;
@@ -40,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.jackhuang.hmcl.setting.SettingsManager.settings;
 import static org.junit.jupiter.api.Assertions.*;
@@ -399,6 +404,26 @@ public final class GameDirectoriesTest {
         /// The reflected Profiles initialized field.
         private final Field initializedField;
 
+        /// The reflected `ObjectPropertyBase.helper` field of [Profiles]'s `selectedProfile`
+        /// property -- this is where JavaFX stores the property's registered listeners. Saved and
+        /// restored so that [Profiles#init()] (which unconditionally does
+        /// `selectedProfile.addListener(...)`) never leaves a permanent listener behind on this
+        /// shared static property across ProfileEnvironment instances; see [#close()] for why that
+        /// matters.
+        private final Field selectedProfileHelperField;
+
+        /// The previous listener helper of [Profiles]'s `selectedProfile` property, snapshotted
+        /// before this environment's caller invokes [Profiles#init()].
+        private final Object previousSelectedProfileHelper;
+
+        /// The [RefreshedVersionsEvent] channel's per-priority handler lists, reflected out of
+        /// [EventManager] so the weak listener [Profiles#init()] registers on this shared static
+        /// channel can be undone in [#close()] too.
+        private final CopyOnWriteArrayList<?>[] refreshedVersionsHandlers;
+
+        /// The previous handler snapshot for each priority in [#refreshedVersionsHandlers].
+        private final List<?>[] previousRefreshedVersionsHandlerSnapshots;
+
         /// The reflected Profiles selected profile property.
         private final ObjectProperty<Profile> selectedProfile;
 
@@ -475,6 +500,29 @@ public final class GameDirectoriesTest {
             userGameDirectoriesAccessField.set(null, SettingFileAccess.READ_WRITE);
             initializedField.setBoolean(null, false);
             mergedProfiles.clear();
+
+            // The caller is about to invoke Profiles.init(), which unconditionally does
+            // `selectedProfile.addListener(...)` on this shared static property and registers a new
+            // weak handler on the shared static RefreshedVersionsEvent channel -- neither of which
+            // it ever removes. Snapshot both here so close() can undo them; see the fields' comments
+            // and the mirrored technique in org.jackhuang.hmcl.ui.ai.tools.ProfileFixture.
+            selectedProfileHelperField = ObjectPropertyBase.class.getDeclaredField("helper");
+            selectedProfileHelperField.setAccessible(true);
+            previousSelectedProfileHelper = selectedProfileHelperField.get(selectedProfile);
+
+            EventManager<RefreshedVersionsEvent> refreshedVersionsChannel = EventBus.EVENT_BUS.channel(RefreshedVersionsEvent.class);
+            Field allHandlersField = EventManager.class.getDeclaredField("allHandlers");
+            allHandlersField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            CopyOnWriteArrayList<?>[] refreshedVersionsHandlers = (CopyOnWriteArrayList<?>[]) allHandlersField.get(refreshedVersionsChannel);
+            this.refreshedVersionsHandlers = refreshedVersionsHandlers;
+            List<?>[] previousRefreshedVersionsHandlerSnapshots = new List<?>[refreshedVersionsHandlers.length];
+            for (int i = 0; i < refreshedVersionsHandlers.length; i++) {
+                if (refreshedVersionsHandlers[i] != null) {
+                    previousRefreshedVersionsHandlerSnapshots[i] = List.copyOf(refreshedVersionsHandlers[i]);
+                }
+            }
+            this.previousRefreshedVersionsHandlerSnapshots = previousRefreshedVersionsHandlerSnapshots;
         }
 
         /// Sets the local game directories access used by [SettingsManager].
@@ -490,6 +538,24 @@ public final class GameDirectoriesTest {
         /// Restores the previous static state.
         @Override
         public void close() throws ReflectiveOperationException {
+            // Undo Profiles.init()'s permanent listener registrations *first*, before restoring the
+            // previous selected-profile value below -- otherwise that restoration would re-fire (and
+            // therefore re-trigger a background refresh through) a listener this environment is about
+            // to discard anyway. See the fields' comments for the full story.
+            selectedProfileHelperField.set(selectedProfile, previousSelectedProfileHelper);
+            for (int i = 0; i < refreshedVersionsHandlers.length; i++) {
+                List<?> previous = previousRefreshedVersionsHandlerSnapshots[i];
+                if (previous == null) {
+                    refreshedVersionsHandlers[i] = null;
+                } else {
+                    @SuppressWarnings({"unchecked", "rawtypes"})
+                    List rawHandlers = refreshedVersionsHandlers[i];
+                    rawHandlers.clear();
+                    //noinspection unchecked
+                    rawHandlers.addAll(previous);
+                }
+            }
+
             if (previousSelectedProfile != null) {
                 selectedProfile.set(previousSelectedProfile);
             }

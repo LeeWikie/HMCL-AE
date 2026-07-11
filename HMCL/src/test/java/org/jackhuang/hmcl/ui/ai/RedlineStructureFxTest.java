@@ -50,6 +50,7 @@ public final class RedlineStructureFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
         prepareFirstUseMarkers();
     }
@@ -59,6 +60,7 @@ public final class RedlineStructureFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        restoreRealConfigDirectory();
     }
 
     @BeforeEach
@@ -70,50 +72,56 @@ public final class RedlineStructureFxTest {
     public void reasoningToolAndAnswerAreFlatSiblingsOfMessageList() throws Exception {
         AIMainPage page = showPage();
         AiSessionStore store = (AiSessionStore) getField(page, "sessionStore");
-        AiSession session = store.getCurrentSession();
-        assertNotNull(session);
+        // A freshly created session is guaranteed empty — isolates this test from whatever the
+        // ambient "current" session (auto-created by the constructor) happens to already contain
+        // (see MessageActionsHoverFxTest for the exact ai-sessions.json pollution hazard this
+        // avoids).
+        AiSession session = store.createSession();
+        try {
+            // One persisted turn: user ask -> tool invocation record -> assistant answer w/ reasoning.
+            LlmMessage.ToolPayload payload = new LlmMessage.ToolPayload();
+            payload.name = "instance";
+            payload.resultText = "已找到 3 个实例";
+            payload.success = true;
+            LlmMessage assistant = new LlmMessage("assistant", "已经装好了。");
+            assistant.setReasoning("先确认实例，再安装光影。");
+            session.addMessage(new LlmMessage("user", "帮我装光影"));
+            session.addMessage(LlmMessage.toolRecord(payload, null));
+            session.addMessage(assistant);
 
-        // One persisted turn: user ask -> tool invocation record -> assistant answer w/ reasoning.
-        LlmMessage.ToolPayload payload = new LlmMessage.ToolPayload();
-        payload.name = "instance";
-        payload.resultText = "已找到 3 个实例";
-        payload.success = true;
-        LlmMessage assistant = new LlmMessage("assistant", "已经装好了。");
-        assistant.setReasoning("先确认实例，再安装光影。");
-        session.addMessage(new LlmMessage("user", "帮我装光影"));
-        session.addMessage(LlmMessage.toolRecord(payload, null));
-        session.addMessage(assistant);
+            WaitForAsyncUtils.asyncFx(() -> {
+                try {
+                    invoke(page, "loadSessionMessages", new Class<?>[]{AiSession.class}, session);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }).get(10, TimeUnit.SECONDS);
+            WaitForAsyncUtils.waitForFxEvents();
 
-        WaitForAsyncUtils.asyncFx(() -> {
-            try {
-                invoke(page, "loadSessionMessages", new Class<?>[]{AiSession.class}, session);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }).get(10, TimeUnit.SECONDS);
-        WaitForAsyncUtils.waitForFxEvents();
+            VBox messageList = (VBox) getField(page, "messageList");
+            int reasoningHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ReasoningCard, "reasoning card");
+            int toolHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ToolCard, "tool card");
+            int answerHost = soleHostIndex(messageList, n -> n.getStyleClass().contains("ai-bubble-ai"), "AI answer bubble");
 
-        VBox messageList = (VBox) getField(page, "messageList");
-        int reasoningHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ReasoningCard, "reasoning card");
-        int toolHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ToolCard, "tool card");
-        int answerHost = soleHostIndex(messageList, n -> n.getStyleClass().contains("ai-bubble-ai"), "AI answer bubble");
+            // A1: the three visuals are flat siblings — no two of them share a direct child
+            // of messageList (a shared child would be a forbidden "turn container").
+            assertNotEquals(reasoningHost, toolHost, "reasoning card and tool card must not share a container");
+            assertNotEquals(toolHost, answerHost, "tool card and answer bubble must not share a container");
+            assertNotEquals(reasoningHost, answerHost, "reasoning card and answer bubble must not share a container");
 
-        // A1: the three visuals are flat siblings — no two of them share a direct child
-        // of messageList (a shared child would be a forbidden "turn container").
-        assertNotEquals(reasoningHost, toolHost, "reasoning card and tool card must not share a container");
-        assertNotEquals(toolHost, answerHost, "tool card and answer bubble must not share a container");
-        assertNotEquals(reasoningHost, answerHost, "reasoning card and answer bubble must not share a container");
-
-        // The two subordinate cards sit in single-purpose wrapper rows directly under
-        // messageList (card -> wrapper -> messageList, nothing in between).
-        Node reasoning = findDescendant(messageList.getChildren().get(reasoningHost),
-                n -> n instanceof AIMainPage.ReasoningCard);
-        Node tool = findDescendant(messageList.getChildren().get(toolHost),
-                n -> n instanceof AIMainPage.ToolCard);
-        assertSame(messageList, reasoning.getParent().getParent(),
-                "reasoning card must be exactly one wrapper away from messageList");
-        assertSame(messageList, tool.getParent().getParent(),
-                "tool card must be exactly one wrapper away from messageList");
+            // The two subordinate cards sit in single-purpose wrapper rows directly under
+            // messageList (card -> wrapper -> messageList, nothing in between).
+            Node reasoning = findDescendant(messageList.getChildren().get(reasoningHost),
+                    n -> n instanceof AIMainPage.ReasoningCard);
+            Node tool = findDescendant(messageList.getChildren().get(toolHost),
+                    n -> n instanceof AIMainPage.ToolCard);
+            assertSame(messageList, reasoning.getParent().getParent(),
+                    "reasoning card must be exactly one wrapper away from messageList");
+            assertSame(messageList, tool.getParent().getParent(),
+                    "tool card must be exactly one wrapper away from messageList");
+        } finally {
+            store.deleteSession(session.getId());
+        }
     }
 
     /// Index of the single direct child of {@code list} whose subtree contains a node matching

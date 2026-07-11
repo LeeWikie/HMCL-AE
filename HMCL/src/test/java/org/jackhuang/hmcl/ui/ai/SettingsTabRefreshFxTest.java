@@ -66,6 +66,12 @@ public final class SettingsTabRefreshFxTest {
         System.setProperty("glass.win.uiScale", "100%");
         System.setProperty("prism.allowhidpi", "false");
         FxToolkit.registerPrimaryStage();
+        // This class builds its own AISettingsPage(new AiSettings(tempConfigDir)) rather than a
+        // shared AIMainPage, so it doesn't need AiMainPageFxTestSupport.ensureSettingsManagerLoaded
+        // / prepareFirstUseMarkers — but the skill-rescan and MCP-edit tests below still read/write
+        // SettingsManager.localConfigDirectory() directly (ai-skills/, ai-mcp-settings.json), so it
+        // still needs the same disposable-directory isolation as every AIMainPage-backed test.
+        AiMainPageFxTestSupport.useIsolatedConfigDirectory();
         ensureSettingsManagerLoaded();
     }
 
@@ -74,6 +80,7 @@ public final class SettingsTabRefreshFxTest {
         if (!java.awt.GraphicsEnvironment.isHeadless()) {
             FxToolkit.cleanupStages();
         }
+        AiMainPageFxTestSupport.restoreRealConfigDirectory();
     }
 
     @BeforeEach

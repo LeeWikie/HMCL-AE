@@ -24,21 +24,28 @@ import org.jackhuang.hmcl.setting.SettingsManager;
 import org.testfx.api.FxToolkit;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /// Shared scaffolding for FX tests that need a REAL {@link AIMainPage} (blueprint B1 tests:
 /// StreamingGuardFxTest / ChatDrawerPersistenceFxTest / TokenBatchingFxTest / DraftOwnershipFxTest
-/// / ModelSelectorListenerFxTest). The page is an application-level singleton in production, so
-/// its constructor touches the real per-workspace config directory
-/// ({@code SettingsManager.localConfigDirectory()}, i.e. `.hmcl` under the test working dir) —
-/// {@link #prepareFirstUseMarkers()} pre-accepts the first-use dialogs so constructing the page
-/// never queues a modal dialog (which would throw without a decorator stage and poison the FX
-/// exception queue for every later waitForFxEvents()).
+/// / ModelSelectorListenerFxTest). The page is an application-level singleton in production, but
+/// every test class that constructs one calls {@link #useIsolatedConfigDirectory()} in
+/// `@BeforeAll` first, so its constructor resolves {@code SettingsManager.localConfigDirectory()}
+/// to a disposable per-class temp directory instead of the developer's real `.hmcl` — every AI FX
+/// test class in the suite used to share that one real directory (and race each other's
+/// per-instance JVM shutdown hooks on it at JVM exit), which produced lost writes and the
+/// `ai-sessions.json.corrupt-*` quarantine files this fixed.
+/// {@link #prepareFirstUseMarkers()} pre-accepts the first-use dialogs (in whichever directory is
+/// currently active) so constructing the page never queues a modal dialog (which would throw
+/// without a decorator stage and poison the FX exception queue for every later
+/// waitForFxEvents()).
 final class AiMainPageFxTestSupport {
 
     private AiMainPageFxTestSupport() {
@@ -51,6 +58,57 @@ final class AiMainPageFxTestSupport {
         field.setAccessible(true);
         if (field.get(null) == null) {
             field.set(null, new LauncherSettings());
+        }
+    }
+
+    /// Temp directory installed by {@link #useIsolatedConfigDirectory()}, `null` when no override
+    /// is active.
+    private static Path isolatedConfigDir;
+
+    /// Redirects {@code SettingsManager.localConfigDirectory()} to a fresh, disposable temp
+    /// directory for the remainder of the JVM (or until {@link #restoreRealConfigDirectory()} is
+    /// called), so constructing an AIMainPage in a test never touches the developer's real
+    /// `.hmcl/ai-sessions.json` (and every other config-dir file AIMainPage owns: ai-settings.json,
+    /// ai-tool-permissions.json, ai-skills/, ai-memory/, ai-jobs-interrupted.json, the ai-trace log,
+    /// ai-privacy-consent, …) and never races another test CLASS's shutdown-hook flush on the same
+    /// file (see AIMainPage's constructor — the hook itself is skipped entirely while this override
+    /// is active, see SettingsManager#isLocalConfigDirectoryOverridden).
+    ///
+    /// Call from `@BeforeAll`, BEFORE {@link #ensureSettingsManagerLoaded()}/
+    /// {@link #prepareFirstUseMarkers()}, and pair with {@link #restoreRealConfigDirectory()} in
+    /// `@AfterAll`.
+    static void useIsolatedConfigDirectory() throws Exception {
+        isolatedConfigDir = Files.createTempDirectory("hmcl-ai-fx-test-");
+        setConfigDirectoryOverride(isolatedConfigDir);
+    }
+
+    /// Clears the override installed by {@link #useIsolatedConfigDirectory()} and deletes its temp
+    /// directory.
+    static void restoreRealConfigDirectory() throws Exception {
+        setConfigDirectoryOverride(null);
+        if (isolatedConfigDir != null) {
+            deleteRecursively(isolatedConfigDir);
+            isolatedConfigDir = null;
+        }
+    }
+
+    private static void setConfigDirectoryOverride(Path dir) throws ReflectiveOperationException {
+        Field f = SettingsManager.class.getDeclaredField("localConfigDirectoryOverride");
+        f.setAccessible(true);
+        f.set(null, dir);
+    }
+
+    private static void deleteRecursively(Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var stream = Files.walk(root)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.delete(p);
+                } catch (IOException ignored) {
+                }
+            });
         }
     }
 
