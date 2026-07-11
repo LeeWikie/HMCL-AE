@@ -24,16 +24,22 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Writes a UTF-8 text file inside one of several allowlisted root directories,
 /// creating parent directories as needed. Overwrites by default; pass `append=true`
 /// to append. Controlled-write tool gated by the approval system.
 @NotNullByDefault
 public final class WriteFileTool implements ToolSpec {
-    private final List<Path> roots = new ArrayList<>();
+    /// Allowlisted roots. Mutated from the FX thread ({@link #addRoot}/{@link #setInstanceRoot})
+    /// while the worker thread iterates it in {@link #execute}, so it must be concurrency-safe or the
+    /// turn dies on a {@link java.util.ConcurrentModificationException} — the same FX-vs-worker race
+    /// the {@link ToolRegistry} lock fixes. {@link CopyOnWriteArrayList} suffices because all mutation
+    /// happens on the single FX thread (no writer-writer race), while readers get a stable snapshot
+    /// and never CME.
+    private final List<Path> roots = new CopyOnWriteArrayList<>();
     private final ReadLedger ledger;
 
     public WriteFileTool(Path primaryRoot) {

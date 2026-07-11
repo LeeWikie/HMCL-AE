@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -39,7 +40,13 @@ public final class GrepTool implements ToolSpec {
     private static final int MAX_FILES = 5000;
     private static final long MAX_FILE_SIZE = 2 * 1024 * 1024;
 
-    private final List<Path> roots = new ArrayList<>();
+    /// Allowlisted roots. Mutated from the FX thread ({@link #addRoot}/{@link #setInstanceRoot})
+    /// while the worker thread iterates it in {@link #execute}, so it must be concurrency-safe or the
+    /// turn dies on a {@link java.util.ConcurrentModificationException} — the same FX-vs-worker race
+    /// the {@link ToolRegistry} lock fixes. {@link CopyOnWriteArrayList} suffices because all mutation
+    /// happens on the single FX thread (no writer-writer race), while readers get a stable snapshot
+    /// and never CME.
+    private final List<Path> roots = new CopyOnWriteArrayList<>();
 
     public GrepTool(Path primaryRoot) {
         roots.add(primaryRoot.toAbsolutePath().normalize());

@@ -18,7 +18,11 @@
 package org.jackhuang.hmcl.ai.ocr;
 
 import com.google.gson.annotations.SerializedName;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.value.ObservableValue;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 /// Persisted configuration for the image-OCR feature, mirroring
 /// {@link org.jackhuang.hmcl.ai.search.AiSearchConfig}.
@@ -58,6 +62,16 @@ public final class AiOcrConfig {
     @SerializedName("enabled")
     private boolean enabled = false;
 
+    /// Observable mirror of {@link #enabled}, created lazily the first time {@link #enabledProperty()}
+    /// is requested (seeded from the just-deserialized {@link #enabled} field). Lets the "启用 OCR"
+    /// settings toggle and the chat page's {@code ocr_image} tool registration share ONE live source
+    /// of truth: the single shared config instance's enabled state — so flipping the toggle
+    /// registers/unregisters {@code ocr_image} on the next turn without a restart. Mirrors
+    /// {@link org.jackhuang.hmcl.ai.search.AiSearchConfig#enabledProperty}. {@code transient} so Gson
+    /// never serializes the JavaFX property object; the persisted source of truth stays the plain
+    /// {@link #enabled} field, which {@link #setEnabled(boolean)} keeps in lock-step.
+    private transient @Nullable BooleanProperty enabledProperty;
+
     public String getProvider() { return provider; }
     public void setProvider(String provider) { this.provider = provider; }
 
@@ -76,8 +90,26 @@ public final class AiOcrConfig {
     public String getLanguage() { return language; }
     public void setLanguage(String language) { this.language = language; }
 
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public boolean isEnabled() {
+        return enabledProperty != null ? enabledProperty.get() : enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+        if (enabledProperty != null) enabledProperty.set(enabled);
+    }
+
+    /// Live observable of the OCR-enabled state (see {@link #enabledProperty}). The chat page binds
+    /// {@code ocr_image} tool registration to this so the toggle takes effect immediately; the
+    /// settings toggle mutates the same property through {@link #setEnabled(boolean)}, keeping the two
+    /// in sync with no restart and no second boolean. Mirrors
+    /// {@link org.jackhuang.hmcl.ai.search.AiSearchConfig#enabledProperty()}.
+    public ObservableValue<Boolean> enabledProperty() {
+        if (enabledProperty == null) {
+            enabledProperty = new SimpleBooleanProperty(this, "enabled", enabled);
+        }
+        return enabledProperty;
+    }
 
     /// Resolves the configured provider enum, falling back to {@link OcrProvider#OCR_SPACE}
     /// when the stored id is unknown.

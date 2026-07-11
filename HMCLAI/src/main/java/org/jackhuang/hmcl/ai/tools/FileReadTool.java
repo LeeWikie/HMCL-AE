@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Read-only tool that lists directory contents or reads a text file inside any of
 /// several allowlisted root directories (config dir, HMCL home, current game dir).
@@ -36,7 +37,14 @@ import java.util.Map;
 /// which concrete paths to read (e.g. `.minecraft/logs/latest.log`).
 @NotNullByDefault
 public final class FileReadTool implements ToolSpec {
-    private final List<Path> roots = new ArrayList<>();
+    /// Allowlisted roots. Mutated from the FX thread ({@link #addRoot}/{@link #setRoot}/
+    /// {@link #setInstanceRoot}) while the worker thread iterates it in {@link #execute}, so it must
+    /// be concurrency-safe or the turn dies on a {@link java.util.ConcurrentModificationException}
+    /// — the same FX-vs-worker race the {@link ToolRegistry} lock fixes. {@link CopyOnWriteArrayList}
+    /// suffices here because all mutation happens on the single FX thread (no writer-writer race, so
+    /// the check-then-act {@code contains}/{@code add} pairs stay correct), while readers get a
+    /// stable snapshot and never CME.
+    private final List<Path> roots = new CopyOnWriteArrayList<>();
     private final ReadLedger ledger;
 
     public FileReadTool(Path primaryRoot) {

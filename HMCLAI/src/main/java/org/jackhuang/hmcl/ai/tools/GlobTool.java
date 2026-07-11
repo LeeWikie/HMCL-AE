@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
 
 /// Finds files by glob pattern under an allowlisted root (e.g. `**/*.json`,
@@ -34,7 +35,13 @@ import java.util.stream.Stream;
 public final class GlobTool implements ToolSpec {
     private static final int MAX_RESULTS = 300;
 
-    private final List<Path> roots = new ArrayList<>();
+    /// Allowlisted roots. Mutated from the FX thread ({@link #addRoot}/{@link #setInstanceRoot})
+    /// while the worker thread iterates it in {@link #execute}, so it must be concurrency-safe or the
+    /// turn dies on a {@link java.util.ConcurrentModificationException} — the same FX-vs-worker race
+    /// the {@link ToolRegistry} lock fixes. {@link CopyOnWriteArrayList} suffices because all mutation
+    /// happens on the single FX thread (no writer-writer race), while readers get a stable snapshot
+    /// and never CME.
+    private final List<Path> roots = new CopyOnWriteArrayList<>();
 
     public GlobTool(Path primaryRoot) {
         roots.add(primaryRoot.toAbsolutePath().normalize());

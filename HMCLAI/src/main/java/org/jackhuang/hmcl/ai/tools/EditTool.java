@@ -24,9 +24,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Targeted in-place edit: replaces an exact substring in a text file, inside one of the
 /// allowlisted roots. Unlike {@link WriteFileTool}, it changes only the matched text.
@@ -44,7 +44,13 @@ import java.util.Map;
 ///     write and a WARNING is appended to the success receipt when it came out broken.
 @NotNullByDefault
 public final class EditTool implements ToolSpec, BackupTargetResolver {
-    private final List<Path> roots = new ArrayList<>();
+    /// Allowlisted roots. Mutated from the FX thread ({@link #addRoot}/{@link #setInstanceRoot})
+    /// while the worker thread iterates it in {@link #execute}, so it must be concurrency-safe or the
+    /// turn dies on a {@link java.util.ConcurrentModificationException} — the same FX-vs-worker race
+    /// the {@link ToolRegistry} lock fixes. {@link CopyOnWriteArrayList} suffices because all mutation
+    /// happens on the single FX thread (no writer-writer race), while readers get a stable snapshot
+    /// and never CME.
+    private final List<Path> roots = new CopyOnWriteArrayList<>();
     private final ReadLedger ledger;
 
     public EditTool(Path primaryRoot) {
