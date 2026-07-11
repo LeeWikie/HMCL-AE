@@ -28,8 +28,10 @@ import org.jackhuang.hmcl.setting.DownloadProviders;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /// A read-only tool that searches for Minecraft mods on Modrinth (and optionally
 /// CurseForge) and returns a concise list of matches.
@@ -47,6 +49,11 @@ public final class SearchModsTool implements Tool {
     /// Maximum number of results returned to the model.
     private static final int MAX_RESULTS = 20;
 
+    /// Cap on how many of the search results get a per-mod dependency lookup. Each lookup is an
+    /// extra network round trip ([`RemoteAddon.IMod#loadVersions`]), so this is deliberately
+    /// smaller than [`#MAX_RESULTS`] to keep the tool's API cost bounded even for broad queries.
+    private static final int MAX_DEPENDENCY_LOOKUPS = 8;
+
     @Override
     public String getName() {
         return "search_mods";
@@ -57,15 +64,18 @@ public final class SearchModsTool implements Tool {
         return "Searches for Minecraft mods on Modrinth or CurseForge. "
                 + "Parameters: query (string, required search text), "
                 + "gameVersion (string, optional Minecraft version like \"1.20.1\"; empty matches any), "
-                + "loader (string, optional: fabric/forge/neoforge/quilt - used to hint the user, not a hard filter), "
+                + "loader (string, optional: fabric/forge/neoforge/quilt - NOT sent to the underlying search "
+                + "(that API call takes no loader parameter); it is only echoed back into the result summary "
+                + "as a reminder of what the user asked for, it does not filter or rank results), "
                 + "source (string, optional: \"modrinth\" or \"curseforge\"; when omitted, follows the user's "
                 + "default addon source launcher setting, falling back to Modrinth if CurseForge has no API key). "
-                + "Returns up to " + MAX_RESULTS + " results with slug, title, author and short description. "
+                + "Returns up to " + MAX_RESULTS + " results with slug, title, author, short description, and "
+                + "(for the top " + MAX_DEPENDENCY_LOOKUPS + " results) a 'requires' line listing required/optional "
+                + "dependency ids of the best-matching version, when any exist. "
                 + "Use the returned slug with instance(action=\"mods_install\") to install. Read-only. "
-                + "Note: results are NOT individually verified against 'loader' — that parameter only hints "
-                + "the query, it does not filter out mods that don't support it. Confirm actual loader/version "
-                + "support at install time via mods_install's error (it DOES hard-filter and will report "
-                + "what's really available).";
+                + "Note: results are NOT individually verified against 'loader' — search never filters on it. "
+                + "Confirm actual loader/version support at install time via mods_install's error (it DOES "
+                + "hard-filter and will report what's really available).";
     }
 
     @Override
@@ -124,6 +134,8 @@ public final class SearchModsTool implements Tool {
                     + (gameVersion.isBlank() ? "" : " (game version " + gameVersion + ")") + ".");
         }
 
+        Map<String, String> dependencyHints = fetchDependencyHints(repository, downloadProvider, results, effectiveGameVersion);
+
         StringBuilder sb = new StringBuilder();
         sb.append("Found ").append(results.size()).append(" mod(s) on ")
                 .append("curseforge".equalsIgnoreCase(source) ? "CurseForge" : "Modrinth")
@@ -149,12 +161,54 @@ public final class SearchModsTool implements Tool {
             if (description != null && !description.isBlank()) {
                 sb.append("      ").append(truncate(description)).append('\n');
             }
+            String deps = dependencyHints.get(addon.slug());
+            if (deps != null) {
+                sb.append("      requires: ").append(deps).append('\n');
+            }
         }
 
         sb.append("\nTo install one, call instance(action=\"mods_install\", id=<slug>, source=")
                 .append("curseforge".equalsIgnoreCase(source) ? "\"curseforge\"" : "\"modrinth\"").append(").");
 
         return ToolResult.success(sb.toString());
+    }
+
+    /// Best-effort per-mod dependency lookup for the top [`#MAX_DEPENDENCY_LOOKUPS`] results.
+    /// For each of those addons, loads its versions, picks the one matching `gameVersion` (or the
+    /// first/latest if `gameVersion` is blank or no version matches), and collects the ids of its
+    /// REQUIRED/OPTIONAL dependencies. A lookup failure for one addon (network hiccup, no versions,
+    /// timeout) is skipped rather than failing the whole search — dependency info is a bonus on
+    /// top of the search results, not something the caller can't proceed without.
+    private static Map<String, String> fetchDependencyHints(RemoteAddonRepository repository, DownloadProvider downloadProvider,
+                                                              List<RemoteAddon> results, String gameVersion) {
+        Map<String, String> hints = new LinkedHashMap<>();
+        int limit = Math.min(results.size(), MAX_DEPENDENCY_LOOKUPS);
+        for (int i = 0; i < limit; i++) {
+            RemoteAddon addon = results.get(i);
+            try {
+                List<RemoteAddon.Version> versions = ContentToolSupport.callWithTimeout(
+                        () -> addon.data().loadVersions(repository, downloadProvider).collect(Collectors.toList()),
+                        15, "Version lookup");
+                if (versions.isEmpty()) {
+                    continue;
+                }
+                RemoteAddon.Version match = versions.stream()
+                        .filter(v -> !gameVersion.isBlank() && v.gameVersions() != null && v.gameVersions().contains(gameVersion))
+                        .findFirst()
+                        .orElse(versions.get(0));
+                List<String> depIds = match.dependencies().stream()
+                        .filter(d -> d.getType() == RemoteAddon.DependencyType.REQUIRED || d.getType() == RemoteAddon.DependencyType.OPTIONAL)
+                        .map(RemoteAddon.Dependency::getId)
+                        .distinct()
+                        .collect(Collectors.toList());
+                if (!depIds.isEmpty()) {
+                    hints.put(addon.slug(), String.join(", ", depIds));
+                }
+            } catch (Throwable e) {
+                // Best-effort: skip this addon's dependency hint rather than failing the search.
+            }
+        }
+        return hints;
     }
 
     /// Truncates a description to a single short line for compact display.
