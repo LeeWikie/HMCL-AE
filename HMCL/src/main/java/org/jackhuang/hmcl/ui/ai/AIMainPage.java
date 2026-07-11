@@ -3295,10 +3295,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// for the user's answer (denying on timeout/error so the agent can never hang). Offers the
     /// "remember this choice" checkbox — see {@link #showConfirmDialog}.
     private boolean confirmDangerousOperation(String toolName, String summary) {
-        return showConfirmDialog(toolName, extractActionForRemember(summary),
+        boolean approved = showConfirmDialog(toolName, extractActionForRemember(summary),
                 i18n("ai.confirm.dangerous.title"), i18n("ai.confirm.dangerous.text", summary),
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.QUESTION,
                 120, true);
+        if (approved) {
+            flushSessionStoreBeforeDangerousOp();
+        }
+        return approved;
     }
 
     /// Second-tier CRITICAL confirmation (red) for catastrophic operations — deleting a
@@ -3311,10 +3315,34 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// skippable via a remembered preference, see {@link #showConfirmDialog}.
     private boolean confirmCriticalOperation(String toolName, String summary) {
         // Severity is carried by the dialog's native red ERROR icon, not "⛔" characters.
-        return showConfirmDialog(toolName, null, i18n("ai.confirm.critical.title"),
+        boolean approved = showConfirmDialog(toolName, null, i18n("ai.confirm.critical.title"),
                 i18n("ai.confirm.critical.text", summary),
                 org.jackhuang.hmcl.ui.construct.MessageDialogPane.MessageType.ERROR,
                 180, false);
+        if (approved) {
+            flushSessionStoreBeforeDangerousOp();
+        }
+        return approved;
+    }
+
+    /// P1e: flushes one SYNCHRONOUS sessionStore snapshot the instant a dangerous/critical
+    /// operation is approved and right before the tool layer actually runs it — on top of the
+    /// normal {@link #persistStore()} hot path (async) and the shutdown-hook flush registered in
+    /// the constructor (which only fires on a NORMAL JVM exit, see the ~723-741 comment). A
+    /// dangerous op is exactly the case most likely to take the whole process down with it (e.g. a
+    /// shell command aimed at the launcher's own PID); without this, that crash could lose not just
+    /// the async save still sitting in the queue but the entire in-progress turn's messages and
+    /// ui-trace. Called from the agent's background thread (same thread
+    /// {@link #confirmDangerousOperation}/{@link #confirmCriticalOperation} run on), so blocking
+    /// briefly on the synchronous {@code save()} here — same call the shutdown hook uses — costs
+    /// nothing on the FX thread.
+    private void flushSessionStoreBeforeDangerousOp() {
+        try {
+            sessionStore.save();
+        } catch (Exception e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning(
+                    "[AI] failed to flush session store before dangerous operation", e);
+        }
     }
 
     /// H4（第二波）：doom-loop 硬停的用户确认——聊天适配器检测到模型连续 6 次以相同签名调用同一
@@ -4916,6 +4944,34 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         return cancelled;
     }
 
+    /// P5: recognizes a provider-side content-moderation rejection so {@link #showAiError} can
+    /// show a friendly Chinese message instead of dumping the provider's raw JSON error body
+    /// (previously funneled straight through the generic {@code ai.error.api_error} branch).
+    /// Two independent signals, either sufficient on its own:
+    ///  - the cause chain contains a langchain4j {@code ContentFilteredException} — matched by
+    ///    SIMPLE CLASS NAME rather than {@code instanceof}: this HMCL module deliberately excludes
+    ///    the langchain4j dependency (see {@code HMCL/build.gradle.kts}'s
+    ///    {@code exclude(dependency("dev.langchain4j:.*:.*"))}), so the type itself isn't on this
+    ///    module's compile classpath even though {@link LlmException} (from HMCLAI) can carry one
+    ///    as its cause at runtime; or
+    ///  - {@link LlmException#getMessage()} contains one of the marker strings providers that
+    ///    DON'T map onto {@code ContentFilteredException} are observed to use ("Content Exists
+    ///    Risk" — Qwen/DashScope; "content_filter" / "invalid_request_error" — OpenAI-compatible
+    ///    APIs), which is how {@code LangChain4jChatAdapter#wrapError} (`"AI request failed: " +
+    ///    error.getMessage()`) surfaces a plain {@code InvalidRequestException} whose message
+    ///    still carries the provider's raw error payload.
+    private static boolean isContentFilteredError(LlmException error) {
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if ("ContentFilteredException".equals(t.getClass().getSimpleName())) {
+                return true;
+            }
+        }
+        String msg = error.getMessage();
+        return msg != null && (msg.contains("Content Exists Risk")
+                || msg.contains("content_filter")
+                || msg.contains("invalid_request_error"));
+    }
+
     private void showAiError(@Nullable Label aiBubble, StringBuilder fullContent, LlmException error,
                              @Nullable AiSession owner, int generation) {
         Platform.runLater(() -> {
@@ -4949,7 +5005,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             final Label target = bubble;
             int statusCode = error.getStatusCode();
             String message;
-            if (statusCode == 401) {
+            if (isContentFilteredError(error)) {
+                // P5: provider-side content moderation (400 InvalidRequestException/
+                // ContentFilteredException, or a raw JSON body carrying one of the marker
+                // strings) used to fall through to the generic "API call failed: <raw JSON>"
+                // branch below and dump the provider's error payload straight into the chat —
+                // give it a dedicated, non-technical message instead.
+                message = i18n("ai.error.content_filtered");
+            } else if (statusCode == 401) {
                 message = i18n("ai.error.auth_failed");
             } else if (statusCode == 0) {
                 if (error.getCause() instanceof HttpTimeoutException) {
