@@ -2211,7 +2211,7 @@
 .ai-markdown-view .md-code-block {
     -code-bg: #282c34;
     -code-fg: #abb2bf;
-    -code-dim: #7f848e;
+    -code-dim: #9aa0ac;
     -code-kw: #c678dd;
     -code-str: #98c379;
     -code-num: #d19a66;
@@ -2281,7 +2281,9 @@
 }
 
 .ai-markdown-view .md-th {
-    -fx-background-color: -monet-surface-container;
+    /* One step up from the bubble's own surface-container so the header row actually reads as a
+     * header band instead of blending into the message background (same in both themes). */
+    -fx-background-color: -monet-surface-container-high;
     -fx-border-color: -monet-outline-variant;
     -fx-border-width: 0 1 1 0;
 }
@@ -2430,6 +2432,11 @@
 
 .ai-input-field {
     -fx-font-size: 13px;
+    /* Native TextArea has NO theme-aware text fill of its own — without these it falls back to
+     * Modena's fixed near-black -fx-text-inner-color (never redefined here), so in the DARK theme
+     * the typed text is dark-on-dark and nearly unreadable. Mirror .jfx-text-area's monet fills. */
+    -fx-text-fill: -monet-on-surface;
+    -fx-prompt-text-fill: -monet-on-surface-variant;
     -fx-background-color: -monet-surface-container-highest;
     -fx-background-radius: 6;
     -fx-border-color: -monet-outline-variant;

@@ -129,6 +129,25 @@ public final class AiPromptBuilder {
             "14. DELIVER WHAT YOU CLAIM: do not relabel unfinished work as a finished \"最小可用版本/框架\" — say plainly which steps are done and which are not. Fix the actual cause, not the symptom (e.g. a Java/loader version mismatch needs the pairing fixed, not just the crash report cleared). For config edits specifically (memory/JVM args/game options), \"已经改好了\" requires a tool result proving the write landed, same standard as rule 9's job(action=check)-before-success — an unverified \"should be fixed now\" is a claim you are not allowed to make.",
             "15. DON'T WRAP A VAGUE QUESTION IN `ask` — BUT DON'T STOP USING IT EITHER: `ask` renders a structured dialog (choice buttons and/or a text box), so it earns its keep only when there's something structured to show — 2+ concrete single/multi-select options, or 2+ related sub-questions bundled into ONE dialog (a free-text sub-question is fine riding alongside a structured one there; rule 13's \"let them choose\" cases are exactly this). A SINGLE open-ended free-text question, or a vague/fuzzy opinion or preference with no discrete options yet (e.g. \"你想装哪些模组？告诉我名称或关键词\", \"有什么偏好吗\", \"what do you think\") is NOT a case for `ask` — just ask it directly in your own response text and end the turn normally; the user answers with a normal chat message, no tool call involved. This is not a blanket ban on `ask` — once you have concrete options (from search/list results) or 2+ things to bundle, go back to using it.");
 
+    /// Behaviour guardrail against the model mis-labelling versions it simply doesn't recognise as
+    /// "snapshots"/"unusual" just because they postdate its training cutoff — a real regression a
+    /// tester hit (a genuine released version reported as "probably a snapshot"). Static text, so it
+    /// lives in the cacheable stable prefix. Complements DISCIPLINE rule 11 (stale memory = a lead,
+    /// verify specific facts with a tool) from a different angle: rule 11 is about verifying facts,
+    /// this is about NOT editorialising on the recency/type of versions the model doesn't know.
+    private static final String VERSION_FRESHNESS = String.join("\n",
+            "Version knowledge is time-sensitive — your memory is STALE, the launcher's data is AUTHORITATIVE:",
+            "- Your training data has a cutoff and does NOT include the newest Minecraft versions, snapshots, mods,",
+            "  loaders, or their builds — these keep shipping after that cutoff. What is current and authoritative is",
+            "  the launcher's own data: the runtime context below, plus tools like search(action=game_versions) and",
+            "  instance(action=details). Your memory is not.",
+            "- NEVER call a Minecraft version / mod / loader a \"snapshot\", \"unusual\", \"special\", \"experimental\",",
+            "  \"probably fake\", or \"maybe a beta\" merely because YOU don't recognise it. That is almost certainly just",
+            "  your knowledge being out of date, and saying it misleads the user — a real, released stable version does",
+            "  not become a snapshot just because it shipped after your training cutoff.",
+            "- To know whether a version is a release or a snapshot, READ it from the runtime context or a version tool;",
+            "  do not guess, and do not editorialise about how new or unusual something \"looks\".");
+
     /// One-time education for the runtime-harness channels (borrow-list A3 + E1): teaches the
     /// {@code <runtime-guard>} identity tag ONCE (see
     /// {@link org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter} for why the tag rides
@@ -346,6 +365,8 @@ public final class AiPromptBuilder {
         blocks.add(CONVENTIONS);
         blocks.add("");
         blocks.add(DISCIPLINE);
+        blocks.add("");
+        blocks.add(VERSION_FRESHNESS);
         blocks.add("");
         blocks.add(RUNTIME_GUARD_EDUCATION);
 
@@ -740,6 +761,10 @@ public final class AiPromptBuilder {
         ctx.add("Runtime context (a SNAPSHOT taken at the START of this turn — if the selected instance "
                 + "or active account is switched partway through the turn, a tool's live return is the "
                 + "source of truth, not these values):");
+
+        // Grounds "today" for the model (its training cutoff is in the past): pairs with the
+        // VERSION_FRESHNESS guardrail so it knows recent versions/releases are plausible, not "future".
+        ctx.add("- Current date: " + java.time.LocalDate.now());
 
         Path gameDir = resolveGameDir();
         String disk = diskSpace(gameDir);
