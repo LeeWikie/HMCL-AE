@@ -28,6 +28,7 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /// A read-only catalog of well-known model metadata (context window, max output,
@@ -38,13 +39,17 @@ import java.util.Map;
 /// user doesn't have to know that, say, `gpt-4.1` has a ~1M-token context window or
 /// that `claude-opus-4-8` costs $5/$25 per million tokens.
 ///
-/// ## Lookup is STRICT
+/// ## Lookup: exact first, then a conservative normalization
 ///
-/// {@link #lookup(String)} returns an entry only on an **exact** id match, and
-/// `null` otherwise. This is a deliberate product decision: a fuzzy/prefix match
-/// would silently mis-fill metadata for the wrong model variant. When the lookup
-/// misses, the caller is expected to fall back to safe defaults (128k context,
-/// 4096 max output) rather than guessing.
+/// {@link #lookup(String)} tries an **exact** id match first. On a miss it falls
+/// back to a single conservative normalization — lower-casing the id and stripping a
+/// leading `vendor/` prefix (so `OpenAI/GPT-4o` and `deepseek/deepseek-v4-pro` resolve
+/// to the bare `gpt-4o` / `deepseek-v4-pro` entries) — and retries against a
+/// normalized index. It **never** does fuzzy or cross-variant matching: `gpt-4o` will
+/// not resolve `gpt-4o-mini`, because silently mis-filling metadata for the wrong
+/// model variant is worse than a miss. When the lookup still misses, the caller is
+/// expected to fall back to safe defaults (128k context, 4096 max output) rather than
+/// guessing.
 ///
 /// To cover the common case where users may enter either an alias (`claude-opus-4-8`)
 /// or a dated snapshot id (`claude-opus-4-5-20251101`), the bundled catalog seeds
@@ -98,8 +103,29 @@ public final class ModelLibrary {
 
     private final Map<String, ModelInfo> models;
 
+    /// A normalized index over {@link #models} for the conservative lookup fallback:
+    /// {@code normalize(id) -> info}. Built once per instance (so both the bundled
+    /// baseline and any {@link #installUpdate} result carry it). First writer wins on
+    /// a normalized-key collision, so an exact bare id is never shadowed by a variant.
+    private final Map<String, ModelInfo> normalized;
+
     private ModelLibrary(Map<String, ModelInfo> models) {
         this.models = models;
+        Map<String, ModelInfo> norm = new LinkedHashMap<>();
+        for (Map.Entry<String, ModelInfo> entry : models.entrySet()) {
+            norm.putIfAbsent(normalize(entry.getKey()), entry.getValue());
+        }
+        this.normalized = norm;
+    }
+
+    /// Conservative normalization for the lookup fallback: lower-case, and if the id
+    /// contains a `/` keep only the substring after the last `/` (dropping a
+    /// `vendor/` prefix such as `openai/` or `deepseek/`). Deliberately does nothing
+    /// else — no fuzzy/family collapsing — so it can never map to a different variant.
+    private static String normalize(String id) {
+        String lower = id.toLowerCase(Locale.ROOT);
+        int slash = lower.lastIndexOf('/');
+        return slash < 0 ? lower : lower.substring(slash + 1);
     }
 
     /// Returns the live catalog instance, loading the bundled baseline on first use.
@@ -117,14 +143,17 @@ public final class ModelLibrary {
         return local;
     }
 
-    /// Looks up metadata for an exact model id. Returns `null` when there is no
-    /// strict match (the caller should then apply its own defaults).
+    /// Looks up metadata for a model id: exact match first, then a single conservative
+    /// normalization (lower-case + strip a `vendor/` prefix) — never a fuzzy or
+    /// cross-variant match. Returns `null` when both miss (the caller should then apply
+    /// its own defaults).
     @Nullable
     public ModelInfo lookup(String modelId) {
-        if (modelId == null || modelId.isEmpty()) {
-            return null;
+        ModelInfo hit = modelId == null ? null : models.get(modelId);
+        if (hit != null) {
+            return hit;
         }
-        return models.get(modelId);
+        return modelId == null || modelId.isEmpty() ? null : normalized.get(normalize(modelId));
     }
 
     /// Static convenience for {@code getInstance().lookup(modelId)}.
