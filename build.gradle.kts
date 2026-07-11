@@ -64,6 +64,14 @@ subprojects {
     tasks.withType<Test> {
         useJUnitPlatform()
         testLogging.showStandardStreams = true
+        // `-PheadlessTest` forces java.awt.headless=true on the forked test JVM, which makes the
+        // TestFX UI tests self-skip (they `assumeFalse(GraphicsEnvironment.isHeadless())`) instead of
+        // popping real JavaFX windows that steal focus / force size. Background & CI runs pass it so
+        // they never disrupt the desktop; non-FX unit tests still run normally. Omit it to run the
+        // full suite (FX windows visible) on an interactive machine.
+        if (project.hasProperty("headlessTest")) {
+            systemProperty("java.awt.headless", "true")
+        }
     }
 
     configure<PublishingExtension> {
