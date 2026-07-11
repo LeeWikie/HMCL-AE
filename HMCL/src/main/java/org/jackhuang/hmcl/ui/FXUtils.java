@@ -1676,10 +1676,14 @@ public final class FXUtils {
      * horizontal scrollbar, so anything past the edge is simply unreachable).
      *
      * <p>JFXPopup's {@code PopupHPosition} is anchor-EDGE alignment, not an expansion direction:
-     * {@code LEFT} aligns the popup's left edge to the anchor and expands rightward (pass offsetX 0),
-     * while {@code RIGHT} aligns the popup's right edge to the anchor and expands leftward (pass
-     * offsetX = anchor width). Callers therefore pick the offset from the returned value, e.g.
-     * {@code hPos == RIGHT ? anchor.getWidth() : 0}.
+     * {@code LEFT} aligns the popup's left edge to the anchor's left edge and expands rightward,
+     * {@code RIGHT} aligns the popup's right edge to the anchor's right edge and expands leftward.
+     * {@code JFXPopup.show} already shifts the anchor point to the correct node edge for the chosen
+     * hAlign and {@code JFXPopupSkin.reset} then offsets by the content width, so callers must pass
+     * <b>offsetX 0 for BOTH</b> — a non-zero horizontal offset (e.g. {@code anchor.getWidth()})
+     * double-counts and shoves the popup sideways by that much. (The vertical {@code offsetY} is the
+     * opposite: it intentionally passes ±anchor height to lift the popup clear of the control rather
+     * than overlap it — do not mirror that ±size pattern onto the horizontal axis.)
      *
      * @param root          the anchor node the popup is shown from
      * @param popupInstance the popup instance (used to measure its content width)

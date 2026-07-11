@@ -2327,7 +2327,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, popup);
         JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(thinkBtn, popup);
         popup.show(thinkBtn, vPosition, hPosition,
-                hPosition == JFXPopup.PopupHPosition.RIGHT ? thinkBtn.getWidth() : 0,
+                // 横向 offset 恒 0:JFXPopup.show 已按 hAlign 把锚点设到节点左/右边缘、skin 再据此对齐,
+                // 弹窗与控件左/右边缘齐平即可;传 node.width 会把它多推一个控件宽(纵向才需 ±height 拉开间距)。
+                0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
         styleAiPopupContainer(thinkingContent);
     }
@@ -2555,7 +2557,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(contextRing, popup);
         JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(contextRing, popup);
         popup.show(contextRing, vPosition, hPosition,
-                hPosition == JFXPopup.PopupHPosition.RIGHT ? contextRing.getWidth() : 0,
+                0,  // 横向 offset 恒 0(见 openThinkingSlider 处说明)
                 vPosition == JFXPopup.PopupVPosition.TOP ? contextRing.getHeight() : -contextRing.getHeight());
         styleAiPopupContainer(content);
     }
@@ -2596,7 +2598,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(modelSelectorBtn, popup);
         JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(modelSelectorBtn, popup);
         popup.show(modelSelectorBtn, vPosition, hPosition,
-                hPosition == JFXPopup.PopupHPosition.RIGHT ? modelSelectorBtn.getWidth() : 0,
+                0,  // 横向 offset 恒 0(见 openThinkingSlider 处说明)
                 vPosition == JFXPopup.PopupVPosition.TOP ? modelSelectorBtn.getHeight() : -modelSelectorBtn.getHeight());
         styleAiPopupContainer(menu);
     }
@@ -2681,7 +2683,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
         JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(approvalBadge, popup);
         popup.show(approvalBadge, vPosition, hPosition,
-                hPosition == JFXPopup.PopupHPosition.RIGHT ? approvalBadge.getWidth() : 0,
+                0,  // 横向 offset 恒 0(见 openThinkingSlider 处说明)
                 vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
         styleAiPopupContainer(menu);
     }
