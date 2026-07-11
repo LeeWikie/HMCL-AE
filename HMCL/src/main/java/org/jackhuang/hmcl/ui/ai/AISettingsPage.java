@@ -1641,8 +1641,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList core = new ComponentList();
 
         // 启用联网工具（从技能 tab 的"AI 能力与行为"卡移入，语义相同）。热生效：AIMainPage 在
-        // 构造时通过 WebAccessToolsBinder 监听同一个 webAccessEnabledProperty，开关即时向
-        // ToolRegistry 注册/注销 web_search 与 web_fetch —— 不再"重启后生效"。
+        // 构造时通过 ToggleToolsBinder 监听同一个 webAccessEnabledProperty，开关即时向
+        // ToolRegistry 注册/注销 web_fetch（web_search 另受"启用搜索"开关，见下）—— 不再"重启后生效"。
         core.getContent().add(toggleRow(i18n("ai.settings.search.web_access"),
                 i18n("ai.settings.search.web_access.desc"), aiSettings.webAccessEnabledProperty()));
 
@@ -1651,6 +1651,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         enabled.setSubtitle(i18n("ai.settings.search.enable.desc"));
         enabled.setSelected(searchConfig.isEnabled());
         enabled.selectedProperty().addListener((obs, old, val) -> {
+            // 热生效：setEnabled 写入的是 AiSearchConfig 的 observable enabled，AIMainPage 把
+            // web_search 注册绑定在 webAccessEnabled AND 该 observable 上，所以这里一开/一关，
+            // 下一轮工具表即刻增删 web_search —— 不再"重启后生效"（陈旧态批 §3.4）。
             searchConfig.setEnabled(val);
             saveSearchConfig();
         });

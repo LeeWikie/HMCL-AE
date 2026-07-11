@@ -586,6 +586,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Global memory store (created in registerTools); shared with the prompt builder for auto-recall.
     private org.jackhuang.hmcl.ai.remember.RememberStore rememberStore;
 
+    /// Live enable-condition for the {@code web_search} tool: {@code webAccessEnabled AND
+    /// searchConfig.enabled}. Held as a field ONLY to keep a strong reference to the derived
+    /// binding for the page's lifetime (it is otherwise reachable only through the properties it
+    /// observes) — {@code ToggleToolsBinder} registers/unregisters web_search off its value so both
+    /// the 联网工具 and 启用搜索 toggles take effect on the next turn with no restart (陈旧态批 §3.4).
+    @SuppressWarnings("FieldCanBeLocal")
+    @Nullable
+    private javafx.beans.value.ObservableValue<Boolean> webSearchRegistrationCondition;
+
     @Nullable
     private VBox chatSettingsDrawer;
     @Nullable
@@ -871,24 +880,33 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(editTool);
         toolRegistry.register(grepTool);
         toolRegistry.register(globTool);
-        if (aiSettings.isShellToolEnabled()) {
-            toolRegistry.register(new ShellTool());
-        }
-        // 联网工具热生效：webAccessEnabled 开关即时注册/注销 web 工具（关闭后模型工具表里根本
-        // 没有、不可发现，开启立即恢复），取代旧的"启动时一次性 if + 重启才生效"。见
-        // WebAccessToolsBinder。web_fetch 只受 webAccess 控；web_search 额外要求"联网搜索已启用"
-        // ——全新安装默认 webAccess=on、searchConfig=off，若只 gate 在 webAccess 会让 web_search
-        // 出现在工具表却一调即回 "Web search is disabled"，白费一轮。仅在 searchConfig 启用时才把
-        // web_search 交给 binder，注册态遂 = webAccess && searchConfig；提示词（AiPromptBuilder）
-        // 按同一条件宣告，两者语义一致、消除幽灵工具。WebSearchTool 执行期 guard 作纵深保留。
-        java.util.List<org.jackhuang.hmcl.ai.tools.Tool> webTools = new java.util.ArrayList<>();
-        webTools.add(new WebFetchTool());
-        if (searchConfig.isEnabled()) {
-            webTools.add(new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
-        }
-        org.jackhuang.hmcl.ai.tools.WebAccessToolsBinder.bind(
-                aiSettings.webAccessEnabledProperty(), toolRegistry,
-                webTools.toArray(new org.jackhuang.hmcl.ai.tools.Tool[0]));
+        // Shell hot-toggle: register/unregister the shell tool the moment "启用 shell 工具" flips,
+        // exactly like web/NBT below — no restart. Constructed ONCE (not per toggle) so it is the
+        // same instance that goes in and out of the registry (avoids re-baking its OS/shell
+        // description, and avoids re-emitting any per-construction warning). Replaces the old
+        // "one-shot if at startup" that left a disabled shell still runnable until restart (§3.5).
+        org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                aiSettings.shellToolEnabledProperty(), toolRegistry, new ShellTool());
+        // 联网工具热生效：开关即时注册/注销 web 工具（关闭后模型工具表里根本没有、不可发现，开启
+        // 立即恢复），取代旧的"启动时一次性 if + 重启才生效"。见 ToggleToolsBinder。
+        //  • web_fetch 只受 webAccessEnabled 控。
+        //  • web_search 额外要求"启用搜索"——全新安装默认 webAccess=on、search=off，若只 gate 在
+        //    webAccess 会让 web_search 出现在工具表却一调即回 "Web search is disabled"，白费一轮。
+        // 关键根治（§3.4）：web_search 的注册条件绑定在 webAccessEnabled AND searchConfig.enabled
+        // 这个 LIVE 派生 observable 上——不再是启动时一次性读 searchConfig.isEnabled() 烤死。两个
+        // 开关任一变化都即时增删 web_search，且提示词（AiPromptBuilder）按 isToolRegistered 同源宣告，
+        // 三处（注册/提示/工具内闸）语义恒一致、消除"关搜索却说可用"的幽灵指令。搜索开关的 observable
+        // 由 AiSearchConfig 持有、设置页与此处共享同一实例（enabledProperty 在此首次创建并 seed）。
+        // WebSearchTool 执行期 config.isEnabled() guard 作纵深保留。
+        this.webSearchRegistrationCondition =
+                aiSettings.webAccessEnabledProperty().and(
+                        javafx.beans.binding.Bindings.createBooleanBinding(
+                                searchConfig::isEnabled, searchConfig.enabledProperty()));
+        org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                aiSettings.webAccessEnabledProperty(), toolRegistry, new WebFetchTool());
+        org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                this.webSearchRegistrationCondition, toolRegistry,
+                new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
         toolRegistry.register(gameContextTool);
         // Local instance/mod/world/content-management domain (merged facade — see InstanceTool).
         instanceTool = new org.jackhuang.hmcl.ui.ai.tools.InstanceTool(
@@ -912,6 +930,13 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Global memory (file-based store; remember/recall across conversations).
         rememberStore = new org.jackhuang.hmcl.ai.remember.RememberStore(
                         SettingsManager.localConfigDirectory().resolve("ai-memory"));
+        // Deliberately NOT hot-bound to memoryEnabledProperty() (unlike shell/web/NBT): the whole
+        // memory feature is product-disabled — isMemoryEnabled() force-returns false regardless of
+        // the stored property (AiSettings, "待开发"). A ToggleToolsBinder on the raw property would
+        // resurrect remember/recall whenever that hidden switch is on, bypassing the product gate.
+        // So this stays a plain gate on the force-false accessor: honestly always off until the
+        // feature is un-disabled at its single source, at which point wiring a binder here is the
+        // natural follow-up (§3.5).
         if (aiSettings.isMemoryEnabled()) {
             toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RememberTool(rememberStore));
             toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.RecallTool(rememberStore));
@@ -936,12 +961,15 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.ExportConversationTool(sessionStore));
         // Save NBT editing (read/write save & player NBT data; writes are backup-gated +
         // path-confined + atomic, and trigger the red critical confirmation via CriticalOperations).
-        // Hidden by default like global memory; see AiSettings#isNbtToolsEnabled().
-        if (aiSettings.isNbtToolsEnabled()) {
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.NbtTool());
-            // worlds_info lives on InstanceTool (its execute() re-checks isNbtToolsEnabled()
-            // itself since that one action, unlike the rest of the domain, reads NBT).
-        }
+        // Hidden by default; see AiSettings#isNbtToolsEnabled(). Hot-toggle (§3.5): bound to the
+        // live nbtToolsEnabled property so switching NBT tools OFF makes the `nbt` tool vanish from
+        // the model's list on the next turn — no restart, no "disabled but still writable NBT until
+        // restart". Constructed once; the same instance goes in/out. (worlds_info lives on
+        // InstanceTool, which re-checks isNbtToolsEnabled() live in its own execute() since that one
+        // action, unlike the rest of the domain, reads NBT.)
+        org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                aiSettings.nbtToolsEnabledProperty(), toolRegistry,
+                new org.jackhuang.hmcl.ui.ai.tools.NbtTool());
         // Wire the currently-selected Minecraft run directory into the filesystem tools.
         // Refreshed again before each send so the tools always target the selected instance.
         refreshGameContext();

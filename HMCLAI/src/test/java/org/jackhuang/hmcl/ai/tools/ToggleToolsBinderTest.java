@@ -25,10 +25,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/// Hot web-access toggle ("启用联网工具" — 立即生效, no restart): flipping the bound property
-/// must register / fully unregister the web tools in the {@link ToolRegistry}, so the model's
-/// tool list either contains them or does not — never "present but erroring".
-public final class WebAccessToolsBinderTest {
+/// Hot tool toggle (立即生效, no restart): flipping the bound property must register / fully
+/// unregister the tools in the {@link ToolRegistry}, so the model's tool list either contains them
+/// or does not — never "present but erroring". The scenarios use the web tools as a concrete
+/// example, but {@link ToggleToolsBinder} is generic — the same mechanism now also drives the
+/// shell and NBT hot toggles.
+public final class ToggleToolsBinderTest {
 
     private static final class FakeTool implements Tool {
         private final String name;
@@ -61,12 +63,12 @@ public final class WebAccessToolsBinderTest {
     public void initialStateIsAppliedAtBindTime() {
         ToolRegistry registry = new ToolRegistry();
         SimpleBooleanProperty off = new SimpleBooleanProperty(false);
-        WebAccessToolsBinder.bind(off, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
+        ToggleToolsBinder.bind(off, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
         assertTrue(names(registry).isEmpty(), "binding with the toggle OFF must not register the web tools");
 
         ToolRegistry registry2 = new ToolRegistry();
         SimpleBooleanProperty on = new SimpleBooleanProperty(true);
-        WebAccessToolsBinder.bind(on, registry2, new FakeTool("web_fetch"), new FakeTool("web_search"));
+        ToggleToolsBinder.bind(on, registry2, new FakeTool("web_fetch"), new FakeTool("web_search"));
         assertEquals(List.of("web_fetch", "web_search"), names(registry2),
                 "binding with the toggle ON must register the web tools immediately");
     }
@@ -75,7 +77,7 @@ public final class WebAccessToolsBinderTest {
     public void turningOffUnregistersEntirely_notMerelyDisables() {
         ToolRegistry registry = new ToolRegistry();
         SimpleBooleanProperty enabled = new SimpleBooleanProperty(true);
-        WebAccessToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
+        ToggleToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
         assertNotNull(registry.get("web_search"));
         assertNotNull(registry.get("web_fetch"));
 
@@ -91,7 +93,7 @@ public final class WebAccessToolsBinderTest {
     public void turningBackOnReregistersWithoutRestart() {
         ToolRegistry registry = new ToolRegistry();
         SimpleBooleanProperty enabled = new SimpleBooleanProperty(false);
-        WebAccessToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
+        ToggleToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
 
         enabled.set(true);
         assertEquals(List.of("web_fetch", "web_search"), names(registry));
@@ -108,9 +110,40 @@ public final class WebAccessToolsBinderTest {
         ToolRegistry registry = new ToolRegistry();
         registry.register(new FakeTool("read"));
         SimpleBooleanProperty enabled = new SimpleBooleanProperty(true);
-        WebAccessToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
+        ToggleToolsBinder.bind(enabled, registry, new FakeTool("web_fetch"), new FakeTool("web_search"));
 
         enabled.set(false);
         assertEquals(List.of("read"), names(registry), "unrelated tools must survive the web-access toggle");
+    }
+
+    @Test
+    public void bindsASingleTool_asTheShellAndNbtTogglesDo() {
+        ToolRegistry registry = new ToolRegistry();
+        SimpleBooleanProperty enabled = new SimpleBooleanProperty(false);
+        ToggleToolsBinder.bind(enabled, registry, new FakeTool("shell"));
+        assertNull(registry.get("shell"), "shell OFF at bind time → undiscoverable");
+
+        enabled.set(true);
+        assertNotNull(registry.get("shell"), "shell toggled ON → registered immediately, no restart");
+        enabled.set(false);
+        assertNull(registry.get("shell"), "shell toggled OFF → unregistered immediately");
+    }
+
+    @Test
+    public void bindsToADerivedCompoundObservable_webSearchNeedsBothToggles() {
+        // web_search's real enable-condition is `webAccessEnabled AND searchEnabled`; binding it to
+        // a derived observable keeps that compound condition a single LIVE source, not a boolean
+        // baked in once at startup. Either dependency going false must unregister it.
+        ToolRegistry registry = new ToolRegistry();
+        SimpleBooleanProperty webAccess = new SimpleBooleanProperty(true);
+        SimpleBooleanProperty searchEnabled = new SimpleBooleanProperty(false);
+        ToggleToolsBinder.bind(webAccess.and(searchEnabled), registry, new FakeTool("web_search"));
+        assertNull(registry.get("web_search"), "web on but search off → web_search must NOT be offered");
+
+        searchEnabled.set(true);
+        assertNotNull(registry.get("web_search"), "both on → web_search registered");
+
+        webAccess.set(false);
+        assertNull(registry.get("web_search"), "web access off → web_search gone even though search stays on");
     }
 }

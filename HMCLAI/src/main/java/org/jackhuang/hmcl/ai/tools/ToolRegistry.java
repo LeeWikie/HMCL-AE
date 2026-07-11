@@ -30,8 +30,18 @@ import java.util.concurrent.ConcurrentHashMap;
 /// with optional metadata (permission, source, enabled/disabled).
 ///
 /// Tools are registered with a unique name and can be looked up or listed.
-/// The registry is thread-safe for reads after initial registration; concurrent
-/// modifications from multiple threads require external synchronization.
+///
+/// # Thread-safety
+///
+/// Fully internally synchronized: the {@link #tools} map and {@link #disabledTools} set are only
+/// ever touched while holding {@link #lock}, and {@link #list()} / {@link #listAll()} build their
+/// result snapshot inside that lock. This matters because the two collections are mutated from the
+/// FX thread mid-turn — the {@code ToggleToolsBinder} hot tool-toggle binders
+/// register/unregister as the user flips a setting, and {@code AIMainPage.applyPlanGating}
+/// disables/enables tools right before a plan-mode turn — while the worker thread running that
+/// turn concurrently iterates {@link #list()} to build the model-visible tool list. Without this
+/// lock that race is a {@link java.util.ConcurrentModificationException} that crashes the whole
+/// turn. Callers therefore need NO external synchronization.
 ///
 /// # Metadata support
 ///
@@ -54,6 +64,11 @@ public final class ToolRegistry {
 
     private static final String MCP_PREFIX = "mcp.";
 
+    /// Guards every access to {@link #tools} and {@link #disabledTools} (see the class-level
+    /// thread-safety note). A single monitor is enough: all operations are O(small) and infrequent,
+    /// so there is no contention worth splitting into read/write locks for.
+    private final Object lock = new Object();
+
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     private final java.util.Set<String> disabledTools = new java.util.HashSet<>();
 
@@ -65,7 +80,9 @@ public final class ToolRegistry {
 
     /// Registers a tool. If a tool with the same name exists, it is replaced.
     public void register(Tool tool) {
-        tools.put(tool.getName(), tool);
+        synchronized (lock) {
+            tools.put(tool.getName(), tool);
+        }
     }
 
     /// Removes a tool from the registry entirely, so it no longer appears in {@link #list()} /
@@ -74,7 +91,9 @@ public final class ToolRegistry {
     /// hot web-access toggle: switching 联网工具 off must make web_search/web_fetch
     /// undiscoverable, not "discoverable but failing"). No-op if the name is not registered.
     public void unregister(String name) {
-        tools.remove(name);
+        synchronized (lock) {
+            tools.remove(name);
+        }
     }
 
     /// Looks up a tool by name.
@@ -88,7 +107,10 @@ public final class ToolRegistry {
     /// tool name it remembers from before the server went down.
     @Nullable
     public Tool get(String name) {
-        Tool tool = tools.get(name);
+        Tool tool;
+        synchronized (lock) {
+            tool = tools.get(name);
+        }
         if (tool != null) {
             return tool;
         }
@@ -133,7 +155,10 @@ public final class ToolRegistry {
     /// {@code LangChain4jToolAdapter#resolvePermission} for the action-aware resolution actually
     /// enforced during execution.
     public ToolPermission getPermission(String name) {
-        Tool t = tools.get(name);
+        Tool t;
+        synchronized (lock) {
+            t = tools.get(name);
+        }
         if (t instanceof ToolSpec spec) return spec.getMaxPermission();
         return ToolPermission.CONTROLLED_WRITE;
     }
@@ -141,37 +166,56 @@ public final class ToolRegistry {
     /// Returns the tool's source. Tools implementing {@link ToolSpec}
     /// declare their own; others default to {@link ToolSource#LOCAL}.
     public ToolSource getSource(String name) {
-        Tool t = tools.get(name);
+        Tool t;
+        synchronized (lock) {
+            t = tools.get(name);
+        }
         if (t instanceof ToolSpec spec) return spec.getSource();
         return ToolSource.LOCAL;
     }
 
     /// Marks a tool as disabled so it is excluded from {@link #list()}.
     public void disable(String name) {
-        disabledTools.add(name);
+        synchronized (lock) {
+            disabledTools.add(name);
+        }
     }
 
     /// Re-enables a previously disabled tool.
     public void enable(String name) {
-        disabledTools.remove(name);
+        synchronized (lock) {
+            disabledTools.remove(name);
+        }
     }
 
     /// Returns whether the named tool is currently disabled.
     public boolean isDisabled(String name) {
-        return disabledTools.contains(name);
+        synchronized (lock) {
+            return disabledTools.contains(name);
+        }
     }
 
     /// Returns all non-disabled registered tools in insertion order.
-    /// The returned list is a snapshot.
+    /// The returned list is a snapshot, built under {@link #lock} so it is a consistent view even
+    /// while another thread is registering/unregistering or (dis/en)abling tools.
     public List<Tool> list() {
-        return tools.values().stream()
-                .filter(t -> !disabledTools.contains(t.getName()))
-                .toList();
+        synchronized (lock) {
+            List<Tool> snapshot = new ArrayList<>(tools.size());
+            for (Tool t : tools.values()) {
+                if (!disabledTools.contains(t.getName())) {
+                    snapshot.add(t);
+                }
+            }
+            return List.copyOf(snapshot);
+        }
     }
 
     /// Returns all registered tools (including disabled) in insertion order.
+    /// The returned list is a snapshot, built under {@link #lock}.
     public List<Tool> listAll() {
-        return List.copyOf(new ArrayList<>(tools.values()));
+        synchronized (lock) {
+            return List.copyOf(new ArrayList<>(tools.values()));
+        }
     }
 
     /// Synthetic stand-in returned by {@link #get} for a call to an {@code mcp.<serverId>.*} tool

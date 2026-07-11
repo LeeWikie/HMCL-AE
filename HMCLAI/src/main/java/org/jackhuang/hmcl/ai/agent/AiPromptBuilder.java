@@ -73,7 +73,11 @@ public final class AiPromptBuilder {
 
     private static final String TOOLS_GUIDE = String.join("\n",
             "Tools and when to use them:",
-            "*** GOLDEN RULE: ALWAYS prefer a dedicated tool over shell. Shell is a LAST RESORT for things no tool covers. ***",
+            "*** GOLDEN RULE: ALWAYS prefer a dedicated tool over shell. Shell is an OPTIONAL, off-by-default "
+                    + "tool the user turns on in AI 设置 — you only actually have it when it is listed in your tools "
+                    + "this turn (its availability, if on, is stated in the turn context below); even then it is a "
+                    + "LAST RESORT for things no dedicated tool covers (mod enable/disable is NOT such a case — "
+                    + "see the mods/suffix rule under Conventions). ***",
             "NEVER use shell for any of these — there is a proper tool, and shell will be wrong/unsafe/fail:",
             "  • Accounts & login: use account(action=microsoft_login) (opens the native sign-in dialog), account(action=add_offline), account(action=list), account(action=select). NEVER attempt Microsoft/OAuth login, edit account files, or run auth commands via shell.",
             "  • Local instance config/content: everything is one tool, instance(action, instance, ...) — Java, mod/world/pack install-and-manage, memory/options, isolation, folders/logs. Don't run `java -version`, download/unzip, or hand-edit config via shell.",
@@ -85,7 +89,12 @@ public final class AiPromptBuilder {
             "- glob: find files by name pattern (e.g. logs/*.log). grep: search file contents by regex.",
             "- write: create a new file or completely overwrite one (auto-creates parent dirs).",
             "- edit: make a surgical change to an existing file (old_string must match exactly).",
-            "- shell: LAST RESORT only — run a host command for something genuinely not covered by any tool below (mod enable/disable is NOT such a case — see the mods/suffix rule under Conventions below).",
+            // shell is NOT listed here in the always-present static guide: it is an off-by-default,
+            // user-toggled tool that is hot-registered only while enabled (like web_search/ocr_image).
+            // Advertising it unconditionally here would promise a tool the model usually does NOT
+            // have. Its full descriptor is emitted in the volatile suffix, gated on its ACTUAL
+            // registration — see buildVolatileSuffix. The golden rule above still teaches "prefer a
+            // dedicated tool over shell" as behaviour, without implying shell is currently callable.
             "Minecraft / HMCL tools:",
             "- instance(action, instance, ...): the ONE tool for everything local to an instance — pass action to pick the operation, instance defaults to the currently selected one. Lifecycle: list, details, rename(newName), delete(DESTRUCTIVE/confirm-gated), create(gameVersion, loader[, loaderVersion, name]) makes a modded instance. Config: set_memory(maxMemoryMB), set_isolation(enable) toggles per-instance version isolation (own version folder vs. follows the global/parent preset's own directory setting — report-only if enable omitted), get_options/set_option(key, value), clean_logs(keep), open_folder. Java: list_java, download_java(gameVersion or javaVersion). Mods (id/mod come from search(action=mods) results or an already-installed file name — search is a separate tool, not an instance action): mods_list, mods_install(id, source), mods_toggle(mod, enable), mods_info(mod), mods_check_updates, mods_update(mod), mods_delete(mod, DESTRUCTIVE). Worlds: worlds_list, worlds_info(world; needs NBT tools enabled), worlds_import(zip), worlds_delete(world, DESTRUCTIVE), worlds_backup_create/worlds_backup_list/worlds_backup_restore(world[, backupId]) — versioned full-copy snapshots + retention N, restore is DESTRUCTIVE/red-confirm and auto-backs-up first, worlds_datapacks_list/worlds_datapacks_install(world, source). Local content already installed: packs_list_local, resourcepacks_install(id), resourcepacks_delete(pack, DESTRUCTIVE), shaders_install(id), shaders_delete(shader, DESTRUCTIVE), modpacks_install(id), modpacks_export.",
             "- game(action, instance): list (installed instances + whether HMCL currently has each one running — deliberately overlaps instance(action=list), that's fine), launch (start the game process, an account/download prompt may appear, returns immediately), stop (force-kill a process HMCL itself launched and is still tracking — hard kill, not a graceful quit).",
@@ -96,11 +105,12 @@ public final class AiPromptBuilder {
             "- system_info: OS/CPU/GPU/RAM for crash diagnosis. read_clipboard: read text the user copied (use when they say they pasted/copied a crash log or error). copy_to_clipboard(text): put something on their clipboard. export_conversation: save this chat to a Markdown file. prompt_library: browse reusable prompt presets.",
             "Memory (persists across conversations, file-based):",
             "- remember(title, content[, tags]): store a durable fact (user preferences, decisions, recurring setups). recall(query[, tag, limit]): retrieve them. Use recall at the start when a task may depend on remembered preferences; use remember when the user states a lasting preference.",
-            // web_search/web_fetch AND ocr_image are NOT listed in this always-present static guide:
-            // each is registered conditionally (web tools track 联网工具/联网搜索, ocr_image tracks the
-            // OCR-enabled toggle), so listing them unconditionally here would advertise ghost tools
-            // whenever they are not registered. They are documented instead in the volatile suffix,
-            // gated on their ACTUAL registration in the toolRegistry — see buildVolatileSuffix.
+            // web_search/web_fetch, ocr_image AND shell/nbt are NOT listed in this always-present
+            // static guide: each is registered conditionally (web tools track 联网工具/启用搜索,
+            // ocr_image tracks the OCR toggle, shell tracks 启用 shell 工具, nbt tracks NBT 工具),
+            // so listing them unconditionally here would advertise ghost tools whenever they are not
+            // registered. They are documented instead in the volatile suffix, gated on their ACTUAL
+            // registration in the toolRegistry — see buildVolatileSuffix.
             "Dialog:",
             "- ask: pops a structured UI dialog — reserve it for 2+ concrete single/multi-select options, or for bundling 2+ related sub-questions into ONE dialog (a free-text sub-question is fine there, alongside a structured one). For a single open-ended question or a vague/fuzzy opinion or preference with no discrete options, do NOT call this tool — just ask directly in your response text and end the turn normally (see rule 15). A '自定义/custom' choice is appended automatically to single/multi questions — do NOT add it yourself. Example: vague 'install a version then Sodium + addons' -> instance(action=list), search(action=mods), then ask {version? single [1.21.1,1.20.1]; loader? single [Fabric,Forge,NeoForge,Quilt]; which addons? multi}, then instance(action=create) + instance(action=mods_install) with the answers.",
             "Do not print whole files via shell just to show them — read and summarize in plain text.");
@@ -369,14 +379,20 @@ public final class AiPromptBuilder {
     }
 
     /// The prefix-hash-cacheable part of the prompt: persona, tool guide, conventions, tool
-    /// discipline, the domain-grouped skill tree, and static machine facts (OS/CPU/shell/memory/
-    /// JVM heap — constant for the process's whole lifetime, memoized once). This block is
-    /// IDENTICAL across every request of every session for a given app run — a prefix-hash cache
-    /// (DeepSeek and most other providers) only ever pays for it once.
+    /// discipline, the flat skill index, and static machine facts (OS/CPU/shell/memory/JVM heap —
+    /// constant for the process's whole lifetime, memoized once). Across ordinary requests and
+    /// sessions this block is byte-IDENTICAL, so a prefix-hash cache (DeepSeek and most other
+    /// providers) pays for it once and reuses it thereafter.
     ///
-    /// Nothing here may depend on settings/session/runtime state that can change between calls —
-    /// that's what {@link #buildVolatileSuffix} is for. A single byte changing here invalidates
-    /// the cache for the ENTIRE prompt that follows it, for every session, not just this one.
+    /// It is stable, not frozen: the ONE thing here that can legitimately change mid-run is the
+    /// {@link #skillTreeBlock() skill index}, which reflects the set of ENABLED skills — toggling a
+    /// skill on/off (an infrequent, explicit user action, hot-synced across instances) deliberately
+    /// re-writes this block and invalidates the cache once, until it stabilizes again. Nothing here
+    /// may depend on any OTHER settings/session/runtime state that changes between ordinary calls —
+    /// that's what {@link #buildVolatileSuffix} is for. A single byte changing here invalidates the
+    /// cache for the ENTIRE prompt that follows it, for every session, not just this one — which is
+    /// exactly why the volatile, per-turn things (tool toggles, policy, plan mode, …) live in the
+    /// suffix and not here.
     public String buildStablePrefix() {
         List<String> blocks = new ArrayList<>();
         blocks.add(PERSONA);
@@ -442,7 +458,7 @@ public final class AiPromptBuilder {
 
         // Conditionally-registered tools are documented HERE (volatile suffix), gated on their
         // ACTUAL registration in the live toolRegistry — the same registry AIMainPage populates and
-        // the WebAccessToolsBinder mutates. Driving the guide off real registration (rather than a
+        // the ToggleToolsBinder mutates. Driving the guide off real registration (rather than a
         // second copy of the enable-conditions) makes the prompt track registration by construction:
         // the model is never told about a tool it cannot call (ghost), nor left unaware of a
         // registered one. web_fetch tracks 联网工具; web_search additionally requires 联网搜索
@@ -468,6 +484,24 @@ public final class AiPromptBuilder {
             addBlankIfNonEmpty(blocks);
             blocks.add("- ocr_image(image[, instance]): READ the text inside an image — use when a crash/error "
                     + "is given as a SCREENSHOT instead of text, then diagnose from the recognized text.");
+        }
+
+        // shell / nbt are off-by-default, user-toggled tools registered only while enabled (see the
+        // static-guide comment above). State them here ONLY when actually registered, so the guide
+        // never promises a tool the model cannot call this turn (陈旧态批 §3.4/§3.5/§3.9).
+        if (isToolRegistered("shell")) {
+            addBlankIfNonEmpty(blocks);
+            blocks.add("- shell is ENABLED this turn — but it stays a LAST RESORT: run a host command ONLY for "
+                    + "something genuinely not covered by any dedicated tool (mod enable/disable is NOT such a "
+                    + "case — use instance(action=mods_toggle)). Always pass a plain-language 'description'.");
+        }
+
+        if (isToolRegistered("nbt")) {
+            addBlankIfNonEmpty(blocks);
+            blocks.add("- nbt(action, ...) is ENABLED this turn — read/edit save & player NBT data (read/get are "
+                    + "read-only; set/copy_player_data/transfer_inventory are HIGH-RISK writes that auto-backup, "
+                    + "confine paths, and trigger the red critical confirmation). Recommend a world backup and "
+                    + "closing the game before any write.");
         }
 
         // Mirror EXACTLY the constructor ChatAgentFactory uses for the policy that actually
@@ -794,7 +828,14 @@ public final class AiPromptBuilder {
                 String inst = gct.getInstanceName();
                 ctx.add("- Selected instance: " + (inst != null ? inst : "(base directory)")
                         + " | Version isolation: " + (gct.isIsolated()
-                            ? "ON — mods/saves/config live under versions/" + (inst != null ? inst : "<name>") + "/"
+                            // Isolated instances keep their own mods/saves/config directory, but its
+                            // ACTUAL location is the "Game directory" printed above — do NOT hard-assert
+                            // versions/<name>/: that is only the common case, a custom-game-dir instance
+                            // can sit elsewhere (陈旧态批 §3.9; deriving the exact layout type belongs to
+                            // the instance/GameContextTool domain — see 阶段3).
+                            ? "ON — this instance uses its OWN isolated directory for mods/saves/config; its "
+                                + "actual path is the Game directory shown above (commonly versions/"
+                                + (inst != null ? inst : "<name>") + "/, but a custom-directory instance may differ)"
                             : "OFF — follows the global/parent preset's own directory setting instead of its own "
                                 + "versions/<name>/ folder (commonly the shared base .minecraft, but whatever that "
                                 + "global default currently is — don't assume)"));

@@ -17,6 +17,9 @@
  */
 package org.jackhuang.hmcl.ai.search;
 
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.value.ObservableValue;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.NotNullByDefault;
 import com.google.gson.annotations.SerializedName;
@@ -52,6 +55,15 @@ public final class AiSearchConfig {
 
     @SerializedName("enabled")
     private boolean enabled = false;
+
+    /// Observable mirror of {@link #enabled}, created lazily the first time {@link #enabledProperty()}
+    /// is requested (seeded from the just-deserialized {@link #enabled} field). Lets the "启用搜索"
+    /// settings toggle and the chat page's web-tool registration share ONE live source of truth: the
+    /// single shared config instance's enabled state — so flipping the toggle registers/unregisters
+    /// {@code web_search} on the next turn without a restart (陈旧态批 §3.4). {@code transient} so Gson
+    /// never serializes the JavaFX property object; the persisted source of truth stays the plain
+    /// {@link #enabled} field, which {@link #setEnabled(boolean)} keeps in lock-step.
+    private transient @Nullable BooleanProperty enabledProperty;
 
     @SerializedName("maxResults")
     private int maxResults = 5;
@@ -105,8 +117,25 @@ public final class AiSearchConfig {
         setApiKey(resolveProvider(), apiKey);
     }
 
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public boolean isEnabled() {
+        return enabledProperty != null ? enabledProperty.get() : enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+        if (enabledProperty != null) enabledProperty.set(enabled);
+    }
+
+    /// Live observable of the search-enabled state (see {@link #enabledProperty}). The chat page
+    /// binds web-tool registration to this (ANDed with the web-access toggle) so the toggle takes
+    /// effect immediately; the settings toggle mutates the same property through
+    /// {@link #setEnabled(boolean)}, keeping the two in sync with no restart and no second boolean.
+    public ObservableValue<Boolean> enabledProperty() {
+        if (enabledProperty == null) {
+            enabledProperty = new SimpleBooleanProperty(this, "enabled", enabled);
+        }
+        return enabledProperty;
+    }
 
     public int getMaxResults() { return maxResults; }
     public void setMaxResults(int maxResults) { this.maxResults = maxResults; }
