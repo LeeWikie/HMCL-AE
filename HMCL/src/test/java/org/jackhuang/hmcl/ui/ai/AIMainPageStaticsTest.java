@@ -33,8 +33,10 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 ///  - item 2: {@link AIMainPage#formatTokens(int)} grew an M (百万) tier so a 1,000,000-token context
 ///    window renders as "1M" instead of the old ugly "1000.0k", with trailing zeros trimmed in both
 ///    the k and M tiers;
-///  - item 1: the pricing UI is gated OFF ({@code PRICING_UI_ENABLED == false}) in both AI pages, and
-///    the two switches stay in lockstep so a future re-enable can't half-flip.
+///  - item 1: the pricing/cost-estimation system is 归档 (archived/shelved) — a settled decision, not
+///    a temporary hide — so the pricing UI is gated OFF ({@code PRICING_UI_ENABLED == false}) in both
+///    AI pages, and the two switches stay in lockstep so a future re-enable (one-flag resurrection)
+///    can't half-flip. Underlying pricing code/data is preserved (see {@link AIMainPage#PRICING_UI_ENABLED}).
 ///
 /// The assertions only touch statics, but merely CLASS-LOADING {@link AIMainPage} needs the FX
 /// toolkit (its static init sets the platform user-agent stylesheet), so we register the primary
@@ -87,7 +89,7 @@ public final class AIMainPageStaticsTest {
     @Test
     public void pricingUiIsGatedOffAndTheTwoSwitchesAgree() {
         assertFalse(AIMainPage.PRICING_UI_ENABLED,
-                "pricing UI must stay hidden for now (2026-07-11 反馈:暂时把定价相关选项全部隐藏)");
+                "pricing system is archived/归档 — UI stays fully hidden (2026-07-11 用户决策:定价体系归档)");
         assertEquals(AIMainPage.PRICING_UI_ENABLED, AISettingsPage.PRICING_UI_ENABLED,
                 "the model-editor pricing pane switch must track the main-page pricing switch");
     }

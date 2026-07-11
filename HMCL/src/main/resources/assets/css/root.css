@@ -2676,11 +2676,16 @@
 }
 
 /* ===== Thinking-effort slider popup (v2 §3): gradient track, replaces the checkmark menu ===== */
+/* The rounded surface + elevation come from the JFXPopup container (styled to match in
+   AIMainPage.styleAiPopupContainer — surface-container-low + 12px radius + the depth-4 material
+   shadow JFXPopupSkin wraps every popup in), the SAME single elevation source the model/approval
+   popups use. This content keeps the matching background/radius so it overlaps the container
+   seamlessly during the reveal animation, but NOT its own drop-shadow (that stacked a second,
+   heavier shadow on top of the material one and made this popup look different from model/approval). */
 .ai-effort-popup {
     -fx-background-color: -monet-surface-container-low;
     -fx-background-radius: 12;
     -fx-padding: 16 18 18 18;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
 }
 
 .ai-effort-title {
@@ -2720,11 +2725,12 @@
 }
 
 /* ===== Context detail popup (v2 §5) ===== */
+/* Surface/radius/elevation as in .ai-effort-popup above: the container (styleAiPopupContainer)
+   supplies the material shadow; this keeps only the matching background + radius, no own shadow. */
 .ai-ctx-popup {
     -fx-background-color: -monet-surface-container-low;
     -fx-background-radius: 12;
     -fx-padding: 16 18 16 18;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.26), 20, 0.19, 0, 6);
 }
 
 .ai-ctx-title {

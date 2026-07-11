@@ -262,12 +262,18 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// so the active highlight can be updated without rebuilding the list.
     private static final String SESSION_ID_KEY = "ai.sessionId";
 
-    /// Master switch for ALL cost/pricing-related UI (2026-07-11 用户反馈:"暂时把定价相关选项全部隐藏").
-    /// Flip to {@code true} to restore: the model editor's 定价 collapsible pane
-    /// ({@link AISettingsPage#PRICING_UI_ENABLED} mirrors this there), the "显示成本" chat-settings
-    /// toggle, and the per-response cost suffix in the usage footer ({@link #formatUsage}). All the
-    /// underlying pricing fields/persistence stay wired up (harmless) — only the UI surfaces are
-    /// gated — so re-enabling is a one-line flip with no data loss.
+    /// Master switch for ALL cost/pricing-related UI. The pricing/cost-estimation system is
+    /// **归档 (archived/shelved)** as a settled decision (2026-07-11 用户决策:"定价体系归档,并在 UI
+    /// 完全隐藏") — NOT a temporary hide. Rationale: HMCL-AE's BYOK/极客 positioning makes cost
+    /// estimation a non-goal; per-provider pricing data is hard to keep accurate/maintained
+    /// (models.dev itself can lag), and showing possibly-stale prices risks misleading users. The UI
+    /// is fully hidden while this stays {@code false}, but the entire underlying layer is preserved so
+    /// the feature can be resurrected wholesale by flipping ONE flag — the model editor's 定价
+    /// collapsible pane ({@link AISettingsPage#PRICING_UI_ENABLED} mirrors this there), the "显示成本"
+    /// chat-settings toggle, the per-response cost suffix in the usage footer ({@link #formatUsage}),
+    /// the price fields/auto-fill/persistence, {@code estimateCost}/{@code computeCost}, and the
+    /// pricing data in model-library.json all stay wired up (harmless, gated) with no data loss.
+    /// Flip to {@code true} to restore the whole pricing UI.
     static final boolean PRICING_UI_ENABLED = false;
 
     private final VBox sessionListBox = new VBox(2);
@@ -360,6 +366,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     private JFXButton sendBtn;
     /// Reasoning-effort popup button in the composer (a field so tests can drive the menu).
     private JFXButton thinkBtn;
+    /// Refreshes {@link #thinkBtn}'s text/tooltip to the current EFFECTIVE reasoning effort
+    /// (see {@link #effectiveReasoningEffortLabel()}). Held so both the global-effort listener and the
+    /// model-selection listener can re-run it (the effective value depends on both). Assigned in
+    /// buildComposer; may be null before the composer is built.
+    private Runnable syncThinkPill;
     /// The gradient slider inside the thinking-effort popup (v2: replaces the old checkmark menu —
     /// a field so tests can drive the effort selection without pixel-hunting the popup). Built ONCE
     /// and reused across opens (see {@link #openThinkingSlider()}) so the heavy Slider skin/layout
@@ -947,9 +958,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         // Only expose ocr_image when OCR is actually enabled: the OCR settings toggle promises
         // "把 ocr_image 工具暴露给 AI", so registering it unconditionally made that toggle a lie and
         // left a ghost tool that always failed until a backend was configured.
-        if (ocrConfig.isEnabled()) {
-            toolRegistry.register(new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
-        }
+        // Hot-toggle (对称 web/shell/nbt §3.4/§3.5): bound to AiOcrConfig's live enabledProperty so
+        // flipping "启用 OCR" registers/unregisters ocr_image on the next turn — no restart (was a
+        // one-shot `if (isEnabled())` at startup, which left OCR needing a relaunch to take effect).
+        // Constructed once; the same instance goes in/out. The prompt (AiPromptBuilder) already
+        // documents ocr_image gated on isToolRegistered("ocr_image"), so it tracks this by construction.
+        org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                ocrConfig.enabledProperty(), toolRegistry,
+                new org.jackhuang.hmcl.ui.ai.tools.OcrImageTool(ocrConfig));
         // Lists the instance's screenshots/ directory (file name/size/mtime) so the model can find
         // a file name to pass to ocr_image above instead of guessing — see OcrImageTool's own
         // description ("pair with list_screenshots").
@@ -1665,6 +1681,20 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         };
     }
 
+    /// The display label for the reasoning effort actually sent for the CURRENT selection: the
+    /// per-model entry override when set, else the global default — i.e. exactly what
+    /// {@link AiSettings#resolveEffectiveModelConfig()} puts on the wire (that record normalises
+    /// {@code ""}/{@code "none"} to {@code null} = "omit the parameter"). The composer thinking pill
+    /// shows THIS so it matches the request, instead of only the global default (核验者1 标出的显示
+    /// 不一致：pill 读全局、请求走 entry 覆盖). Note this is DISPLAY only — the thinking slider still
+    /// edits the GLOBAL default (its write semantics are deliberately unchanged, 不扩权), which is the
+    /// common no-override case where effective == global; per-model overrides are set in the model
+    /// editor, and this label honestly reflects them without turning the slider into a second writer.
+    private String effectiveReasoningEffortLabel() {
+        String eff = aiSettings.resolveEffectiveModelConfig().reasoningEffort();
+        return reasoningEffortLabel(eff == null || eff.isEmpty() ? "none" : eff);
+    }
+
 
 
     private void updateHeader(AiSession session) {
@@ -2097,16 +2127,22 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         thinkBtn = new JFXButton();
         thinkBtn.getStyleClass().addAll("ai-toolbar-pill", "ai-pill-think");
         thinkBtn.setGraphic(SVG.LIGHTBULB.createIcon(14));
-        String currentThink = aiSettings.getReasoningEffort().isEmpty() ? "none" : aiSettings.getReasoningEffort();
-        thinkBtn.setText(reasoningEffortLabel(currentThink));
-        FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(currentThink)));
-        // Keep the pill text/tooltip in lockstep with the persisted effort no matter WHERE it is
-        // changed (this popup, or the settings page's "默认推理强度" row).
-        aiSettings.reasoningEffortProperty().addListener((o, ov, nv) -> {
-            String lvl = (nv == null || nv.isEmpty()) ? "none" : nv;
-            thinkBtn.setText(reasoningEffortLabel(lvl));
-            FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", reasoningEffortLabel(lvl)));
-        });
+        // Show the EFFECTIVE reasoning effort actually sent for the current selection (per-model
+        // entry override when set, else the global default) — NOT just the global value — so the pill
+        // matches what resolveEffectiveModelConfig() puts on the wire. The pill therefore depends on
+        // two live inputs: the global reasoningEffort property AND which model is selected (an entry
+        // may carry its own override). Both refresh syncThinkPill below.
+        syncThinkPill = () -> {
+            String label = effectiveReasoningEffortLabel();
+            thinkBtn.setText(label);
+            FXUtils.installFastTooltip(thinkBtn, i18n("ai.reasoning.tooltip", label));
+        };
+        syncThinkPill.run();
+        // Keep the pill text/tooltip in lockstep with the persisted global effort no matter WHERE it
+        // is changed (the thinking popup, or the settings page's "默认推理强度" row). Model-selection
+        // changes also refresh it (see the modelSelector value listener below), since a per-model
+        // override can change the effective value without the global property moving.
+        aiSettings.reasoningEffortProperty().addListener((o, ov, nv) -> syncThinkPill.run());
         thinkBtn.setOnAction(e -> openThinkingSlider());
 
         // ---- Model selector (moved down from the header; v3 — compact pill) ----
@@ -2145,7 +2181,12 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             String val = modelSelector.getValue();
             modelSelectorBtn.setText(modelPartOf(val == null ? "" : val));
         };
-        modelSelector.valueProperty().addListener((obs, old, val) -> syncModelSelectorBtnText.run());
+        modelSelector.valueProperty().addListener((obs, old, val) -> {
+            syncModelSelectorBtnText.run();
+            // The effective reasoning effort can change with the model (per-model entry override),
+            // so refresh the thinking pill whenever the selected model changes.
+            if (syncThinkPill != null) syncThinkPill.run();
+        });
         setupModelSelector();
         syncModelSelectorBtnText.run();
 
@@ -2241,13 +2282,26 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// `.jfx-popup-container` class itself must NOT change (root.css) — the other, background-less
     /// popups above would lose their only surface — so this instead blanks the background on THIS
     /// ONE popup instance's own container, reached via {@code content}'s parent (exactly the
-    /// StackPane {@code JFXPopupSkin} built around it), leaving {@code content}'s own background /
-    /// radius / drop-shadow as the sole visible surface. Must be called AFTER {@code popup.show(...)}
+    /// StackPane {@code JFXPopupSkin} built around it). Must be called AFTER {@code popup.show(...)}
     /// — the container does not exist until the popup's skin is realized.
-    private static void detachSharedPopupContainerBackground(Region content) {
+    ///
+    /// Why NOT simply blank the container to transparent (the previous approach): {@code JFXPopupSkin}
+    /// animates the reveal in TWO phases — first {@code scale.x} grows 0→1 while the content's opacity
+    /// is still 0 (so ONLY the container's background is visible during the horizontal wipe), then
+    /// {@code scale.y} grows while the content fades in. A transparent container makes the whole first
+    /// phase invisible, so the thinking/context popups looked like they "barely animated" versus the
+    /// model/approval ones (which keep their container surface). Painting the container with the SAME
+    /// rounded surface the content uses restores that first phase — the popup now expands with the
+    /// identical material reveal the model/approval popups have — AND still fixes the original
+    /// "flatter 4px container corners poking out behind the 12px content" glitch (the radii now match).
+    /// Applied to ALL FOUR composer popups so the whole anchor row shares one surface token / radius /
+    /// elevation (the depth-4 material shadow that {@link com.jfoenix.skins.JFXPopupSkin} already wraps
+    /// every container in is the single elevation source; the content's own CSS drop-shadow was
+    /// dropped so thinking/context don't render a heavier double shadow than model/approval).
+    private static void styleAiPopupContainer(Region content) {
         Node container = content.getParent();
         if (container != null) {
-            container.setStyle("-fx-background-color: transparent;");
+            container.setStyle("-fx-background-color: -monet-surface-container-low; -fx-background-radius: 12;");
         }
     }
 
@@ -2271,10 +2325,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
         JFXPopup popup = thinkingPopup;
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, popup);
-        popup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
-                0,
+        JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(thinkBtn, popup);
+        popup.show(thinkBtn, vPosition, hPosition,
+                hPosition == JFXPopup.PopupHPosition.RIGHT ? thinkBtn.getWidth() : 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
-        detachSharedPopupContainerBackground(thinkingContent);
+        styleAiPopupContainer(thinkingContent);
     }
 
     /// Builds the thinking-effort popup content ONCE (see {@link #openThinkingSlider()}): the header
@@ -2498,10 +2553,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         JFXPopup popup = new JFXPopup(content);
         contextPopup = popup;
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(contextRing, popup);
-        popup.show(contextRing, vPosition, JFXPopup.PopupHPosition.RIGHT,
-                contextRing.getWidth(),
+        JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(contextRing, popup);
+        popup.show(contextRing, vPosition, hPosition,
+                hPosition == JFXPopup.PopupHPosition.RIGHT ? contextRing.getWidth() : 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? contextRing.getHeight() : -contextRing.getHeight());
-        detachSharedPopupContainerBackground(content);
+        styleAiPopupContainer(content);
     }
 
     /// Focuses the input and pops the slash-command autocomplete, as if the user typed "/". Backs
@@ -2538,9 +2594,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             menu.getContent().add(buildModelSelectorRow(label, active, popup));
         }
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(modelSelectorBtn, popup);
-        popup.show(modelSelectorBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
-                0,
+        JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(modelSelectorBtn, popup);
+        popup.show(modelSelectorBtn, vPosition, hPosition,
+                hPosition == JFXPopup.PopupHPosition.RIGHT ? modelSelectorBtn.getWidth() : 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? modelSelectorBtn.getHeight() : -modelSelectorBtn.getHeight());
+        styleAiPopupContainer(menu);
     }
 
     /// Builds one rich two-line row for {@link #showModelSelectorPopup()}: the model name as the
@@ -2621,9 +2679,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 () -> selectApprovalMode(AiApprovalMode.YOLO), popup)
                 .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.YOLO))));
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
-        popup.show(approvalBadge, vPosition, JFXPopup.PopupHPosition.LEFT,
-                0,
+        JFXPopup.PopupHPosition hPosition = FXUtils.determineOptimalPopupHPosition(approvalBadge, popup);
+        popup.show(approvalBadge, vPosition, hPosition,
+                hPosition == JFXPopup.PopupHPosition.RIGHT ? approvalBadge.getWidth() : 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
+        styleAiPopupContainer(menu);
     }
 
     /// Builds one approval-mode row for {@link #showApprovalModePopup()}: an iconless

@@ -1667,6 +1667,83 @@ public final class FXUtils {
         }
     }
 
+    /**
+     * Horizontal mirror of {@link #determineOptimalPopupPosition(Node, JFXPopup)}: decides whether a
+     * popup should expand to the RIGHT (default) or flip and expand to the LEFT so it does not run
+     * past the window's left/right edge — the same idea a Windows context menu uses to flip up/down
+     * near a screen edge, applied here to left/right against the WINDOW (Stage) bounds because a
+     * JFXPopup has autoFix disabled and no horizontal scrollbar, so anything past the edge is simply
+     * unreachable.
+     *
+     * <p>JFXPopup's {@code PopupHPosition} is anchor-EDGE alignment, not an expansion direction:
+     * {@code LEFT} aligns the popup's left edge to the anchor and expands rightward (pass offsetX 0),
+     * while {@code RIGHT} aligns the popup's right edge to the anchor and expands leftward (pass
+     * offsetX = anchor width). Callers therefore pick the offset from the returned value, e.g.
+     * {@code hPos == RIGHT ? anchor.getWidth() : 0}.
+     *
+     * @param root          the anchor node the popup is shown from
+     * @param popupInstance the popup instance (used to measure its content width)
+     * @return the optimal horizontal position for the popup
+     */
+    public static JFXPopup.PopupHPosition determineOptimalPopupHPosition(Node root, JFXPopup popupInstance) {
+        Bounds screenBounds = root.localToScreen(root.getBoundsInLocal());
+        if (screenBounds == null) {
+            return JFXPopup.PopupHPosition.LEFT; // Fallback: default expand-right
+        }
+
+        Rectangle2D boundsRect = new Rectangle2D(
+                screenBounds.getMinX(), screenBounds.getMinY(),
+                screenBounds.getWidth(), screenBounds.getHeight()
+        );
+
+        List<Screen> screens = Screen.getScreensForRectangle(boundsRect);
+        Screen currentScreen = screens.isEmpty() ? Screen.getPrimary() : screens.get(0);
+        Rectangle2D visualBounds = currentScreen.getVisualBounds();
+
+        // 1. Start from the physical screen limits, then 2. tighten to the window (Stage) bounds so
+        //    the popup stays inside the application window (mirrors the vertical helper).
+        double clipMinX = visualBounds.getMinX();
+        double clipMaxX = visualBounds.getMaxX();
+        if (root.getScene() != null && root.getScene().getWindow() != null) {
+            javafx.stage.Window window = root.getScene().getWindow();
+            clipMinX = Math.max(clipMinX, window.getX());
+            clipMaxX = Math.min(clipMaxX, window.getX() + window.getWidth());
+        }
+
+        double itemScreenMinX = screenBounds.getMinX();
+        double itemScreenMaxX = screenBounds.getMaxX();
+
+        // Room when expanding rightward (LEFT alignment: popup left edge sits at the anchor's left
+        // edge) vs leftward (RIGHT alignment: popup right edge sits at the anchor's right edge).
+        double availableSpaceRight = clipMaxX - itemScreenMinX;
+        double availableSpaceLeft = itemScreenMaxX - clipMinX;
+
+        Region popupContent = popupInstance.getPopupContent();
+        double menuWidth;
+        if (popupContent.getWidth() <= 0) {
+            popupContent.autosize();
+            popupContent.applyCss();
+            popupContent.layout();
+            menuWidth = popupContent.getWidth();
+            if (menuWidth <= 0) {
+                menuWidth = 300; // fallback matching the composer popups' pref width
+            }
+        } else {
+            menuWidth = popupContent.getWidth();
+        }
+        menuWidth += 20; // safety margin, matching the vertical helper
+
+        // Flip to expand LEFT only when there is genuinely not enough room to the right AND either
+        // enough room to the left or at least MORE room to the left (same tie-break as the vertical
+        // helper — when neither side fits, pick the side that truncates less).
+        if (availableSpaceRight < menuWidth
+                && (availableSpaceLeft > menuWidth || availableSpaceLeft > availableSpaceRight)) {
+            return JFXPopup.PopupHPosition.RIGHT;  // not enough room right → expand leftward
+        } else {
+            return JFXPopup.PopupHPosition.LEFT;   // default → expand rightward from the anchor
+        }
+    }
+
     public static void useJFXContextMenu(TextInputControl control) {
         control.setContextMenu(null);
 

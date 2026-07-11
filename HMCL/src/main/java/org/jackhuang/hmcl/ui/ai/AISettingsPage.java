@@ -120,10 +120,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
     /// Master switch for the model editor's 定价 (pricing) collapsible pane — mirrors
-    /// {@link AIMainPage#PRICING_UI_ENABLED} (keep the two in lockstep). While {@code false} the
-    /// 定价 pane is not added to the model dialog (2026-07-11 反馈:"暂时把定价相关选项全部隐藏"); the
-    /// price fields' construction / auto-fill / save all stay wired (harmless, no data loss), so
-    /// flipping this back to {@code true} fully restores the pricing UI.
+    /// {@link AIMainPage#PRICING_UI_ENABLED} (keep the two in lockstep; see that flag for the full
+    /// 归档/archived decision rationale). While {@code false} the 定价 pane is not added to the model
+    /// dialog (2026-07-11 用户决策:定价体系归档、UI 完全隐藏——既定决策而非临时隐藏); the price fields'
+    /// construction / auto-fill / save all stay wired (harmless, no data loss), so flipping this back
+    /// to {@code true} fully restores the pricing UI.
     static final boolean PRICING_UI_ENABLED = AIMainPage.PRICING_UI_ENABLED;
 
     /// Bounded pool for the batch model-connection-test dialog: selecting many models across
