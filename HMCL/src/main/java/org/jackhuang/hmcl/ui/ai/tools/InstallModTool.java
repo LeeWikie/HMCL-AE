@@ -20,6 +20,7 @@ package org.jackhuang.hmcl.ui.ai.tools;
 import org.jackhuang.hmcl.addon.RemoteAddon;
 import org.jackhuang.hmcl.addon.RemoteAddonRepository;
 import org.jackhuang.hmcl.addon.mod.ModLoaderType;
+import org.jackhuang.hmcl.addon.mod.ModManager;
 import org.jackhuang.hmcl.addon.repository.CurseForgeRemoteAddonRepository;
 import org.jackhuang.hmcl.addon.repository.ModrinthRemoteAddonRepository;
 import org.jackhuang.hmcl.ai.tools.Tool;
@@ -31,8 +32,12 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /// A controlled-write tool that downloads a mod from Modrinth (or CurseForge)
 /// into the selected instance's `mods` directory.
@@ -83,7 +88,11 @@ public final class InstallModTool implements Tool {
                 + "gameVersion (string, optional Minecraft version like \"1.20.1\" - filters to a matching version), "
                 + "version (string, optional: a specific version name/number; otherwise the newest matching version is used), "
                 + "modsDir (string, optional: absolute path override for the destination mods folder). "
-                + "Returns the installed file name and path. This writes a new file to disk.";
+                + "Returns the installed file name and path, plus (best-effort) a note of any REQUIRED "
+                + "dependencies still missing, OPTIONAL dependencies you may also want, and INCOMPATIBLE "
+                + "mods already installed — check that note before assuming the instance will run. This "
+                + "does NOT auto-install dependencies; call install_mod again for each one reported missing. "
+                + "This writes a new file to disk.";
     }
 
     @Override
@@ -128,6 +137,11 @@ public final class InstallModTool implements Tool {
         // names — T4). `gameDirectory` is only a last resort when the profile/repository system is
         // unavailable, so a stale cache can never silently win.
         Path modsDir;
+        // Captured alongside modsDir when the target instance is resolved normally, so the
+        // dependency check below can tell which mods are already installed. Stays null on the
+        // modsDir override / fallback paths, where the dependency check simply reports every
+        // dependency (safe over-reporting, never a false "you already have it").
+        ModManager modManager = null;
         if (modsDirOverride != null) {
             modsDir = Path.of(modsDirOverride).toAbsolutePath().normalize();
         } else {
@@ -139,6 +153,7 @@ public final class InstallModTool implements Tool {
                     return resolved.failure();
                 }
                 modsDir = repo.getRunDirectory(resolved.name()).resolve("mods");
+                modManager = repo.getModManager(resolved.name());
             } catch (Throwable t) {
                 // Profile/repository unavailable (an atypical embedding): fall back to the run
                 // directory captured when this tool was last retargeted rather than failing outright.
@@ -161,12 +176,20 @@ public final class InstallModTool implements Tool {
             return ToolResult.failure("Selected version '" + selected.name() + "' has no downloadable file.");
         }
 
+        // Walkthrough P2: the model repeatedly installed a mod, then only found out it was missing
+        // a hard dependency after the instance crashed (3x in a row). Surface REQUIRED/OPTIONAL/
+        // INCOMPATIBLE dependency info up front instead of silently dropping it, so the caller can
+        // react before launching. This is a report only — it does NOT recursively install missing
+        // dependencies (that needs dedup + cycle detection + a depth cap, left for a follow-up).
+        String dependencyNotice = describeDependencies(selected, modManager);
+
         Path dest = modsDir.resolve(file.filename());
         // Only skip when a NON-EMPTY file is already there — a 0-byte / truncated leftover from a
         // failed earlier download must be re-fetched, not mistaken for a good install.
         try {
             if (Files.exists(dest) && Files.size(dest) > 0) {
-                return ToolResult.success("Mod file already present, skipping download: " + dest);
+                return ToolResult.success(withNotice(
+                        "Mod file already present, skipping download: " + dest, dependencyNotice));
             }
         } catch (java.io.IOException ignored) {
             // size unreadable — fall through and re-download to be safe
@@ -196,9 +219,97 @@ public final class InstallModTool implements Tool {
                     + selected.name() + "': " + AbstractContentSearchTool.messageOf(e));
         }
 
-        return ToolResult.success("Installed mod '" + id + "' version '" + selected.name() + "'"
+        return ToolResult.success(withNotice("Installed mod '" + id + "' version '" + selected.name() + "'"
                 + (selected.version() != null ? " (" + selected.version() + ")" : "")
-                + " into:\n  " + dest);
+                + " into:\n  " + dest, dependencyNotice));
+    }
+
+    /// Best-effort dependency report for `version`, checked against the mods already installed in
+    /// `modManager` (may be `null` if the target instance couldn't be resolved, in which case every
+    /// dependency is reported since there's nothing to compare against).
+    ///
+    /// The "already installed" match compares a dependency's repository project id/slug against the
+    /// technical mod ids ([`LocalModFile#getId`]) of the locally installed mods. These are different
+    /// namespaces in general (a project slug isn't always the mod's technical id), but they commonly
+    /// coincide (e.g. `fabric-api`, `cloth-config`) and this is only used to avoid re-nagging about a
+    /// dependency that's plainly already there — a false negative here just means it gets listed
+    /// even though it happens to already be installed, never the reverse.
+    ///
+    /// Returns `null` when there's nothing worth reporting.
+    @Nullable
+    private static String describeDependencies(RemoteAddon.Version version, @Nullable ModManager modManager) {
+        List<RemoteAddon.Dependency> dependencies = version.dependencies();
+        if (dependencies == null || dependencies.isEmpty()) {
+            return null;
+        }
+
+        Set<String> installedIds = Set.of();
+        if (modManager != null) {
+            try {
+                installedIds = modManager.getLocalFiles().stream()
+                        .map(f -> f.getId().toLowerCase(Locale.ROOT))
+                        .collect(Collectors.toSet());
+            } catch (Throwable ignored) {
+                // Best-effort only: fall back to reporting every dependency as not (yet) installed.
+            }
+        }
+
+        LinkedHashSet<String> missingRequired = new LinkedHashSet<>();
+        LinkedHashSet<String> missingOptional = new LinkedHashSet<>();
+        LinkedHashSet<String> incompatiblePresent = new LinkedHashSet<>();
+        for (RemoteAddon.Dependency dep : dependencies) {
+            String depId = dep.getId();
+            if (depId == null || depId.isBlank()) {
+                continue;
+            }
+            boolean alreadyInstalled = installedIds.contains(depId.toLowerCase(Locale.ROOT));
+            switch (dep.getType()) {
+                case REQUIRED -> {
+                    if (!alreadyInstalled) {
+                        missingRequired.add(depId);
+                    }
+                }
+                case OPTIONAL -> {
+                    if (!alreadyInstalled) {
+                        missingOptional.add(depId);
+                    }
+                }
+                case INCOMPATIBLE -> {
+                    if (alreadyInstalled) {
+                        incompatiblePresent.add(depId);
+                    }
+                }
+                default -> {
+                    // TOOL/INCLUDE/EMBEDDED/BROKEN: not actionable for the caller here, skip.
+                }
+            }
+        }
+
+        if (missingRequired.isEmpty() && missingOptional.isEmpty() && incompatiblePresent.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!missingRequired.isEmpty()) {
+            sb.append("Still needs installing (required dependencies): ")
+                    .append(String.join(", ", missingRequired)).append('\n');
+        }
+        if (!missingOptional.isEmpty()) {
+            sb.append("Optional dependencies (not required): ")
+                    .append(String.join(", ", missingOptional)).append('\n');
+        }
+        if (!incompatiblePresent.isEmpty()) {
+            sb.append("Warning: incompatible with already-installed mod(s): ")
+                    .append(String.join(", ", incompatiblePresent)).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    private static String withNotice(String message, @Nullable String notice) {
+        if (notice == null || notice.isBlank()) {
+            return message;
+        }
+        return message + "\n" + notice;
     }
 
     @Nullable
