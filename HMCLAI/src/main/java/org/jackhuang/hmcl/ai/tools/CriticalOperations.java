@@ -35,6 +35,11 @@ import java.util.regex.Pattern;
 ///   - deleting an instance
 ///   - shell commands that delete files **under a saves / backup / .minecraft critical path**
 ///     (a plain `rm tmp.txt` is NOT critical; `rm -rf .../saves/...` IS)
+///   - shell commands that **terminate the java / javaw process, or this launcher's own process
+///     (by PID or its parent's PID)** — HMCL-AE itself runs as a java process, so a blanket
+///     `taskkill /IM java.exe`, `Stop-Process -Name java`, `kill -9 &lt;self/parent pid&gt;`, etc.
+///     can kill the launcher out from under the user mid-turn (losing the rest of the ui-trace),
+///     not just the Minecraft child JVM it may have launched
 ///
 /// The normal {@link DangerousCommands} / {@link AiExecutionPolicy} layer still runs first;
 /// this is the extra gate evaluated right before execution.
@@ -76,6 +81,35 @@ public final class CriticalOperations {
     private static final Pattern CRITICAL_PATH = Pattern.compile(
             "(?i)(saves|playerdata|players[/\\\\]data|level\\.dat|\\.minecraft|"
                     + "saves-backups|backups?\\b|\\.bak\\b|world)");
+
+    /// A process-termination verb: `taskkill` (Windows), `Stop-Process`/its `spps` alias
+    /// (PowerShell), bare `kill`/`killall`/`pkill` (POSIX-style, in case a bash-style command
+    /// ever reaches the shell tool), or `wmic ... delete` (the legacy WMI process-kill idiom).
+    /// Matched only WHEN paired with {@link #JAVA_PROCESS_NAME} or a self/parent PID below —
+    /// mirrors {@link #DELETE_VERB}'s "verb + critical target" shape.
+    private static final Pattern PROCESS_KILL_VERB = Pattern.compile(
+            "(?i)\\b(taskkill|stop-process|spps|killall|pkill|kill|wmic)\\b");
+
+    /// The `java`/`javaw` process image, with or without the `.exe` suffix — this launcher's own
+    /// JVM. Deliberately NOT anchored to `.exe` only: `Stop-Process -Name java` / `pkill java`
+    /// name the process without an extension.
+    private static final Pattern JAVA_PROCESS_NAME = Pattern.compile("(?i)\\bjavaw?(?:\\.exe)?\\b");
+
+    /// This launcher's own PID — killing it (however the command spells "kill") is exactly as
+    /// catastrophic as killing it by image name, and is not caught by {@link #JAVA_PROCESS_NAME}
+    /// when the command instead targets a bare PID (e.g. `taskkill /PID 12345 /F`). Computed once;
+    /// a process's own PID is stable for its lifetime.
+    private static final long SELF_PID = ProcessHandle.current().pid();
+    private static final Pattern SELF_PID_PATTERN = Pattern.compile("(?<!\\d)" + SELF_PID + "(?!\\d)");
+
+    /// This launcher's parent process PID, or {@code null} if it has none / it could not be
+    /// determined. Guards against a command that kills the parent shell/JVM that spawned this one
+    /// (also stable for the process lifetime, so computed once).
+    @Nullable
+    private static final Long PARENT_PID = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(null);
+    @Nullable
+    private static final Pattern PARENT_PID_PATTERN =
+            PARENT_PID != null ? Pattern.compile("(?<!\\d)" + PARENT_PID + "(?!\\d)") : null;
 
     /// Returns a human-readable Chinese reason when the invocation is critical, or {@code null}
     /// when it is not (so the caller knows whether to raise the red confirmation).
@@ -148,6 +182,26 @@ public final class CriticalOperations {
             };
         }
 
+        // Shell (or any tool) whose arguments try to terminate the java/javaw process or this
+        // launcher's own process (by PID or its parent's PID). Checked BEFORE the critical-path
+        // delete check below: this is a distinct hazard (killing the launcher itself, not touching
+        // any file) and must not depend on a path pattern matching.
+        if (argumentsJson != null && !argumentsJson.isEmpty()) {
+            if (killsJavaOrSelfProcess(argumentsJson)) {
+                return "检测到该命令可能终止 java/javaw 进程或启动器自身进程（HMCL-AE 本身运行在 java 进程中，"
+                        + "杀掉它会导致启动器崩溃、当前对话内容丢失，不可恢复）。";
+            }
+            DangerousCommands.EncodedScan killEnc =
+                    DangerousCommands.scanEncodedPayloads(argumentsJson, CriticalOperations::killsJavaOrSelfProcess);
+            if (killEnc == DangerousCommands.EncodedScan.MATCH) {
+                return "检测到（base64 解码后）该命令可能终止 java/javaw 进程或启动器自身进程（不可恢复）。";
+            }
+            if (killEnc == DangerousCommands.EncodedScan.UNDECODABLE) {
+                return "检测到无法安全解码的编码命令（如 PowerShell -EncodedCommand），可能隐藏终止 java/javaw "
+                        + "或启动器自身进程的操作，已按高危处理。";
+            }
+        }
+
         // Shell (or any tool) whose arguments delete files under a critical path.
         if (argumentsJson != null && !argumentsJson.isEmpty()) {
             if (deletesCriticalPath(argumentsJson)) {
@@ -211,6 +265,34 @@ public final class CriticalOperations {
     private static boolean deletesCriticalPathRaw(String text) {
         boolean verbLikely = DELETE_VERB.matcher(text).find() || DangerousCommands.hasIndirectInvocation(text);
         return verbLikely && CRITICAL_PATH.matcher(text).find();
+    }
+
+    /// True when {@code text} both (a) contains a process-termination verb (or an indirect
+    /// invocation construct we cannot rule out as assembling one — same fail-closed stance as
+    /// {@link #deletesCriticalPathRaw}) and (b) targets either the java/javaw process by name, or
+    /// this launcher's own PID / its parent's PID by number — the condition for a critical
+    /// self-kill. Mirrors {@link #deletesCriticalPath}'s raw-then-obfuscation-normalized retry so
+    /// mid-word verb splitting / `$IFS` substitution cannot evade this check either.
+    private static boolean killsJavaOrSelfProcess(String text) {
+        if (killsJavaOrSelfProcessRaw(text)) {
+            return true;
+        }
+        String normalized = DangerousCommands.normalizeObfuscation(text);
+        return !normalized.equals(text) && killsJavaOrSelfProcessRaw(normalized);
+    }
+
+    private static boolean killsJavaOrSelfProcessRaw(String text) {
+        boolean verbLikely = PROCESS_KILL_VERB.matcher(text).find() || DangerousCommands.hasIndirectInvocation(text);
+        if (!verbLikely) {
+            return false;
+        }
+        if (JAVA_PROCESS_NAME.matcher(text).find()) {
+            return true;
+        }
+        if (SELF_PID_PATTERN.matcher(text).find()) {
+            return true;
+        }
+        return PARENT_PID_PATTERN != null && PARENT_PID_PATTERN.matcher(text).find();
     }
 
     /// Convenience boolean form.
