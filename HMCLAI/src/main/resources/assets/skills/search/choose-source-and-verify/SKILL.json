@@ -1,6 +1,6 @@
 {
   "name": "choose-source-and-verify",
-  "description": "How to search mods/resourcepacks/shaders/modpacks/worlds and get real Minecraft version strings instead of guessing. Use before installing anything or naming a version/mod, and whenever a search comes back empty (\"搜模组\",\"找资源包\",\"搜光影\",\"搜整合包\",\"支持哪些版本\").",
+  "description": "Searches mods/resourcepacks/shaders/modpacks/worlds and pulls the real, live game_versions list instead of guessing. A pre-step that only finds and confirms — it never installs anything or fixes downloads. Use before installing or naming any version/mod, and whenever a search comes back empty (\"搜模组\",\"搜光影\",\"搜整合包\",\"支持哪些版本\",\"真实版本\").",
   "version": "1.0",
   "triggers": [
     "搜索模组",

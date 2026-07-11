@@ -1,6 +1,6 @@
 {
   "name": "java-and-memory",
-  "description": "How to fix Java-version and memory problems — wrong Java for the Minecraft version, downloading the right runtime, setting instance memory, OutOfMemory crashes. Use when the user mentions Java or memory (\"java不对\",\"内存\",\"爆内存\",\"OutOfMemory\").",
+  "description": "Routing for the two post-mods \"won't even start\" causes: wrong Java version vs memory/OOM. Decides which of the two it is and fixes that cause — it does not read logs itself. Use when the user names Java or memory (\"java不对\",\"内存\",\"爆内存\",\"OutOfMemory\"): wrong/missing runtime + download → java-runtime, heap + OutOfMemory response → set-memory; if the cause is unknown, diagnose-crash reads the log first.",
   "version": "1.0",
   "triggers": [
     "java",

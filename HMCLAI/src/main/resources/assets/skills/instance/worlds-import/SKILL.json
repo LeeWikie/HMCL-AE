@@ -1,6 +1,6 @@
 {
   "name": "worlds-import",
-  "description": "How to import a downloaded world/map zip into an instance and diagnose a \"missing\" world. Use when the user has a save zip to add or thinks a world disappeared (\"导入地图\",\"导入存档\",\"存档丢了\",\"地图没了\",\"import world\").",
+  "description": "Imports a downloaded world/map zip into an instance's saves, and debugs a world that seems gone — usually the wrong-instance illusion, not real loss. Use when the user has a save zip to add or thinks a world disappeared (\"导入地图\",\"导入存档\",\"存档丢了\",\"地图没了\",\"import world\"); snapshot/rollback of an existing save is worlds-backup.",
   "version": "1.0",
   "triggers": [
     "导入地图",

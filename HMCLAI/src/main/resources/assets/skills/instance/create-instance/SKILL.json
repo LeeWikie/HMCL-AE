@@ -1,6 +1,6 @@
 {
   "name": "create-instance",
-  "description": "Create a new Minecraft instance with a mod loader via instance(action=create, gameVersion, loader, ...). Use when the user wants to install/set up a new version or modded instance (\"装个版本\",\"新建版本\",\"装Fabric\",\"Forge\",\"NeoForge\",\"Quilt\").",
+  "description": "Creates just ONE new empty instance — pick the game version + mod loader and stop there, no mods added. The single instance(action=create) step that install-and-mod calls first. Use when the user wants a fresh version or empty modded instance set up, not a full modded build-out (\"装个版本\",\"新建版本\",\"新建实例\",\"装Fabric\",\"Forge\").",
   "version": "1.0",
   "triggers": [
     "装个版本",

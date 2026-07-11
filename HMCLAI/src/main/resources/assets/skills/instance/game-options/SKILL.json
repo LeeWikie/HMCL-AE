@@ -1,6 +1,6 @@
 {
   "name": "game-options",
-  "description": "How to read and change in-game settings (options.txt) via instance tools, including performance-relevant keys like render distance and VSync. Use when the user asks to check or change game settings, or wants tuning tips for render distance/graphics (\"渲染距离\",\"垂直同步\",\"画质\",\"游戏设置\",\"选项\").",
+  "description": "Reads and changes in-game settings in options.txt (render distance, VSync, graphics) — the game's own options, not launcher config or JVM heap. Use when the user wants to check or tune graphics/gameplay settings (\"渲染距离\",\"垂直同步\",\"画质\",\"游戏设置\",\"选项\"); launcher window/Java path is config-hmcl, heap size is set-memory.",
   "version": "1.0",
   "triggers": [
     "渲染距离",

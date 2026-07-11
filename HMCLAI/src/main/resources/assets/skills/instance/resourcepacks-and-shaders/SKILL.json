@@ -1,6 +1,6 @@
 {
   "name": "resourcepacks-and-shaders",
-  "description": "How to install resource packs and shaders correctly — pick packs matching the game version, ensure the shader loader (Iris/OptiFine) exists before installing a shader pack — use when the user mentions shaders, resource packs or textures (\"光影\",\"材质包\",\"资源包\").",
+  "description": "Runs the actual install/delete tool calls for resource packs and shaders on an instance, and enforces that a shader-loader (Iris/Oculus) exists before any shader pack. Use when the user wants to install, delete, or wire up shaders/resource packs (\"光影\",\"材质包\",\"资源包\",\"shader\",\"iris\"); making them actually show up / where to enable them is the scenario skill resourcepack-and-shader-setup.",
   "version": "1.0",
   "triggers": [
     "光影",

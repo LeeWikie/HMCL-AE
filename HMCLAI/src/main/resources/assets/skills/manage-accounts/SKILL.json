@@ -1,6 +1,6 @@
 {
   "name": "manage-accounts",
-  "description": "How to log in, add, or switch Minecraft accounts (Microsoft / offline), and change account skins/capes. Use when the user wants to log in, sign in, add or change account, or change skin, \"登录\",\"账号\",\"换号\",\"微软登录\",\"离线账号\",\"正版登录\",\"皮肤\",\"披风\".",
+  "description": "Routing plus the Microsoft-vs-offline account-type decision. Judges which login type the user actually needs (online-mode servers, Realms, and real skins require Microsoft; offline cannot), then dispatches the work. Use when the user wants to sign in, add or switch accounts, or change a skin/cape (\"登录\",\"账号\",\"换号\",\"微软登录\",\"离线账号\",\"正版\",\"皮肤\",\"披风\"); the concrete login/add/switch calls live in login-and-switch, skin/cape/model in set-skin.",
   "version": "1.1",
   "triggers": [
     "登录",

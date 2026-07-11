@@ -1,6 +1,6 @@
 {
   "name": "java-runtime",
-  "description": "How to diagnose and fix a Java-version mismatch between what a Minecraft version needs and what's installed, including downloading the right runtime. Use when the user mentions Java/JDK/JRE problems or the game fails to start with a Java-version error (\"java不对\",\"java版本\",\"装java\",\"UnsupportedClassVersionError\").",
+  "description": "Matches the Java a Minecraft version needs against what's installed and downloads the right runtime on mismatch — the Java half, not heap size. Use when the game fails to start on a Java-version error or the user asks about Java/JDK/JRE (\"java不对\",\"java版本\",\"装java\",\"UnsupportedClassVersionError\"); memory allocation is set-memory.",
   "version": "1.0",
   "triggers": [
     "java",

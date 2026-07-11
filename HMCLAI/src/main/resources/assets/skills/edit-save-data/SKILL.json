@@ -1,6 +1,6 @@
 {
   "name": "edit-save-data",
-  "description": "Orchestrates safe world/player NBT edits (inventory, position, gamemode, moving player data, offline UUIDs) by routing to the edit-values and transfer-player-data skills. Use when the user wants to change save data (\"改存档\",\"背包\",\"传送\",\"坐标\",\"游戏模式\",\"玩家数据\").",
+  "description": "Routing for precise NBT edits to an existing save — change a value vs move a player's data. Distinct from backing up or importing whole world files; this reaches inside the save. Use when the user wants to edit save internals — inventory, position, gamemode, custom tags, or a player's data/offline UUID (\"改存档\",\"背包\",\"传送\",\"坐标\",\"游戏模式\",\"玩家数据\"); one NBT value → edit-values, transferring a player's profile/inventory → transfer-player-data.",
   "version": "1.0",
   "triggers": [
     "改存档",

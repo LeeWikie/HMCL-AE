@@ -1,6 +1,6 @@
 {
   "name": "login-and-switch",
-  "description": "How to log in with Microsoft, add an offline account, switch the active account, or check who's logged in. Use when the user wants to log in, sign in, add or change account (\"登录\",\"账号\",\"换号\",\"微软登录\",\"离线账号\",\"正版登录\").",
+  "description": "Runs the concrete account() calls — Microsoft login, add offline, switch active, or list who's logged in. The operation manage-accounts routes to, without the online-vs-offline decision itself. Use when the user actually wants to log in, add or switch accounts, or check the active one (\"登录\",\"换号\",\"微软登录\",\"离线账号\",\"正版登录\"); changing a skin/cape is set-skin.",
   "version": "1.0",
   "triggers": [
     "登录",

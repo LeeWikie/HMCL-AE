@@ -1,6 +1,6 @@
 {
   "name": "modpacks-install",
-  "description": "How to find and install a modpack as its own instance, and how to update one later — use when the user wants to install, play, or upgrade a modpack (\"整合包\",\"装整合\",\"modpack\",\"mrpack\").",
+  "description": "Installs a whole modpack as its own brand-new isolated instance, and updates it by whole-pack swap — a complete pack, never individual mods. Use when the user wants to install, play, or upgrade a full modpack (\"整合包\",\"装整合\",\"modpack\",\"mrpack\",\"curseforge包\"); adding individual mods to an existing instance is mods-install.",
   "version": "1.0",
   "triggers": [
     "整合包",

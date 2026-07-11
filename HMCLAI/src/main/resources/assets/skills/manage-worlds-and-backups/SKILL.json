@@ -1,6 +1,6 @@
 {
   "name": "manage-worlds-and-backups",
-  "description": "How to manage singleplayer worlds — back up, restore, import maps, and recover from mistakes. Use when the user mentions saves, backups, restoring, or importing a downloaded map (\"存档\",\"备份\",\"恢复\",\"回档\",\"导入地图\").",
+  "description": "Routing and judgment for singleplayer saves — which world to act on, and whether a \"lost\" one is really lost. Diagnoses a \"missing\" save (usually the wrong instance under version isolation, not real data loss), then delegates the file work. Use when the user mentions saves, backups, or a broken/missing world (\"存档\",\"备份\",\"回档\",\"恢复\",\"导入地图\",\"存档丢了\"); snapshot + rollback lives in worlds-backup, importing a map zip in worlds-import.",
   "version": "1.0",
   "triggers": [
     "存档",

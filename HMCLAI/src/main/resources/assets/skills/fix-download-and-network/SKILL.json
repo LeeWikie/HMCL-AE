@@ -1,6 +1,6 @@
 {
   "name": "fix-download-and-network",
-  "description": "How to fix download and network problems — slow/failed downloads, stuck progress, mirror/source switching, proxy issues. Use when the user says downloads fail or hang (\"下载失败\",\"下载慢\",\"下不动\",\"换源\",\"网络错误\").",
+  "description": "Pinpoints where a download breaks — source, network, proxy, or disk — before the game ever runs. Routes to the fix; most failures are source/reachability, not real bugs. Use when downloads fail, hang, or stall (\"下载失败\",\"下载慢\",\"下不动\",\"换源\",\"网络错误\",\"超时\"); switching mirror/source → choose-source-and-verify — distinct from content that downloaded fine but then crashes at runtime (diagnose-crash).",
   "version": "1.0",
   "triggers": [
     "下载失败",

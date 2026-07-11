@@ -1,6 +1,6 @@
 {
   "name": "config-hmcl-ae",
-  "description": "How to configure HMCL-AE itself — add model providers/models, MCP servers, skills, and web search by editing the AE JSON config files. Use whenever the user asks to configure the AI assistant, add a model/provider, set up an MCP server (e.g. \"configure tavily-mcp\"), install a skill/skill-store (e.g. \"install SkillHub, CLI only\"), or enable web search.",
+  "description": "Configures the AI assistant itself — model providers/models, MCP servers, skills, and web search. Edits HMCL-AE's own JSON config files, not the game launcher. Use when the user wants to set up the AI: add a model/provider, configure an MCP server, install a skill, or enable web search (\"配置ai\",\"ai设置\",\"添加模型\",\"mcp\",\"装技能\",\"联网搜索\"); native launcher settings are config-hmcl.",
   "version": "1.3",
   "triggers": [
     "配置ai",

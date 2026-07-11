@@ -1,6 +1,6 @@
 {
   "name": "multiplayer-and-servers",
-  "description": "How to help the user play with friends — join a server, reason about why a server seems unreachable, set up LAN play, and match version/mods with the server. Use when the user mentions multiplayer, joining a server, LAN, or playing with friends (\"联机\",\"进服\",\"服务器\",\"局域网\",\"一起玩\").",
+  "description": "Helping the user play with friends — join a server, diagnose an unreachable one, match versions, or set up LAN. There is no ping tool, so unreachability is inferred from what the user reports. Use when the user mentions multiplayer, joining a server, whitelist, or LAN (\"联机\",\"进服\",\"服务器\",\"局域网\",\"白名单\",\"一起玩\"); version mismatch → create-instance, a modded server → mods-install/modpacks-install, online-mode (\"正版验证\") → a Microsoft login.",
   "version": "1.0",
   "triggers": [
     "联机",

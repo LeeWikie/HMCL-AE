@@ -1,6 +1,6 @@
 {
   "name": "set-isolation",
-  "description": "Explain and toggle Minecraft instance version isolation via instance(action=set_isolation, enable). Use when the user asks about shared vs. isolated mods/saves, or wants isolation turned on/off (\"版本隔离\",\"独立mod\",\"共享mod\",\"隔离设置\").",
+  "description": "Explains and flips one instance's version isolation on/off — whether its mods/saves/config live in its own versions/<name>/ or the shared .minecraft. Use when the user asks about shared vs isolated mods/saves or wants isolation toggled (\"版本隔离\",\"独立mod\",\"共享mod\",\"隔离设置\").",
   "version": "1.0",
   "triggers": [
     "版本隔离",

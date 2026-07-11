@@ -1,6 +1,6 @@
 {
   "name": "edit-values",
-  "description": "Read and write world/player NBT values (gamemode, position, custom tags) through the hidden nbt tool domain, with mandatory overview-backup-verify steps (\"改存档\",\"改坐标\",\"传送\",\"游戏模式\",\"改模式\",\"nbt\",\"改数据\").",
+  "description": "Reads and writes individual world/player NBT values — gamemode, position, a custom tag — through the hidden nbt tool, always overview→backup→get→set→verify. Use when the user wants to change one save value in place (\"改坐标\",\"改模式\",\"游戏模式\",\"改数据\",\"nbt\"); moving a whole player's data or computing UUIDs is transfer-player-data.",
   "version": "1.0",
   "triggers": [
     "改存档",

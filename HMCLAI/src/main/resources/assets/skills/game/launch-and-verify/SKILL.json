@@ -1,6 +1,6 @@
 {
   "name": "launch-and-verify",
-  "description": "How to launch a game instance, check what's currently running, force-stop a stuck process, and verify a fix actually worked. Use whenever the user wants to start/stop the game or you need to confirm a change fixed something (\"启动游戏\",\"打开游戏\",\"运行一下\",\"强制关闭\",\"卡住了强退\").",
+  "description": "Runs the game(action=launch/list/stop) calls — start an instance, list what's running, or force-kill a hang — plus the verify-a-fix loop. A launch only proves the process started, not that the game works. Use when the user wants to start or stop the game, kill a hang, or confirm a fix actually took (\"启动游戏\",\"运行一下\",\"强制关闭\",\"卡住了强退\",\"看看好了没\").",
   "version": "1.0",
   "triggers": [
     "启动游戏",

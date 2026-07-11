@@ -1,6 +1,6 @@
 {
   "name": "optimize-performance",
-  "description": "How to make Minecraft run smoother — raise FPS, cut lag/stutter, set memory and install performance mods. Use when the user complains about lag, low FPS, stutter, freezing, or \"卡\",\"掉帧\",\"优化\",\"提升性能\",\"太卡了\".",
+  "description": "End-to-end FPS orchestration for a game that runs but stutters — not a crash. Applies the Fabric performance stack + memory + in-game options + verify to an instance that already launches. Use when the user complains of lag, low FPS, stutter, or freezing (\"卡\",\"掉帧\",\"优化\",\"提升性能\",\"太卡了\"); coordinates create-instance/set-memory/mods-install/game-options/launch-and-verify — if the game instead crashes or won't start, that is diagnose-crash.",
   "version": "1.1",
   "triggers": [
     "卡顿",

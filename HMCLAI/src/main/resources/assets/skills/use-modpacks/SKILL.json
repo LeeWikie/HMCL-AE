@@ -1,6 +1,6 @@
 {
   "name": "use-modpacks",
-  "description": "Orchestration index for installing, exporting and updating modpacks. Use when the user mentions modpacks (\"整合包\",\"装整合\",\"modpack\",\"mrpack\").",
+  "description": "Routing index for whole-modpack workflows — install, export, or update a pack. Decides which modpack action the user needs (always a whole pack as its own instance, never individual mods) and delegates the mechanics: install → modpacks-install, share as .mrpack → modpacks-export, update → reinstall as a fresh instance. Use when the user mentions a modpack (\"整合包\",\"装整合\",\"modpack\",\"mrpack\"); adding individual mods instead is mods-install / install-and-mod.",
   "version": "1.0",
   "triggers": [
     "整合包",

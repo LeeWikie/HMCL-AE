@@ -1,6 +1,6 @@
 {
   "name": "resourcepack-and-shader-setup",
-  "description": "How to get resource packs and shaders actually showing up in-game — match the loader chain for shaders, then point the user to the right in-game menu. Use when the user mentions shaders, resource packs or textures (\"光影\",\"材质包\",\"资源包\").",
+  "description": "Getting resource packs and shaders to actually show up in-game — the loader-chain check and which menu enables them. This is the outcome/where-to-enable side, not the install tooling. Use when the user wants shaders/packs to appear or asks where to turn them on (\"光影\",\"材质包\",\"资源包\",\"iris\",\"怎么开光影\"); the actual search/install/delete tool calls and the loader prerequisite live in the operation skill resourcepacks-and-shaders.",
   "version": "1.0",
   "triggers": [
     "光影",

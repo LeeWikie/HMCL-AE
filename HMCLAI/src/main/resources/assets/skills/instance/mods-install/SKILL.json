@@ -1,6 +1,6 @@
 {
   "name": "mods-install",
-  "description": "How to search for and install mods correctly, respecting loader compatibility and version isolation. Use when the user wants to add/install mods or asks for mod recommendations (\"装模组\",\"加mod\",\"装mod\",\"推荐模组\").",
+  "description": "Searches and installs individual mods into an EXISTING instance, passing the resolved loader + gameVersion so a Fabric build never lands on a Forge one. Use when the user wants to add mods to an instance they already have, or asks for mod recommendations (\"装模组\",\"加mod\",\"推荐模组\",\"fabric mod\"); a whole prebuilt pack is modpacks-install, building the instance from scratch is install-and-mod.",
   "version": "1.0",
   "triggers": [
     "装模组",

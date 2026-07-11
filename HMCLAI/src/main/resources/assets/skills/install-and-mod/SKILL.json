@@ -1,6 +1,6 @@
 {
   "name": "install-and-mod",
-  "description": "How to install a Minecraft version with a mod loader and add mods correctly, respecting version isolation. Use when the user wants to install/create a new version, set up Forge/Fabric/NeoForge/Quilt, or add mods (\"装个版本\",\"装模组\",\"加mod\",\"Fabric\",\"Forge\").",
+  "description": "End-to-end orchestration of a from-scratch modded setup, run to a verified instance. Coordinates the whole journey — pick a real MC version + loader, create the instance, check isolation, install mods/packs, then verify the files landed — not any single step. Use when the user wants a new modded setup built for them (\"装个版本\",\"装模组\",\"加mod\",\"Fabric\",\"Forge\",\"NeoForge\"); creating only the empty instance is create-instance, dropping mods into an existing instance is mods-install, a prebuilt pack is use-modpacks.",
   "version": "1.2",
   "triggers": [
     "装个版本",

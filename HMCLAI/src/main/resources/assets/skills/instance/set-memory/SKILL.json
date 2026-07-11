@@ -1,6 +1,6 @@
 {
   "name": "set-memory",
-  "description": "How to set per-instance memory allocation with sane defaults by pack weight, and how to respond to an OutOfMemory crash without just cranking the number forever. Use when the user asks about memory/RAM allocation or reports an OutOfMemory crash (\"内存不足\",\"爆内存\",\"OutOfMemory\",\"分配内存\",\"改内存\").",
+  "description": "Sets an instance's JVM heap (maxMemoryMB) with sane defaults by pack weight, and answers OutOfMemory by stepping up one notch, not cranking to the max. Use when the user asks about RAM/memory allocation or reports an OutOfMemory crash (\"内存不足\",\"爆内存\",\"OutOfMemory\",\"分配内存\",\"改内存\"); the Java version itself is java-runtime.",
   "version": "1.0",
   "triggers": [
     "内存",

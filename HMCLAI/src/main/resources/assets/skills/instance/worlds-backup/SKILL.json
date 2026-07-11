@@ -1,6 +1,6 @@
 {
   "name": "worlds-backup",
-  "description": "How to snapshot a singleplayer world before risky changes and roll it back safely. Use when the user wants to back up or restore a save (\"备份存档\",\"回档\",\"恢复存档\",\"world backup\",\"restore world\").",
+  "description": "Snapshots a singleplayer world before a risky edit and rolls it back safely — the create/list/restore backup action, not importing a world. Use when the user wants to back up a save or restore a previous snapshot (\"备份存档\",\"回档\",\"恢复存档\",\"world backup\",\"restore world\"); adding a downloaded map is worlds-import.",
   "version": "1.0",
   "triggers": [
     "存档",

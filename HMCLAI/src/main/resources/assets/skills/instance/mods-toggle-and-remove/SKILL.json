@@ -1,6 +1,6 @@
 {
   "name": "mods-toggle-and-remove",
-  "description": "How to enable/disable, remove, or update an installed mod without hand-editing files — including isolating a crash-causing mod. Use when the user wants a mod toggled, deleted, or updated, or asks whether a specific mod is causing a crash (\"禁用模组\",\"删除模组\",\"更新模组\",\"是不是这个mod导致崩溃\").",
+  "description": "Enables/disables, deletes, or updates mods that are ALREADY installed — no hand-renaming any .jar — including toggling off a crash-causing one. Use when the user wants a mod turned off, removed, or updated, or asks whether one mod is causing a crash (\"禁用模组\",\"删除模组\",\"更新模组\",\"是不是这个mod导致崩溃\"); finding and adding new mods is mods-install.",
   "version": "1.0",
   "triggers": [
     "禁用模组",

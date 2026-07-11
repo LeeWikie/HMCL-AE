@@ -1,6 +1,6 @@
 {
   "name": "transfer-player-data",
-  "description": "Compute offline-mode UUIDs and move a player's save data (full profile or inventory-only) between usernames/slots after a name or account change (\"换电脑\",\"换用户名\",\"背包转移\",\"搬背包\",\"离线uuid\",\"数据丢了\").",
+  "description": "Computes offline-mode UUIDs and moves a whole player's save data — full profile or inventory-only — between usernames or slots after a name/account change. Use when a \"换账号后存档丢了\" is really a username→UUID shift, or to migrate a player between names (\"换用户名\",\"搬背包\",\"离线uuid\",\"数据丢了\",\"换电脑\"); editing a single value in place is edit-values.",
   "version": "1.0",
   "triggers": [
     "换电脑",
