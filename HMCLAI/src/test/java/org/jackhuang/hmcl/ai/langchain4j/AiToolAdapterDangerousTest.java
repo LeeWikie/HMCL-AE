@@ -30,6 +30,7 @@ import org.jackhuang.hmcl.ai.tools.ToolSource;
 import org.jackhuang.hmcl.ai.tools.ToolSpec;
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -143,7 +144,7 @@ public final class AiToolAdapterDangerousTest {
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), autoPolicy(), deny, deny);
 
         ToolExecutionResultMessage result = adapter.execute(shellReq("dd if=/dev/zero of=/dev/sda"));
-        assertTrue(result.text().toLowerCase().contains("declined"),
+        assertTrue(result.text().toLowerCase(Locale.ROOT).contains("declined"),
                 "a declined dangerous command must not run: " + result.text());
     }
 
@@ -207,7 +208,7 @@ public final class AiToolAdapterDangerousTest {
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithMcpTool(), autoPolicy(), deny, deny);
 
         ToolExecutionResultMessage result = adapter.execute(mcpReq());
-        assertTrue(result.text().toLowerCase().contains("declined"),
+        assertTrue(result.text().toLowerCase(Locale.ROOT).contains("declined"),
                 "a declined MCP tool call must not run: " + result.text());
     }
 
@@ -319,7 +320,7 @@ public final class AiToolAdapterDangerousTest {
         LangChain4jToolAdapter adapter = new LangChain4jToolAdapter(registryWithShell(), autoPolicy(), deny, deny);
 
         ToolExecutionResultMessage result = adapter.execute(downloadIntoModsReq());
-        assertTrue(result.text().toLowerCase().contains("declined"),
+        assertTrue(result.text().toLowerCase(Locale.ROOT).contains("declined"),
                 "a declined overlapping download must not run: " + result.text());
     }
 

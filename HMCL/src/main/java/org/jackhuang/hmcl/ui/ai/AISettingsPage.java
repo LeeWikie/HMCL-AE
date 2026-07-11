@@ -106,6 +106,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -954,9 +955,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
     /// Shows/hides loaded model rows based on the search query (case-insensitive).
     private static void applyLoadFilter(String query, List<LoadRow> rows) {
-        String q = query == null ? "" : query.trim().toLowerCase();
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         for (LoadRow r : rows) {
-            boolean visible = q.isEmpty() || r.modelId.toLowerCase().contains(q);
+            boolean visible = q.isEmpty() || r.modelId.toLowerCase(Locale.ROOT).contains(q);
             r.node.setVisible(visible);
             r.node.setManaged(visible);
         }
@@ -991,9 +992,9 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         search.setPromptText(i18n("ai.settings.model.search_hint"));
         HBox.setHgrow(search, javafx.scene.layout.Priority.ALWAYS);
         search.textProperty().addListener((o, ov, nv) -> {
-            String q = nv == null ? "" : nv.trim().toLowerCase();
+            String q = nv == null ? "" : nv.trim().toLowerCase(Locale.ROOT);
             for (TestRow r : rows) {
-                boolean vis = q.isEmpty() || r.modelId.toLowerCase().contains(q);
+                boolean vis = q.isEmpty() || r.modelId.toLowerCase(Locale.ROOT).contains(q);
                 r.node.setVisible(vis);
                 r.node.setManaged(vis);
             }
@@ -1630,7 +1631,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         provider.setSubtitle(i18n("ai.settings.search.provider.desc"));
         provider.setItems(List.of(SearchProvider.TAVILY, SearchProvider.SEARXNG, SearchProvider.BOCHA, SearchProvider.ZHIPU));
         provider.setNullSafeConverter(SearchProvider::getDisplayName);
-        SearchProvider current = SearchProvider.fromId(searchConfig.getProvider().toUpperCase());
+        SearchProvider current = SearchProvider.fromId(searchConfig.getProvider().toUpperCase(Locale.ROOT));
         provider.setValue(current != null ? current : SearchProvider.TAVILY);
         core.getContent().add(provider);
 
@@ -1650,7 +1651,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // （见 AiSearchConfig），所以这里还要把输入框重新绑定/回填成当前服务商的 key，否则会显示上一个服务商的 key。
         provider.valueProperty().addListener((obs, old, val) -> {
             if (val != null) {
-                searchConfig.setProvider(val.name().toLowerCase());
+                searchConfig.setProvider(val.name().toLowerCase(Locale.ROOT));
                 if (!val.getDefaultEndpoint().isEmpty()) searchConfig.setEndpoint(val.getDefaultEndpoint());
                 saveSearchConfig();
                 searchKeyField.setText(searchConfig.getApiKey());
@@ -1980,7 +1981,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         java.io.File chosen = fc.showSaveDialog(Controllers.getStage());
         if (chosen == null) return;
         Path target = chosen.toPath();
-        String lower = chosen.getName().toLowerCase();
+        String lower = chosen.getName().toLowerCase(Locale.ROOT);
         String fmt = lower.endsWith(".json") ? "json" : lower.endsWith(".txt") ? "txt" : "md";
         // Read + format + write OFF the FX thread (a big history froze the UI), and catch
         // EVERYTHING: a corrupt store file throws JsonParseException/NPE, not just IOException —

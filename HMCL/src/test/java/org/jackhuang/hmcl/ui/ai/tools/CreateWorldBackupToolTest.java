@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -42,7 +43,7 @@ public final class CreateWorldBackupToolTest {
     void reportsCorrectMetadata() {
         CreateWorldBackupTool tool = new CreateWorldBackupTool(() -> 5);
         assertEquals("create_world_backup", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("backup"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("backup"));
     }
 
     @Test

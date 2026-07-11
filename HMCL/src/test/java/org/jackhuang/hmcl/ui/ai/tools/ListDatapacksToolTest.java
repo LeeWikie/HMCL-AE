@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,7 +40,7 @@ public final class ListDatapacksToolTest {
     @Test
     void reportsCorrectMetadata() {
         assertEquals("list_datapacks", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("datapack"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("datapack"));
     }
 
     @Test

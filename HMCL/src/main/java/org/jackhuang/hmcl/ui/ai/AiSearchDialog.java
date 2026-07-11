@@ -41,6 +41,7 @@ import org.jackhuang.hmcl.ui.construct.DialogCloseEvent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
@@ -170,13 +171,13 @@ public final class AiSearchDialog extends JFXDialogLayout implements DialogAware
 
         searchEmptyLabel.setVisible(false);
 
-        String lowerQuery = query.toLowerCase();
+        String lowerQuery = query.toLowerCase(Locale.ROOT);
         List<AiSession> allSessions = sessionsSupplier.get();
 
         for (AiSession session : allSessions) {
             // Search in title
             String title = session.getTitle();
-            boolean titleMatch = title != null && title.toLowerCase().contains(lowerQuery);
+            boolean titleMatch = title != null && title.toLowerCase(Locale.ROOT).contains(lowerQuery);
 
             // Search in messages
             List<LlmMessage> messages = session.getMessages();
@@ -184,7 +185,7 @@ public final class AiSearchDialog extends JFXDialogLayout implements DialogAware
                 LlmMessage msg = messages.get(i);
                 String content = msg.getContent();
                 if (content != null) {
-                    int idx = content.toLowerCase().indexOf(lowerQuery);
+                    int idx = content.toLowerCase(Locale.ROOT).indexOf(lowerQuery);
                     if (idx >= 0) {
                         // Extract a preview line around the match
                         int start = Math.max(0, idx - 30);

@@ -19,6 +19,8 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,8 +48,8 @@ public final class MicrosoftLoginToolTest {
         String description = tool.getDescription();
         assertTrue(description.contains("no parameters"),
                 "must document that this tool takes no parameters: " + description);
-        assertTrue(description.toLowerCase().contains("oauth"), "must mention the OAuth flow: " + description);
-        assertTrue(description.toLowerCase().contains("never try to log in via shell"),
+        assertTrue(description.toLowerCase(Locale.ROOT).contains("oauth"), "must mention the OAuth flow: " + description);
+        assertTrue(description.toLowerCase(Locale.ROOT).contains("never try to log in via shell"),
                 "must forbid the model from attempting a shell/file-based Microsoft login: " + description);
     }
 }

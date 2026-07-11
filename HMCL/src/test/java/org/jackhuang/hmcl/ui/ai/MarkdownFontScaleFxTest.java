@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.testfx.api.FxToolkit;
 import org.testfx.util.WaitForAsyncUtils;
 
+import java.util.Locale;
 import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -101,17 +102,17 @@ public final class MarkdownFontScaleFxTest {
         assertNotNull(heading, "must find the h1 text run");
         assertEquals(16 * 1.4, heading.getFont().getSize(), 0.5,
                 "h1 must scale em-relative (1.4em) off the 16px base");
-        assertTrue(heading.getFont().getStyle().toLowerCase().contains("bold"),
+        assertTrue(heading.getFont().getStyle().toLowerCase(Locale.ROOT).contains("bold"),
                 "h1 text must render bold via the md-h1 rule (was: " + heading.getFont().getStyle() + ")");
 
         // Bold / italic runs style via md-bold / md-em classes, not setFont.
         Text bold = findTextStartingWith(view, "粗体");
         assertNotNull(bold, "must find the bold text run");
-        assertTrue(bold.getFont().getStyle().toLowerCase().contains("bold"),
+        assertTrue(bold.getFont().getStyle().toLowerCase(Locale.ROOT).contains("bold"),
                 "**bold** must render bold via the md-bold rule (was: " + bold.getFont().getStyle() + ")");
         Text italic = findTextStartingWith(view, "斜体");
         assertNotNull(italic, "must find the italic text run");
-        assertTrue(italic.getFont().getStyle().toLowerCase().contains("italic"),
+        assertTrue(italic.getFont().getStyle().toLowerCase(Locale.ROOT).contains("italic"),
                 "*italic* must render italic via the md-em rule (was: " + italic.getFont().getStyle() + ")");
 
         // Inline code: Monospaced at 0.92em of the base.

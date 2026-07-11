@@ -27,6 +27,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.regex.Matcher;
@@ -69,7 +70,7 @@ public final class WebSearchTool implements ToolSpec {
             if (provider == null) {
                 return null;
             }
-            String normalized = provider.toLowerCase();
+            String normalized = provider.toLowerCase(Locale.ROOT);
             for (Provider p : values()) {
                 if (p.id.equals(normalized)) {
                     return p;

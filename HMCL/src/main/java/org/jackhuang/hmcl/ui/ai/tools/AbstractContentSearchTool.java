@@ -22,6 +22,7 @@ import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 
+import java.util.Locale;
 import java.util.Map;
 
 /// Base class for the content-search AI tools.
@@ -81,7 +82,7 @@ abstract class AbstractContentSearchTool implements Tool {
                 "Source '" + source + "' does not provide this content type",
                 ToolFailures.Retryable.YES,
                 "another source may serve it",
-                "retry with source=\"" + other.name().toLowerCase() + "\"");
+                "retry with source=\"" + other.name().toLowerCase(Locale.ROOT) + "\"");
     }
 
     /// Failure returned when CurseForge is the selected source but no API key is configured in this

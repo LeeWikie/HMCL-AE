@@ -22,6 +22,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import com.google.gson.annotations.SerializedName;
 
 import java.util.EnumMap;
+import java.util.Locale;
 import java.util.Map;
 
 @NotNullByDefault
@@ -67,7 +68,7 @@ public final class AiSearchConfig {
     /// doesn't know about).
     @Nullable
     public SearchProvider resolveProvider() {
-        return SearchProvider.fromId(provider.toUpperCase());
+        return SearchProvider.fromId(provider.toUpperCase(Locale.ROOT));
     }
 
     /// Returns the API key stored for {@code provider}, or {@code ""} if unset / {@code provider}

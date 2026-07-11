@@ -25,6 +25,7 @@ import org.jackhuang.hmcl.ai.tools.ToolSpec;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /// An AI-accessible tool that lets the agent maintain a visible, ordered TODO list
@@ -226,7 +227,7 @@ public final class TodoWriteTool implements ToolSpec {
                 continue;
             }
             String status = str(m.get("status"));
-            status = status == null || status.isBlank() ? "pending" : status.toLowerCase();
+            status = status == null || status.isBlank() ? "pending" : status.toLowerCase(Locale.ROOT);
             if (!status.equals("done") && !status.equals("in_progress")) {
                 status = "pending";
             }

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -45,7 +46,7 @@ public final class TransferInventoryToolTest {
     @Test
     void reportsCorrectMetadata() {
         assertEquals("transfer_inventory", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("inventory"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("inventory"));
     }
 
     @Test

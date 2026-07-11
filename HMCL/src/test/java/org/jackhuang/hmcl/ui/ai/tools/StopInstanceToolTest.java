@@ -21,6 +21,7 @@ import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -55,7 +56,7 @@ public final class StopInstanceToolTest {
     void toolMetadataIsSensible() {
         StopInstanceTool tool = new StopInstanceTool();
         assertEquals("stop_instance", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("stop"),
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("stop"),
                 "description should mention stopping: " + tool.getDescription());
     }
 }

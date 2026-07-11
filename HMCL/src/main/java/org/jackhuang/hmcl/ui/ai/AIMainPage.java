@@ -116,6 +116,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -2489,7 +2490,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Recursively checks whether the given node tree contains the search text.
     private static boolean nodeContainsText(Node node, String text) {
         if (node instanceof Label label && label.getText() != null) {
-            return label.getText().toLowerCase().contains(text.toLowerCase());
+            return label.getText().toLowerCase(Locale.ROOT).contains(text.toLowerCase(Locale.ROOT));
         }
         if (node instanceof javafx.scene.Parent parent) {
             for (Node child : parent.getChildrenUnmodifiable()) {
@@ -2799,9 +2800,9 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Filters and displays slash command suggestions.
     private void handleSlashAutocomplete(String prefix) {
         autocompleteItems.clear();
-        String lowerPrefix = prefix.toLowerCase();
+        String lowerPrefix = prefix.toLowerCase(Locale.ROOT);
         for (String cmd : SLASH_COMMANDS.keySet()) {
-            if (cmd.toLowerCase().startsWith(lowerPrefix)) {
+            if (cmd.toLowerCase(Locale.ROOT).startsWith(lowerPrefix)) {
                 autocompleteItems.add(cmd);
             }
         }
@@ -2820,11 +2821,11 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Filters and displays at-mention suggestions (file and session references).
     private void handleAtAutocomplete(String partial) {
         List<String> suggestions = new ArrayList<>();
-        String lowerPartial = partial.toLowerCase();
+        String lowerPartial = partial.toLowerCase(Locale.ROOT);
 
         for (AiSession session : sessionStore.listSessions()) {
             String title = session.getTitle();
-            if (title != null && title.toLowerCase().contains(lowerPartial)) {
+            if (title != null && title.toLowerCase(Locale.ROOT).contains(lowerPartial)) {
                 suggestions.add("@session:" + session.getId().substring(0, Math.min(8, session.getId().length())));
             }
         }
@@ -3609,7 +3610,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         if (text.isEmpty()) return;
 
         // Slash commands: handle locally, or expand into a tool-triggering prompt.
-        String command = text.split("\\s+", 2)[0].toLowerCase();
+        String command = text.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
         switch (command) {
             case "/clear" -> {
                 inputField.clear();

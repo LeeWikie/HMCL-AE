@@ -67,6 +67,7 @@ import org.jetbrains.annotations.Nullable;
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
 
 import java.util.Arrays;
+import java.util.Locale;
 
 /// Renders Markdown as native JavaFX nodes by walking the commonmark AST.
 ///
@@ -557,7 +558,7 @@ public final class MarkdownMessageView extends VBox {
             if (m.group(1) != null || m.group(2) != null) cls = "md-code-com";
             else if (m.group(3) != null) cls = "md-code-str";
             else if (m.group(4) != null) cls = "md-code-num";
-            else cls = CODE_KEYWORDS.contains(m.group().toLowerCase()) ? "md-code-kw" : null;
+            else cls = CODE_KEYWORDS.contains(m.group().toLowerCase(Locale.ROOT)) ? "md-code-kw" : null;
             flow.getChildren().add(codeRun(m.group(), cls));
             last = m.end();
         }

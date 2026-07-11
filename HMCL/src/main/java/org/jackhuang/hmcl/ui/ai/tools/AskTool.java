@@ -25,6 +25,7 @@ import org.jackhuang.hmcl.ai.tools.ToolSpec;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -232,7 +233,7 @@ public final class AskTool implements ToolSpec {
                 continue;
             }
             String type = str(m.get("type"));
-            type = type == null || type.isBlank() ? "text" : type.toLowerCase();
+            type = type == null || type.isBlank() ? "text" : type.toLowerCase(Locale.ROOT);
             List<String> options = new ArrayList<>();
             if (m.get("options") instanceof List<?> opts) {
                 for (Object o : opts) {

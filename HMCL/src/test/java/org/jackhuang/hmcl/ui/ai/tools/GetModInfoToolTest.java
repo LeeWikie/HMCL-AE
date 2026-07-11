@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,7 +42,7 @@ public final class GetModInfoToolTest {
     @Test
     void reportsCorrectMetadata() {
         assertEquals("get_mod_info", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("mod"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("mod"));
     }
 
     @Test

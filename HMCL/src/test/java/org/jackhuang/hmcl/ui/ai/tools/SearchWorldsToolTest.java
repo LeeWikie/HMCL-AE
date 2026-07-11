@@ -21,6 +21,7 @@ import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -67,7 +68,7 @@ public final class SearchWorldsToolTest {
         String error = result.getError();
         assertTrue(ToolFailures.isWellFormedEnvelope(error), () -> "not a well-formed envelope: " + error);
         assertTrue(error.contains("Retryable: yes"), error);
-        assertTrue(error.toLowerCase().contains("modrinth"), error);
+        assertTrue(error.toLowerCase(Locale.ROOT).contains("modrinth"), error);
     }
 
     private static void assertTerminalWorldSearch(ToolResult result) {

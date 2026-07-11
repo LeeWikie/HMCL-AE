@@ -22,6 +22,7 @@ import org.jackhuang.hmcl.ai.tools.ToolResult;
 import org.jackhuang.hmcl.game.HMCLGameRepository;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.util.Locale;
 import java.util.Map;
 
 /// Consolidated tool for non-destructive edits to a Minecraft instance of the selected
@@ -65,7 +66,7 @@ public final class EditInstanceTool implements Tool {
         if (action == null) {
             action = "rename"; // default + currently the only supported action
         }
-        switch (action.toLowerCase()) {
+        switch (action.toLowerCase(Locale.ROOT)) {
             case "rename":
                 return rename(parameters);
             default:

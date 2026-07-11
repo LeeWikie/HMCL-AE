@@ -52,6 +52,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -104,7 +105,7 @@ final class ContentToolSupport {
         if (value == null) {
             return Source.MODRINTH;
         }
-        String normalized = value.trim().toLowerCase();
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
         if (normalized.startsWith("curse")) {
             return Source.CURSEFORGE;
         }

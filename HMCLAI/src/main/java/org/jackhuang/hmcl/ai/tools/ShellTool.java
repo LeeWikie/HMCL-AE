@@ -23,6 +23,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -48,7 +49,7 @@ public final class ShellTool implements ToolSpec {
         String osName = System.getProperty("os.name", "Unknown");
         String osVersion = System.getProperty("os.version", "");
         this.osLabel = osVersion.isBlank() ? osName : (osName + " (" + osVersion + ")");
-        this.windows = osName.toLowerCase().contains("win");
+        this.windows = osName.toLowerCase(Locale.ROOT).contains("win");
 
         if (windows) {
             this.shellName = "PowerShell";

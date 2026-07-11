@@ -28,6 +28,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /// A read-only tool that lists the installed Minecraft instances (versions) of
@@ -95,7 +96,7 @@ public final class ListInstancesTool implements Tool {
             boolean selected = id.equals(selectedInstance);
             sb.append(selected ? "  * " : "  - ").append(id);
             if (version.getType() != null) {
-                sb.append(" [").append(version.getType().name().toLowerCase()).append(']');
+                sb.append(" [").append(version.getType().name().toLowerCase(Locale.ROOT)).append(']');
             }
             if (selected) {
                 sb.append(" (selected)");

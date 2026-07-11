@@ -17,6 +17,7 @@
  */
 package org.jackhuang.hmcl.ai.tools;
 
+import java.util.Locale;
 import java.util.Map;
 
 /// Robust parameter extraction for tools.
@@ -163,12 +164,12 @@ public final class ToolParams {
         if (eq <= 0) {
             return v;
         }
-        String key = v.substring(0, eq).trim().toLowerCase();
-        if (key.equals(canonical.toLowerCase())) {
+        String key = v.substring(0, eq).trim().toLowerCase(Locale.ROOT);
+        if (key.equals(canonical.toLowerCase(Locale.ROOT))) {
             return v.substring(eq + 1).trim();
         }
         for (String a : aliases) {
-            if (key.equals(a.toLowerCase())) {
+            if (key.equals(a.toLowerCase(Locale.ROOT))) {
                 return v.substring(eq + 1).trim();
             }
         }

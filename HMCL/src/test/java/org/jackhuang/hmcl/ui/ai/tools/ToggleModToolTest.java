@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -49,7 +50,7 @@ public final class ToggleModToolTest {
     @Test
     void reportsCorrectMetadata() {
         assertEquals("toggle_mod", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("mod"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("mod"));
     }
 
     @Test
@@ -304,7 +305,7 @@ public final class ToggleModToolTest {
             ToolResult result = tool.execute(Map.of("instance", "HasMods", "mod", "legacy"));
             assertFalse(result.isSuccess());
             assertTrue(result.getError().contains(".old"), "unexpected message: " + result.getError());
-            assertTrue(result.getError().toLowerCase().contains("rollback"),
+            assertTrue(result.getError().toLowerCase(Locale.ROOT).contains("rollback"),
                     "unexpected message: " + result.getError());
             assertTrue(ToolFailures.isWellFormedEnvelope(result.getError()),
                     "not a well-formed envelope: " + result.getError());

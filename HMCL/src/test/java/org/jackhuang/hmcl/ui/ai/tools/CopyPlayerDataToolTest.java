@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -44,7 +45,7 @@ public final class CopyPlayerDataToolTest {
     @Test
     void reportsCorrectMetadata() {
         assertEquals("copy_player_data", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("player"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("player"));
     }
 
     @Test

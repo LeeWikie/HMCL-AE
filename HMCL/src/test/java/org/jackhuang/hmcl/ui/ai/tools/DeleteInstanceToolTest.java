@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -290,6 +291,6 @@ public final class DeleteInstanceToolTest {
     void toolMetadataIsSensible() {
         DeleteInstanceTool tool = new DeleteInstanceTool(() -> false);
         assertEquals("delete_instance", tool.getName());
-        assertTrue(tool.getDescription().toLowerCase().contains("delete"));
+        assertTrue(tool.getDescription().toLowerCase(Locale.ROOT).contains("delete"));
     }
 }
