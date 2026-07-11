@@ -81,19 +81,21 @@ public final class AiJobManagerCancelForwardingTest {
     void actionsNeverRunForAJobThatFinishedNormally() throws InterruptedException {
         AiJobManager mgr = AiJobManager.getInstance();
         AtomicInteger runs = new AtomicInteger();
-        CountDownLatch done = new CountDownLatch(1);
-        java.util.function.Consumer<AiJobManager.Job> listener = job -> done.countDown();
-        mgr.addCompletionListener(listener);
-        try {
-            String id = mgr.submit("cancel-fwd-ok", "demo_tool", "quick", () -> ToolResult.success("ok"));
-            mgr.registerCancelAction(id, runs::incrementAndGet);
-            assertTrue(done.await(5, TimeUnit.SECONDS), "job should finish");
-            // Cancelling a finished job is a no-op and must NOT fire the action either.
-            assertFalse(mgr.cancel(id));
-            assertEquals(0, runs.get(), "cancel actions must only ever run on a real cancellation");
-        } finally {
-            mgr.removeCompletionListener(listener);
+        String id = mgr.submit("cancel-fwd-ok", "demo_tool", "quick", () -> ToolResult.success("ok"));
+        mgr.registerCancelAction(id, runs::incrementAndGet);
+        // Poll THIS job's own status to a terminal state — NOT a shared completion listener. The
+        // listener fires for ANY job on the singleton, so a leftover interrupt-swallowing job from
+        // another test method completing here would count the latch down prematurely, leaving our
+        // own job still RUNNING and making the cancel() below spuriously succeed — that was the CI
+        // flake at :92. Polling the specific job id is immune to cross-test job completions.
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (mgr.get(id).getStatus() == AiJobManager.Status.RUNNING && System.nanoTime() < deadlineNanos) {
+            Thread.sleep(5);
         }
+        assertTrue(mgr.get(id).getStatus() != AiJobManager.Status.RUNNING, "job should finish");
+        // Cancelling a finished job is a no-op and must NOT fire the action either.
+        assertFalse(mgr.cancel(id));
+        assertEquals(0, runs.get(), "cancel actions must only ever run on a real cancellation");
     }
 
     @Test
