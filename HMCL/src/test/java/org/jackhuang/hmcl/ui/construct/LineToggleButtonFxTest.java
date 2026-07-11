@@ -1,5 +1,5 @@
 /*
- * Hello Minecraft! Launcher - Agent Experience
+ * Hello Minecraft! Launcher
  * Copyright (C) 2026 huangyuhui <huanghongxun2008@126.com> and contributors
  *
  * This program is free software: you can redistribute it and/or modify
