@@ -94,6 +94,19 @@ public final class DangerousCommands {
             // native PowerShell cmdlet equivalents.
             Pattern.compile("(?i)\\b(shutdown|reboot|halt|poweroff|stop-computer|restart-computer)\\b"),
             Pattern.compile("(?i)\\bkill(all)?\\s+-9"),
+            // Windows process termination, the platform equivalent of `kill -9` above. PowerShell's
+            // Stop-Process cmdlet (and its aliases kill/spps) has no "graceful" mode — it terminates
+            // immediately regardless of -Id/-Name/-Force — so any invocation is held to the same bar.
+            Pattern.compile("(?i)\\bstop-process\\b"),
+            // taskkill's /F (force) switch bypasses the graceful WM_CLOSE request and forcibly
+            // terminates; matched anywhere on the line so switch order (e.g. `taskkill /F /IM ...`)
+            // doesn't evade it.
+            Pattern.compile("(?i)\\btaskkill\\b[^\\r\\n&|;]*/f\\b"),
+            // Killing this launcher's own Minecraft JVM by image name (java.exe/javaw.exe) via
+            // taskkill is as irreversible as the two patterns above even without an explicit /F —
+            // it can corrupt an in-progress world save — so it is matched on its own regardless of
+            // the force flag.
+            Pattern.compile("(?i)\\btaskkill\\b[^\\r\\n&|;]*/im\\s+java\\w*\\.exe\\b"),
             Pattern.compile("(?i)\\bchmod\\s+-R\\s+0*0\\b"),
             Pattern.compile(">\\s*/dev/sd"),
             Pattern.compile(":\\(\\)\\s*\\{.*\\}\\s*;\\s*:"),          // fork bomb :(){ :|:& };:
