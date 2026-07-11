@@ -18,6 +18,7 @@
 package org.jackhuang.hmcl.ui.ai;
 
 import com.jfoenix.controls.JFXButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.layout.StackPane;
 import org.junit.jupiter.api.AfterAll;
@@ -102,5 +103,28 @@ public final class MarkdownCodeCopyFxTest {
                 Clipboard.getSystemClipboard().setContent(cc);
             }).get(5, TimeUnit.SECONDS);
         }
+    }
+
+    @Test
+    public void codeBlockScrollsHorizontallyInsteadOfWrapping() throws Exception {
+        FxToolkit.setupSceneRoot(() -> {
+            MarkdownMessageView view = MarkdownMessageView.create(
+                    "```\nthis_is_a_very_long_single_line_of_code_that_should_scroll_and_never_char_wrap = 1\n```");
+            assertNotNull(view, "fenced code must be recognised as markdown");
+            StackPane root = new StackPane(view);
+            root.setPrefSize(600, 400);
+            return root;
+        });
+        FxToolkit.showStage();
+        WaitForAsyncUtils.waitForFxEvents();
+
+        FxRobot robot = new FxRobot();
+        ScrollPane scroll = robot.lookup(".md-code-scroll").queryAs(ScrollPane.class);
+        assertNotNull(scroll, "code body must be wrapped in a horizontal ScrollPane");
+        assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, scroll.getHbarPolicy(),
+                "long lines must be reachable via a horizontal bar");
+        assertEquals(ScrollPane.ScrollBarPolicy.NEVER, scroll.getVbarPolicy());
+        assertFalse(scroll.isFitToWidth(),
+                "fitToWidth must stay false so the flow keeps its natural width and does not char-wrap");
     }
 }

@@ -21,15 +21,18 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/// Locks in two containsMarkdownSyntax() fixes: (1) the table-delimiter-row heuristic must
+/// Locks in the containsMarkdownSyntax() heuristics: (1) the table-delimiter-row heuristic must
 /// recognize colon-aligned GFM delimiter rows (`|:--|`, `|:-:|`), not just plain `|---|`; (2) the
 /// header/list/blockquote regexes must detect their construct at the start of ANY line, not only
-/// at the absolute start of the whole message.
+/// at the absolute start of the whole message; (3) bare URLs / www links must count as "worth
+/// rendering as Markdown" so the autolink extension can linkify them (the linkification itself is
+/// wired in MarkdownMessageView's JavaFX parser and verified there / visually).
 public final class MarkdownRendererTest {
 
     @Test
     public void plainProseIsNotMarkdown() {
         assertFalse(MarkdownRenderer.containsMarkdownSyntax("这只是一段普通的文字，没有任何格式。"));
+        assertFalse(MarkdownRenderer.containsMarkdownSyntax("hello there, nice to meet you"));
     }
 
     @Test
@@ -91,5 +94,14 @@ public final class MarkdownRendererTest {
         assertTrue(MarkdownRenderer.containsMarkdownSyntax(
                 "已安排后台下载mod，已安装 {{job_progress:1}}，还有什么别的要求吗？"));
         assertTrue(MarkdownRenderer.containsMarkdownSyntax("{{job_progress:2,3,4,5}}"));
+    }
+
+    @Test
+    public void bareUrlCountsAsMarkdown() {
+        // Bare URLs are linkified by the autolink extension, so they must route through the rich
+        // renderer instead of a flat Label.
+        assertTrue(MarkdownRenderer.containsMarkdownSyntax("see https://example.com/download for details"));
+        assertTrue(MarkdownRenderer.containsMarkdownSyntax("http://localhost:8080"));
+        assertTrue(MarkdownRenderer.containsMarkdownSyntax("visit www.minecraft.net today"));
     }
 }

@@ -20,6 +20,9 @@ package org.jackhuang.hmcl.ui.ai;
 import javafx.scene.Node;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontPosture;
+import javafx.scene.text.FontWeight;
 import javafx.scene.text.Text;
 import org.jackhuang.hmcl.Metadata;
 import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
@@ -51,6 +54,14 @@ public final class EmojiImages {
     /// Default download source — kept pointing at the original repo to avoid re-distribution.
     private static final String BASE_URL =
             "https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@main/png/128/";
+
+    /// Flag emoji (regional-indicator pairs) are absent from Noto's `png/128/` directory, so
+    /// requesting `emoji_u1f1fa_1f1f8.png` there always 404s. Flags are instead fetched from
+    /// Twemoji (jdecked maintained fork, 72x72 PNGs), whose filenames are hyphen-joined code
+    /// points with no `emoji_u` prefix and no FE0F (e.g. 1f1fa-1f1f8.png). Verified reachable;
+    /// assets are downloaded on demand, not bundled or re-distributed.
+    private static final String FLAG_BASE_URL =
+            "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/";
 
     private static final Path CACHE_DIR = Metadata.HMCL_LOCAL_HOME.resolve("emoji-cache");
 
@@ -94,6 +105,17 @@ public final class EmojiImages {
     /// {@link ImageView} for emoji clusters (when the colour image is available). Falls back
     /// to a {@link Text} run for emoji whose image is not yet cached.
     public static List<Node> toNodes(String text, double fontSize) {
+        return toNodes(text, fontSize, Text::new);
+    }
+
+    /// Style-preserving variant: emoji still become {@link ImageView}s, but the surrounding text
+    /// runs carry the given bold/italic/strikethrough (and the `md-text` style class) so Markdown
+    /// emphasis wrapping an emoji — e.g. `**恭喜 🎉**` — is not silently dropped.
+    public static List<Node> toNodes(String text, double fontSize, boolean bold, boolean italic, boolean strike) {
+        return toNodes(text, fontSize, s -> styledRun(s, fontSize, bold, italic, strike));
+    }
+
+    private static List<Node> toNodes(String text, double fontSize, java.util.function.Function<String, Text> textFactory) {
         List<Node> nodes = new ArrayList<>();
         StringBuilder plain = new StringBuilder();
         int i = 0;
@@ -103,11 +125,12 @@ public final class EmojiImages {
             if (isEmojiBase(cp) || isKeycapStart(text, i, cp)) {
                 int clusterEnd = consumeCluster(text, i);
                 String cluster = text.substring(i, clusterEnd);
-                String filename = toFilename(cluster);
-                Image image = imageFor(filename);
+                boolean flag = isFlagCluster(cluster);
+                String filename = toFilename(cluster, flag);
+                Image image = imageFor(filename, flag);
                 if (image != null && !image.isError()) {
                     if (plain.length() > 0) {
-                        nodes.add(new Text(plain.toString()));
+                        nodes.add(textFactory.apply(plain.toString()));
                         plain.setLength(0);
                     }
                     ImageView view = new ImageView(image);
@@ -130,9 +153,26 @@ public final class EmojiImages {
             }
         }
         if (plain.length() > 0) {
-            nodes.add(new Text(plain.toString()));
+            nodes.add(textFactory.apply(plain.toString()));
         }
         return nodes;
+    }
+
+    private static Text styledRun(String s, double fontSize, boolean bold, boolean italic, boolean strike) {
+        Text t = new Text(s);
+        FontWeight weight = bold ? FontWeight.BOLD : FontWeight.NORMAL;
+        FontPosture posture = italic ? FontPosture.ITALIC : FontPosture.REGULAR;
+        t.setFont(Font.font(null, weight, posture, fontSize));
+        if (strike) t.setStrikethrough(true);
+        t.getStyleClass().add("md-text");
+        return t;
+    }
+
+    /// Package-private for tests: the download URL a cluster resolves to. Flag clusters go to
+    /// Twemoji, everything else to Noto. Pure — touches neither cache nor network.
+    static String assetUrlFor(String cluster) {
+        boolean flag = isFlagCluster(cluster);
+        return (flag ? FLAG_BASE_URL : BASE_URL) + toFilename(cluster, flag) + ".png";
     }
 
     /// Consumes an emoji grapheme cluster starting at index `start`: the base plus any
@@ -169,22 +209,38 @@ public final class EmojiImages {
         return i;
     }
 
-    /// Builds the Noto Emoji filename for an emoji cluster: "emoji_u" followed by the code
-    /// points in lowercase hex joined by '_', dropping U+FE0F (variation selector) but
-    /// keeping U+200D (ZWJ), per noto-emoji's convention. e.g. 🧋 -> emoji_u1f9cb.
+    /// A flag emoji is a pair of regional-indicator symbols (U+1F1E6–U+1F1FF). Flags use a
+    /// different asset source and filename convention than the rest of the emoji set.
     /// Package-visible for unit tests.
-    static String toFilename(String cluster) {
-        StringBuilder sb = new StringBuilder("emoji_u");
+    static boolean isFlagCluster(String cluster) {
+        int cp0 = cluster.codePointAt(0);
+        if (cp0 < 0x1F1E6 || cp0 > 0x1F1FF) return false;
+        int j = Character.charCount(cp0);
+        if (j >= cluster.length()) return false;
+        int cp1 = cluster.codePointAt(j);
+        return cp1 >= 0x1F1E6 && cp1 <= 0x1F1FF;
+    }
+
+    /// Builds the asset filename for an emoji cluster (extension appended by the caller).
+    ///
+    /// Non-flag (Noto): "emoji_u" + code points in lowercase hex joined by '_', dropping U+FE0F
+    /// but keeping U+200D (ZWJ), zero-padded to ≥4 digits. e.g. 🧋 -> emoji_u1f9cb.
+    ///
+    /// Flag (Twemoji): the two regional-indicator code points in natural lowercase hex joined by
+    /// '-', no prefix, no FE0F. e.g. 🇺🇸 -> 1f1fa-1f1f8.
+    /// Package-visible for unit tests.
+    static String toFilename(String cluster, boolean flag) {
+        StringBuilder sb = new StringBuilder(flag ? "" : "emoji_u");
         boolean first = true;
         int i = 0;
         while (i < cluster.length()) {
             int cp = cluster.codePointAt(i);
             i += Character.charCount(cp);
             if (cp == 0xFE0F) continue;
-            if (!first) sb.append('_');
-            // Zero-pad to ≥4 hex digits (Noto convention): keeps 5-digit pictographs unchanged
-            // (1f9cb) but makes ASCII keycap bases match Noto's name (0031, not 31).
-            sb.append(String.format("%04x", cp));
+            if (!first) sb.append(flag ? '-' : '_');
+            // Twemoji flags use the natural (already 5-digit) hex; Noto zero-pads to ≥4 digits so
+            // 5-digit pictographs stay unchanged (1f9cb) and ASCII keycap bases match (0031, not 31).
+            sb.append(flag ? Integer.toHexString(cp) : String.format("%04x", cp));
             first = false;
         }
         return sb.toString();
@@ -192,7 +248,7 @@ public final class EmojiImages {
 
     /// Returns the cached emoji image, loading from the on-disk cache if present, otherwise
     /// returns null and starts a background download for next time.
-    private static Image imageFor(String filename) {
+    private static Image imageFor(String filename, boolean flag) {
         Image cached = MEMORY.get(filename);
         if (cached != null) return cached;
 
@@ -210,8 +266,9 @@ public final class EmojiImages {
         // Not cached on disk yet: kick a disk download for next launch, and return an
         // async-loading remote image so the colour emoji fills in as soon as it arrives —
         // no monochrome text fallback that would otherwise "cover" the colour version.
-        download(filename, file);
-        Image remote = new Image(BASE_URL + filename + ".png", true);
+        String url = (flag ? FLAG_BASE_URL : BASE_URL) + filename + ".png";
+        download(filename, file, url);
+        Image remote = new Image(url, true);
         // A failed download must not poison the cache for the rest of the session: evict on
         // error so the next render retries (falling back to monochrome text meanwhile). The
         // listener fires on the FX thread after this method (called on the FX thread) has
@@ -240,12 +297,12 @@ public final class EmojiImages {
                 .build();
     }
 
-    private static void download(String filename, Path file) {
+    private static void download(String filename, Path file, String url) {
         if (!downloading.add(filename)) return;
         DOWNLOADER.submit(() -> {
             try {
                 HttpClient client = newHttpClient();
-                HttpRequest request = HttpRequest.newBuilder(URI.create(BASE_URL + filename + ".png"))
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                         .timeout(Duration.ofSeconds(20))
                         .header("User-Agent", "HMCL-AE").GET().build();
                 HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());

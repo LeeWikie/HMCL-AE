@@ -24,6 +24,7 @@ import javafx.geometry.Pos;
 import javafx.scene.AccessibleAttribute;
 import javafx.scene.AccessibleRole;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.util.Duration;
@@ -36,6 +37,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.TextFlow;
+import org.commonmark.ext.autolink.AutolinkExtension;
 import org.commonmark.ext.gfm.strikethrough.Strikethrough;
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension;
 import org.commonmark.ext.gfm.tables.TableBlock;
@@ -84,7 +86,10 @@ public final class MarkdownMessageView extends VBox {
     private final double maxWidth;
 
     private static final Parser PARSER = Parser.builder()
-            .extensions(Arrays.asList(TablesExtension.create(), StrikethroughExtension.create()))
+            .extensions(Arrays.asList(
+                    TablesExtension.create(),
+                    AutolinkExtension.create(),
+                    StrikethroughExtension.create()))
             .build();
 
     /// Matches the {@code {{job_progress:<id>[,<id>...]}}} live-badge syntax inside inline text
@@ -465,8 +470,9 @@ public final class MarkdownMessageView extends VBox {
     private void appendPlainRun(TextFlow flow, String literal, boolean bold, boolean italic, boolean strike) {
         if (literal.isEmpty()) return;
         if (EmojiImages.isEnabled() && EmojiImages.containsEmoji(literal)) {
-            // Colour-emoji mode: split into text runs + inline emoji images.
-            flow.getChildren().addAll(EmojiImages.toNodes(literal, 13));
+            // Colour-emoji mode: split into text runs + inline emoji images, preserving the
+            // surrounding bold/italic/strikethrough so emphasis around an emoji survives.
+            flow.getChildren().addAll(EmojiImages.toNodes(literal, 13, bold, italic, strike));
         } else {
             flow.getChildren().add(styledText(literal, bold, italic, false, strike));
         }
@@ -536,11 +542,24 @@ public final class MarkdownMessageView extends VBox {
         header.setMaxWidth(maxWidth);
 
         TextFlow content = new TextFlow();
-        content.setMaxWidth(maxWidth);
+        // Do NOT cap the flow width: leaving it at its natural (unwrapped) width lets long lines
+        // extend and scroll horizontally instead of char-wrapping. The ScrollPane below clamps the
+        // visible width to maxWidth and shows a horizontal bar only when a line overflows.
         content.getStyleClass().add("md-code-content");
         appendHighlighted(content, body);
 
-        VBox box = new VBox(header, content);
+        ScrollPane scroll = new ScrollPane(content);
+        scroll.setFitToWidth(false);   // let content keep its natural width so long lines scroll
+        scroll.setFitToHeight(false);  // grow to include the horizontal bar; never clip the last line
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.getStyleClass().add("md-code-scroll");
+        scroll.setMaxWidth(maxWidth);
+        // Transparent viewport so the code card's own background shows through (root.css styles the
+        // card, not this ScrollPane) — set inline to avoid depending on a new CSS rule.
+        scroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+
+        VBox box = new VBox(header, scroll);
         box.getStyleClass().add("md-code-block");
         box.setFillWidth(true);
         box.setMaxWidth(maxWidth);

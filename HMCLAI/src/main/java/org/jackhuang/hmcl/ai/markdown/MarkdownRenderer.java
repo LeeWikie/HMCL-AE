@@ -68,6 +68,8 @@ public final class MarkdownRenderer {
         if (text.matches("(?sm).*^\\d+\\.\\s.*")) return true;
         // Links or images
         if (text.contains("](") || text.contains("![")) return true;
+        // Bare URLs / www links — linkified by the autolink extension, so worth rendering.
+        if (text.contains("http://") || text.contains("https://") || text.contains("www.")) return true;
         // Blockquotes
         if (text.matches("(?sm).*^>\\s.*")) return true;
         return false;
