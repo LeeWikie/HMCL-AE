@@ -95,7 +95,17 @@ public final class ShellTool implements ToolSpec {
                 .append(" *** LAST RESORT ONLY: prefer a dedicated tool (read/glob/grep/instance/search/…)")
                 .append(" over this. Do NOT use shell to run find/grep/cat/dir/type for something a dedicated")
                 .append(" tool already covers, and do NOT use it to toggle a mod's .jar/.jar.disabled suffix —")
-                .append(" use instance(action=mods_toggle) instead. ***");
+                .append(" use instance(action=mods_toggle) instead. ***")
+                // Explicit self-harm guard: HMCL-AE is itself a java/javaw process, so any shell command
+                // that matches processes by name (or by PID discovered that way) cannot tell the launcher
+                // apart from the game it launched — it is one accidental self-kill away. Stopping a running
+                // game must go through the dedicated tool, which only targets processes HMCL itself tracks.
+                .append(" *** NEVER use shell to stop or kill a java/javaw process by name or PID —")
+                .append(" not Stop-Process, not taskkill, not kill/pkill, not Get-Process | Stop-Process, no")
+                .append(" matter the filter. HMCL-AE itself runs as a java/javaw process, so any such command")
+                .append(" cannot distinguish the launcher from the game it started and can kill either one —")
+                .append(" including itself. To stop a running game instance, use game(action=\"stop\") instead,")
+                .append(" which only targets a process HMCL itself launched and is tracking. ***");
 
         if (windows) {
             sb.append(" Emit commands in the syntax of this shell (PowerShell on Windows 10/11).")
