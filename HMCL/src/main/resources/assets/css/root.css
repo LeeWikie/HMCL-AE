@@ -2197,23 +2197,43 @@
     -fx-fill: -monet-primary;
 }
 
+/*
+ * Code blocks render as a classic, theme-independent DARK box (like a code
+ * editor / terminal), regardless of the app's light/dark theme — an intentional
+ * exception to the "AI region uses only -monet-* variables" rule, per user
+ * request 2026-07-11 ("经典黑框渲染"). A code block reads best against a fixed
+ * editor-dark backdrop; letting it follow the (light) Monet surface made it
+ * blend into the bubble with no visible box at all. The One Dark-ish palette is
+ * defined once as looked-up colors on .md-code-block and inherited by its
+ * header/content descendants, so the whole box stays internally consistent and
+ * the colors live in exactly one place.
+ */
 .ai-markdown-view .md-code-block {
-    -fx-background-color: -monet-surface-container;
-    -fx-background-radius: 6;
-    -fx-padding: 4 4 8 12;
+    -code-bg: #282c34;
+    -code-fg: #abb2bf;
+    -code-dim: #7f848e;
+    -code-kw: #c678dd;
+    -code-str: #98c379;
+    -code-num: #d19a66;
+    -code-accent: #61afef;
+    -fx-background-color: -code-bg;
+    -fx-background-radius: 8;
+    -fx-padding: 6 6 10 14;
 }
 
 .ai-markdown-view .md-code-header {
-    -fx-padding: 0 0 2 0;
+    -fx-padding: 0 0 4 0;
 }
 
 .ai-markdown-view .md-code-lang {
-    -fx-text-fill: -monet-on-surface-variant;
+    /* Readable on the dark box — the comment-grey -code-dim is too low-contrast
+     * for a UI affordance (the language tag), so use the brighter foreground. */
+    -fx-text-fill: -code-fg;
     -fx-font-size: 12px;
 }
 
 .ai-markdown-view .md-code-copy {
-    -fx-text-fill: -monet-primary;
+    -fx-text-fill: -code-accent;
     -fx-font-size: 12px;
     -fx-padding: 2 8 2 8;
     -fx-background-radius: 6;
@@ -2224,25 +2244,25 @@
 }
 
 .ai-markdown-view .md-code-text {
-    -fx-fill: -monet-on-surface;
+    -fx-fill: -code-fg;
     -fx-font-family: "Monospaced";
     -fx-font-size: 0.92em;
 }
 
 .ai-markdown-view .md-code-kw {
-    -fx-fill: -monet-primary;
+    -fx-fill: -code-kw;
 }
 
 .ai-markdown-view .md-code-str {
-    -fx-fill: -monet-tertiary;
+    -fx-fill: -code-str;
 }
 
 .ai-markdown-view .md-code-num {
-    -fx-fill: -monet-secondary;
+    -fx-fill: -code-num;
 }
 
 .ai-markdown-view .md-code-com {
-    -fx-fill: -monet-on-surface-variant;
+    -fx-fill: -code-dim;
 }
 
 .ai-markdown-view .md-blockquote {
