@@ -94,14 +94,13 @@ public final class AiPromptBuilder {
             "- account(action, ...): list, add_offline(username[, select]), select(username), microsoft_login (native OAuth dialog, no params), set_skin(username?, source/skinPath/cslApi[, capePath, model]) — offline accounts support local PNG / LittleSkin / CSL skin-station / steve/alex presets + cape; online (Microsoft/authlib-injector) accounts support a local PNG upload only.",
             "Diagnostics / convenience:",
             "- system_info: OS/CPU/GPU/RAM for crash diagnosis. read_clipboard: read text the user copied (use when they say they pasted/copied a crash log or error). copy_to_clipboard(text): put something on their clipboard. export_conversation: save this chat to a Markdown file. prompt_library: browse reusable prompt presets.",
-            "- ocr_image(image[, instance]): READ the text inside an image — use when a crash/error is given as a SCREENSHOT instead of text, then diagnose from the recognized text. Needs OCR enabled in AI 设置 > OCR; if it returns a 'not enabled/not implemented' error, tell the user to configure it.",
             "Memory (persists across conversations, file-based):",
             "- remember(title, content[, tags]): store a durable fact (user preferences, decisions, recurring setups). recall(query[, tag, limit]): retrieve them. Use recall at the start when a task may depend on remembered preferences; use remember when the user states a lasting preference.",
-            // web_search/web_fetch are NOT listed here: their availability tracks the "web search
-            // enabled" setting (same switch that gates their tool REGISTRATION), so listing them
-            // unconditionally in this always-present static guide would advertise ghost tools
-            // whenever the user has web access off. They are documented instead in the volatile
-            // suffix, only when searchConfig.isEnabled() — see buildVolatileSuffix.
+            // web_search/web_fetch AND ocr_image are NOT listed in this always-present static guide:
+            // each is registered conditionally (web tools track 联网工具/联网搜索, ocr_image tracks the
+            // OCR-enabled toggle), so listing them unconditionally here would advertise ghost tools
+            // whenever they are not registered. They are documented instead in the volatile suffix,
+            // gated on their ACTUAL registration in the toolRegistry — see buildVolatileSuffix.
             "Dialog:",
             "- ask: pops a structured UI dialog — reserve it for 2+ concrete single/multi-select options, or for bundling 2+ related sub-questions into ONE dialog (a free-text sub-question is fine there, alongside a structured one). For a single open-ended question or a vague/fuzzy opinion or preference with no discrete options, do NOT call this tool — just ask directly in your response text and end the turn normally (see rule 15). A '自定义/custom' choice is appended automatically to single/multi questions — do NOT add it yourself. Example: vague 'install a version then Sodium + addons' -> instance(action=list), search(action=mods), then ask {version? single [1.21.1,1.20.1]; loader? single [Fabric,Forge,NeoForge,Quilt]; which addons? multi}, then instance(action=create) + instance(action=mods_install) with the answers.",
             "Do not print whole files via shell just to show them — read and summarize in plain text.");
@@ -416,6 +415,19 @@ public final class AiPromptBuilder {
         return buildVolatileSuffix(activeSkillNames, "");
     }
 
+    /// True iff a callable (non-disabled) tool named {@code name} is currently registered in the
+    /// live {@link #toolRegistry}. Used to gate the volatile-suffix documentation of
+    /// conditionally-registered tools (web_search/web_fetch/ocr_image) so the guide always matches
+    /// what the model can actually call.
+    private boolean isToolRegistered(String name) {
+        for (Tool t : toolRegistry.list()) {
+            if (name.equals(t.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// @param currentUserMessage the CURRENT turn's raw user message text, before any
     ///        {@code <turn-context>} wrapping — used solely to decide whether the dev-mode
     ///        diagnostic skill (see {@link #isDevModeTriggered}) fires THIS turn. Pass {@code ""}
@@ -428,16 +440,34 @@ public final class AiPromptBuilder {
             blocks.add(PLAN);
         }
 
-        // Web tools are documented HERE (volatile suffix), gated on the SAME "web search enabled"
-        // state that gates their registration — so when web access is off they are neither
-        // registered nor advertised (no ghost tools), and when on the model gets their full usage
-        // guidance rather than a bare "enabled" note.
-        if (searchConfig.isEnabled()) {
+        // Conditionally-registered tools are documented HERE (volatile suffix), gated on their
+        // ACTUAL registration in the live toolRegistry — the same registry AIMainPage populates and
+        // the WebAccessToolsBinder mutates. Driving the guide off real registration (rather than a
+        // second copy of the enable-conditions) makes the prompt track registration by construction:
+        // the model is never told about a tool it cannot call (ghost), nor left unaware of a
+        // registered one. web_fetch tracks 联网工具; web_search additionally requires 联网搜索
+        // (a fresh install has web access on but search off — so web_search must not be advertised
+        // there); ocr_image tracks the OCR-enabled toggle.
+        boolean hasWebSearch = isToolRegistered("web_search");
+        boolean hasWebFetch = isToolRegistered("web_fetch");
+        if (hasWebSearch || hasWebFetch) {
+            List<String> webLines = new ArrayList<>();
+            webLines.add("Web tools are available this turn — use them for current information and cite source URLs:");
+            if (hasWebSearch) {
+                webLines.add("- web_search: search the web for current info. PREFER this for any 'search/look up/find online' request.");
+            }
+            if (hasWebFetch) {
+                webLines.add("- web_fetch: fetch a SPECIFIC, already-known URL. Do NOT use web_fetch to 'search'"
+                        + (hasWebSearch ? " — web_search first, then web_fetch a result's URL." : "."));
+            }
             addBlankIfNonEmpty(blocks);
-            blocks.add(String.join("\n",
-                    "Web tools are ENABLED this turn — use them for current information and cite source URLs:",
-                    "- web_search: search the web for current info. PREFER this for any 'search/look up/find online' request.",
-                    "- web_fetch: fetch a SPECIFIC, already-known URL. Do NOT use web_fetch to 'search' — web_search first, then web_fetch a result's URL."));
+            blocks.add(String.join("\n", webLines));
+        }
+
+        if (isToolRegistered("ocr_image")) {
+            addBlankIfNonEmpty(blocks);
+            blocks.add("- ocr_image(image[, instance]): READ the text inside an image — use when a crash/error "
+                    + "is given as a SCREENSHOT instead of text, then diagnose from the recognized text.");
         }
 
         // Mirror EXACTLY the constructor ChatAgentFactory uses for the policy that actually
