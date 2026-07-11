@@ -109,7 +109,7 @@ public final class MarkdownCodeCopyFxTest {
     public void codeBlockScrollsHorizontallyInsteadOfWrapping() throws Exception {
         FxToolkit.setupSceneRoot(() -> {
             MarkdownMessageView view = MarkdownMessageView.create(
-                    "```\nthis_is_a_very_long_single_line_of_code_that_should_scroll_and_never_char_wrap = 1\n```");
+                    "```\nthis_is_a_very_long_single_line_of_code_that_should_scroll_and_never_char_wrap = 1\n```", 710);
             assertNotNull(view, "fenced code must be recognised as markdown");
             StackPane root = new StackPane(view);
             root.setPrefSize(600, 400);
