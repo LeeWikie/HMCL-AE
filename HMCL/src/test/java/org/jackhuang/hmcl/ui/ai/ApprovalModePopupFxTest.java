@@ -23,7 +23,6 @@ import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
-import javafx.scene.layout.HBox;
 import org.jackhuang.hmcl.ai.AiApprovalMode;
 import org.jackhuang.hmcl.ai.AiSettings;
 import org.jackhuang.hmcl.ui.construct.IconedItem;
@@ -169,15 +168,15 @@ public final class ApprovalModePopupFxTest {
         menu = openPopup(page);
         clickRow(menu, "Plan"); // Plan Mode on; yolo stays parked underneath
 
-        // Re-open after activating Plan: exactly the Plan row must carry the check icon now, NOT
-        // the yolo row the persisted AiApprovalMode still resolves to.
+        // Re-open after activating Plan: exactly the Plan row must be marked selected now, NOT the
+        // yolo row the persisted AiApprovalMode still resolves to.
         menu = openPopup(page);
         for (Node n : menu.getContent()) {
             IconedItem item = (IconedItem) n;
-            boolean expectChecked = "Plan".equals(item.getLabel().getText());
-            assertEquals(expectChecked, hasCheckIcon(item),
-                    "row \"" + item.getLabel().getText() + "\" checked-state mismatch (expected checked="
-                            + expectChecked + ") while Plan Mode is active");
+            boolean expectSelected = "Plan".equals(item.getLabel().getText());
+            assertEquals(expectSelected, isSelectedRow(item),
+                    "row \"" + item.getLabel().getText() + "\" selected-state mismatch (expected selected="
+                            + expectSelected + ") while Plan Mode is active");
         }
     }
 
@@ -188,14 +187,14 @@ public final class ApprovalModePopupFxTest {
         PopupMenu menu = openPopup(page);
         clickRow(menu, "Manual"); // switch away from the default Auto
 
-        // Re-open after the switch: exactly the Manual row must carry the check icon now.
+        // Re-open after the switch: exactly the Manual row must be marked selected now.
         menu = openPopup(page);
         for (Node n : menu.getContent()) {
             IconedItem item = (IconedItem) n;
-            boolean expectChecked = "Manual".equals(item.getLabel().getText());
-            assertEquals(expectChecked, hasCheckIcon(item),
-                    "row \"" + item.getLabel().getText() + "\" checked-state mismatch (expected checked="
-                            + expectChecked + ") after switching to Manual");
+            boolean expectSelected = "Manual".equals(item.getLabel().getText());
+            assertEquals(expectSelected, isSelectedRow(item),
+                    "row \"" + item.getLabel().getText() + "\" selected-state mismatch (expected selected="
+                            + expectSelected + ") after switching to Manual");
         }
     }
 
@@ -246,10 +245,11 @@ public final class ApprovalModePopupFxTest {
         WaitForAsyncUtils.waitForFxEvents();
     }
 
-    /// Whether an {@link IconedItem} row was built with the checked (`SVG.CHECK`) icon: {@code
-    /// IconedItem}'s HBox only gains a leading icon child when one was passed (see its {@code
-    /// createHBox}), so a 2-child container means the row is checked; a lone label means it is not.
-    private static boolean hasCheckIcon(IconedItem item) {
-        return item.getContainer() instanceof HBox hbox && hbox.getChildren().size() > 1;
+    /// Whether an {@link IconedItem} row is marked as the current selection. The check icon was
+    /// replaced by a left accent bar driven purely by the {@code ai-menu-item-selected} style class
+    /// (2026-07-11 feedback: "竖线代替对钩"), so selection is now read off the style class rather than
+    /// a second child node in the row's container.
+    private static boolean isSelectedRow(IconedItem item) {
+        return item.getStyleClass().contains("ai-menu-item-selected");
     }
 }

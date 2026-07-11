@@ -101,6 +101,7 @@ import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.jackhuang.hmcl.ui.construct.LineToggleButton;
 import org.jackhuang.hmcl.ui.construct.MenuSeparator;
 import org.jackhuang.hmcl.ui.construct.PopupMenu;
+import org.jackhuang.hmcl.ui.construct.RipplerContainer;
 import org.jackhuang.hmcl.ui.decorator.DecoratorAnimatedPage;
 import org.jackhuang.hmcl.ui.decorator.DecoratorPage;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -352,9 +353,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Reasoning-effort popup button in the composer (a field so tests can drive the menu).
     private JFXButton thinkBtn;
     /// The gradient slider inside the thinking-effort popup (v2: replaces the old checkmark menu —
-    /// a field so tests can drive the effort selection without pixel-hunting the popup). Rebuilt
-    /// each time the popup opens; holds the live control while the popup is showing.
+    /// a field so tests can drive the effort selection without pixel-hunting the popup). Built ONCE
+    /// and reused across opens (see {@link #openThinkingSlider()}) so the heavy Slider skin/layout
+    /// cost is paid only the first time; later opens just move the knob to the current value.
     private javafx.scene.control.Slider thinkingSlider;
+    /// The thinking-effort popup's content node, built once and reused so re-opening doesn't rebuild
+    /// the heavy Slider (the old per-open rebuild collided with JFXPopup's expand animation and made
+    /// it look like it didn't animate — 2026-07-11 feedback "复用不会吗").
+    private VBox thinkingContent;
+    /// The live "current effort" value label inside {@link #thinkingContent}, kept so a reused popup
+    /// can be re-synced to the persisted effort before showing.
+    private Label thinkingValueLabel;
     /// Context-usage ring in the composer toolbar (pure arc, no number). Clicking it pops a detail
     /// panel; the arc + a redraw hook are fields so {@link #refreshContextRing()} can update it.
     private StackPane contextRing;
@@ -929,8 +938,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             boolean isolated = runDir != null && profile != null
                     && !runDir.equals(profile.getRepository().getBaseDirectory());
             gameContextTool.setInstanceInfo(sel, isolated);
+            // Authoritative MC version + release type for the selected instance, so the agent never
+            // has to guess "release vs snapshot" from stale memory (pairs with AiPromptBuilder's
+            // VERSION_FRESHNESS guardrail). Mirrors ListInstancesTool's repository.getGameVersion(...)
+            // + Version.getType() reads. Best-effort: any failure just leaves the version info blank.
+            String gameVersion = null, versionType = null;
+            if (profile != null && sel != null) {
+                var repository = profile.getRepository();
+                try {
+                    gameVersion = repository.getGameVersion(sel).orElse(null);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    org.jackhuang.hmcl.game.Version version = repository.getVersion(sel);
+                    if (version != null && version.getType() != null) {
+                        versionType = version.getType().getId();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            gameContextTool.setVersionInfo(gameVersion, versionType);
         } catch (Throwable ignored) {
             gameContextTool.setInstanceInfo(null, false);
+            gameContextTool.setVersionInfo(null, null);
         }
         if (runDir != null) {
             fileReadTool.addRoot(runDir);
@@ -1570,7 +1600,10 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             }
             String defaultModel = active.getDefaultModelId();
             if (defaultModel != null && !defaultModel.isEmpty()) {
-                sb.append(" \u00b7 ").append(defaultModel);
+                // Show the user's display alias (e.g. "DeepSeek-v4-Pro"), not the raw id \u2014 the
+                // dropdown already resolves it via getModelAliasOrId, so the header must match
+                // (2026-07-11 feedback: header still showed the raw "deepseek-v4-pro").
+                sb.append(" \u00b7 ").append(active.getModelAliasOrId(defaultModel));
             }
             headerSubtitle.setText(sb.toString());
         } else {
@@ -1812,7 +1845,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         String model = active.getDefaultModelId();
         return i18n("ai.command.model_current",
                 active.getDisplayName(),
-                model != null && !model.isEmpty() ? model : "-");
+                model != null && !model.isEmpty() ? active.getModelAliasOrId(model) : "-");
     }
 
     // ---- Composer ----
@@ -2140,11 +2173,35 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return;
         }
         int curIdx = effortIndex(aiSettings.getReasoningEffort());
+        // Build the heavy content (Slider skin/track/ticks) exactly ONCE and reuse it — the old code
+        // rebuilt it on every open, and that first-layout cost landing right on JFXPopup's expand
+        // animation was what made the popup look like it "didn't animate". Reusing the same content
+        // AND the same JFXPopup makes every later open as light as the model-selector popup; we only
+        // re-sync the knob to the current persisted effort before showing.
+        if (thinkingPopup == null) {
+            buildThinkingContent(curIdx);
+            thinkingPopup = new JFXPopup(thinkingContent);
+        } else {
+            syncThinkingSlider(curIdx);
+        }
+        JFXPopup popup = thinkingPopup;
+        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, popup);
+        popup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
+                0,
+                vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
+        detachSharedPopupContainerBackground(thinkingContent);
+    }
 
+    /// Builds the thinking-effort popup content ONCE (see {@link #openThinkingSlider()}): the header
+    /// (title + live value), the 6-stop gradient {@link javafx.scene.control.Slider} that persists
+    /// the effort live, and the edge-to-edge tick scale. Assigns {@link #thinkingContent},
+    /// {@link #thinkingSlider} and {@link #thinkingValueLabel} for reuse/re-sync on later opens.
+    private void buildThinkingContent(int curIdx) {
         Label title = new Label(i18n("ai.composer.thinking.title"));
         title.getStyleClass().add("ai-effort-title");
         Label value = new Label(reasoningEffortLabel(EFFORT_LEVELS[curIdx]));
         value.getStyleClass().add("ai-effort-value");
+        thinkingValueLabel = value;
         Region headSpacer = new Region();
         HBox.setHgrow(headSpacer, Priority.ALWAYS);
         HBox head = new HBox(8, title, headSpacer, value);
@@ -2188,14 +2245,19 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         VBox content = new VBox(12, head, slider, scale);
         content.getStyleClass().add("ai-effort-popup");
         content.setPrefWidth(300);
+        thinkingContent = content;
+    }
 
-        JFXPopup popup = new JFXPopup(content);
-        thinkingPopup = popup;
-        JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(thinkBtn, popup);
-        popup.show(thinkBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
-                0,
-                vPosition == JFXPopup.PopupVPosition.TOP ? thinkBtn.getHeight() : -thinkBtn.getHeight());
-        detachSharedPopupContainerBackground(content);
+    /// Re-syncs the reused thinking popup to the current persisted effort before it re-shows: moves
+    /// the knob and updates the value label. The slider's own listener re-fires on setValue but its
+    /// no-op guard (level == persisted) means this never re-persists.
+    private void syncThinkingSlider(int curIdx) {
+        if (thinkingSlider != null) {
+            thinkingSlider.setValue(curIdx);
+        }
+        if (thinkingValueLabel != null) {
+            thinkingValueLabel.setText(reasoningEffortLabel(EFFORT_LEVELS[curIdx]));
+        }
     }
 
     /// Builds the composer's context-usage ring (v2 §5): a pure arc (no number) whose sweep = the
@@ -2354,13 +2416,46 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         String current = modelSelector.getValue();
         for (String label : modelSelector.getItems()) {
             boolean active = java.util.Objects.equals(label, current);
-            menu.getContent().add(new IconedMenuItem(active ? SVG.CHECK : null, label,
-                    () -> modelSelector.setValue(label), popup));
+            menu.getContent().add(buildModelSelectorRow(label, active, popup));
         }
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(modelSelectorBtn, popup);
         popup.show(modelSelectorBtn, vPosition, JFXPopup.PopupHPosition.LEFT,
                 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? modelSelectorBtn.getHeight() : -modelSelectorBtn.getHeight());
+    }
+
+    /// Builds one rich two-line row for {@link #showModelSelectorPopup()}: the model name as the
+    /// primary line over the provider as a small muted subtitle — restoring the LineSelectButton
+    /// native dropdown look ({@code .menu-container} + {@code .title-label} / {@code .subtitle-label})
+    /// that the compact-pill rework flattened into a single-line label (2026-07-11 feedback: "还原
+    /// 模型名+左下角小提供商字"). The current selection is marked by a left accent bar (the shared
+    /// {@code .ai-menu-item-selected} class → root.css) rather than a check icon (2026-07-11 feedback:
+    /// "竖线代替对钩"). When the label has no " / " separator (the empty-state hint) it degrades to a
+    /// single line. Clicking drives {@code modelSelector.setValue(label)} exactly like the old
+    /// {@link IconedMenuItem} row, then hides the popup.
+    private Node buildModelSelectorRow(String label, boolean selected, JFXPopup popup) {
+        Label titleLabel = new Label(modelPartOf(label));
+        titleLabel.getStyleClass().add("title-label");
+        VBox textBox = new VBox(titleLabel);
+        String provider = providerPartOf(label);
+        if (!provider.isEmpty()) {
+            Label subtitleLabel = new Label(provider);
+            subtitleLabel.getStyleClass().add("subtitle-label");
+            textBox.getChildren().add(subtitleLabel);
+        }
+        textBox.setMouseTransparent(true);
+        StackPane container = new StackPane(textBox);
+        container.setAlignment(Pos.CENTER_LEFT);
+        container.getStyleClass().addAll("menu-container", "ai-menu-item");
+        if (selected) {
+            container.getStyleClass().add("ai-menu-item-selected");
+        }
+        RipplerContainer row = new RipplerContainer(container);
+        FXUtils.onClicked(row, () -> {
+            modelSelector.setValue(label);
+            popup.hide();
+        });
+        return row;
     }
 
     /// Shows the mode list from the pill: Manual / Plan / Auto / yolo, in that fixed order —
@@ -2388,23 +2483,43 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         AiApprovalMode current = AiApprovalMode.fromId(aiSettings.getApprovalMode());
         boolean planActive = isPlanMode();
         // Manual, Plan, Auto, yolo — fixed order (not AiApprovalMode.values() order), since Plan
-        // is not a member of that enum and must be interleaved at this specific position.
-        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.MANUAL) ? SVG.CHECK : null,
-                i18n(approvalModeLabelKey(AiApprovalMode.MANUAL)), () -> selectApprovalMode(AiApprovalMode.MANUAL), popup)
+        // is not a member of that enum and must be interleaved at this specific position. The
+        // selected row is marked by a left accent bar (ai-menu-item-selected class → root.css),
+        // consistent with the model selector popup, instead of a check icon (2026-07-11 feedback).
+        menu.getContent().add(approvalMenuItem(i18n(approvalModeLabelKey(AiApprovalMode.MANUAL)),
+                !planActive && current == AiApprovalMode.MANUAL,
+                () -> selectApprovalMode(AiApprovalMode.MANUAL), popup)
                 .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.MANUAL))));
-        menu.getContent().add(new IconedMenuItem(planActive ? SVG.CHECK : null,
-                i18n("ai.settings.approval_badge_plan"), this::selectPlanMode, popup)
+        menu.getContent().add(approvalMenuItem(i18n("ai.settings.approval_badge_plan"),
+                planActive, this::selectPlanMode, popup)
                 .addTooltip(i18n("ai.composer.plan.tooltip")));
-        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.AUTO) ? SVG.CHECK : null,
-                i18n(approvalModeLabelKey(AiApprovalMode.AUTO)), () -> selectApprovalMode(AiApprovalMode.AUTO), popup)
+        menu.getContent().add(approvalMenuItem(i18n(approvalModeLabelKey(AiApprovalMode.AUTO)),
+                !planActive && current == AiApprovalMode.AUTO,
+                () -> selectApprovalMode(AiApprovalMode.AUTO), popup)
                 .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.AUTO))));
-        menu.getContent().add(new IconedMenuItem((!planActive && current == AiApprovalMode.YOLO) ? SVG.CHECK : null,
-                i18n(approvalModeLabelKey(AiApprovalMode.YOLO)), () -> selectApprovalMode(AiApprovalMode.YOLO), popup)
+        menu.getContent().add(approvalMenuItem(i18n(approvalModeLabelKey(AiApprovalMode.YOLO)),
+                !planActive && current == AiApprovalMode.YOLO,
+                () -> selectApprovalMode(AiApprovalMode.YOLO), popup)
                 .addTooltip(i18n(approvalModeTooltipKey(AiApprovalMode.YOLO))));
         JFXPopup.PopupVPosition vPosition = FXUtils.determineOptimalPopupPosition(approvalBadge, popup);
         popup.show(approvalBadge, vPosition, JFXPopup.PopupHPosition.LEFT,
                 0,
                 vPosition == JFXPopup.PopupVPosition.TOP ? approvalBadge.getHeight() : -approvalBadge.getHeight());
+    }
+
+    /// Builds one approval-mode row for {@link #showApprovalModePopup()}: an iconless
+    /// {@link IconedMenuItem} whose selected state is shown by a left accent bar (the shared
+    /// {@code .ai-menu-item-selected} class → root.css), matching the model selector popup, instead
+    /// of the old {@code SVG.CHECK} icon (2026-07-11 feedback: "竖线代替对钩"). Every row carries the
+    /// {@code .ai-menu-item} class so the transparent bar space is reserved and the text never shifts
+    /// when a different row becomes selected.
+    private IconedMenuItem approvalMenuItem(String text, boolean selected, Runnable action, JFXPopup popup) {
+        IconedMenuItem item = new IconedMenuItem(null, text, action, popup);
+        item.getStyleClass().add("ai-menu-item");
+        if (selected) {
+            item.getStyleClass().add("ai-menu-item-selected");
+        }
+        return item;
     }
 
     /// Picks one of {@link AiApprovalMode#MANUAL}/{@link AiApprovalMode#AUTO}/

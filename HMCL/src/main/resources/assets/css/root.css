@@ -309,6 +309,35 @@
     -fx-padding: 8 16 8 16;
 }
 
+/* AI self-drawn popup rows (composer model selector + approval mode). The current selection is
+   marked by a left accent bar instead of a check icon (2026-07-11 feedback: "竖线代替对钩"), the
+   same indicator on both popups. A transparent 3px bar is reserved on EVERY row so selecting one
+   never nudges the text sideways. Scoped to .ai-menu-item so ordinary .iconed-menu-item menus
+   elsewhere in the app are untouched. */
+.ai-menu-item {
+    -fx-border-color: transparent;
+    -fx-border-width: 0 0 0 3;
+}
+
+.ai-menu-item-selected {
+    -fx-border-color: -monet-primary;
+}
+
+/* Two-line model rows reuse the native .title-label/.subtitle-label look; size them to match the
+   LineSelectButton native dropdown (title 13 / provider subtitle 11). Only the model rows carry
+   these child labels — the approval rows use #label — so this affects the model popup only. */
+.ai-menu-item .title-label {
+    -fx-font-size: 13px;
+}
+
+.ai-menu-item .subtitle-label {
+    -fx-font-size: 11px;
+}
+
+.ai-menu-item-selected .title-label {
+    -fx-text-fill: -monet-primary;
+}
+
 .popup-menu .scroll-bar .thumb {
     -fx-fill: -monet-surface-tint;
 }
