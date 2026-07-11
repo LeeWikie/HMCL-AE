@@ -1,18 +1,25 @@
 name: AE Release
 
-# Build HMCL-AE on CI and attach the artifacts to a GitHub release.
-# Manually triggered: pick the tag (must already exist) and the version number to stamp into the build.
+# 在 CI 上构建 HMCL-AE 并发布为一个 GitHub Release(HMCL 式:干净文件名 + 正文内嵌 changelog + SHA-256 表格)。
+# 手动触发:填已存在的 git tag、版本号、以及 changelog。
+#   changelog 来源(二选一,文件优先):
+#     1) 仓库里 docs/release-notes/<version>.md —— 适合长 Markdown 更新日志(推荐,提前 commit 好)
+#     2) 下方 changelog 输入框 —— 适合短说明(GitHub UI 是单行,长文用文件方式)
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing git tag to release (e.g. v0.1.0-alpha)'
+        description: '要发布的已存在 git tag(如 v0.1.0-alpha)'
         required: true
       version:
-        description: 'Version number stamped into the artifacts (e.g. 0.1.0-alpha)'
+        description: '打进构建物 + 显示的版本号(如 0.1.0-alpha)'
         required: true
+      changelog:
+        description: '更新日志(短说明;长 Markdown 请放 docs/release-notes/<version>.md,文件优先)'
+        required: false
+        default: ''
       prerelease:
-        description: 'Mark as pre-release'
+        description: '标记为预发布'
         type: boolean
         default: true
 
@@ -46,34 +53,58 @@ jobs:
           MICROSOFT_AUTH_ID: ${{ secrets.MICROSOFT_AUTH_ID }}
           CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
 
-      - name: Collect artifacts
-        id: collect
+      - name: Collect artifacts + build release notes
+        # 输入经 env 传入(不直接插进脚本),避免 changelog 里的特殊字符破坏 shell / 注入。
+        env:
+          V: ${{ github.event.inputs.version }}
+          CHANGELOG_INPUT: ${{ github.event.inputs.changelog }}
         run: |
+          set -euo pipefail
           mkdir -p dist
-          V='${{ github.event.inputs.version }}'
-          # CI stamps the build as <version>.unofficial-<sha>; rename to a clean HMCL-<version>.<ext>
-          # and (re)generate sha256 so the release has tidy, matching filenames + checksums.
-          for ext in jar exe sh deb; do
-            src=$(ls HMCL/build/libs/HMCL-*."$ext" 2>/dev/null | head -1) || true
+          # CI 把构建标成 <version>.unofficial-<sha>;重命名为干净的 HMCL-<version>.<ext>。
+          for ext in exe jar sh deb; do
+            src=$(ls HMCL/build/libs/HMCL-*."$ext" 2>/dev/null | head -1 || true)
             if [ -n "$src" ] && [ -f "$src" ]; then
-              out="dist/HMCL-$V.$ext"
-              cp "$src" "$out"
-              sha256sum "$out" | awk '{print $1}' > "$out.sha256"
+              cp "$src" "dist/HMCL-$V.$ext"
             fi
           done
-          echo "Built files:"
-          ls -la dist/
+          echo "构建产物:"; ls -la dist/
+          # 组装 Release 正文:changelog(文件优先,否则输入框) + SHA-256 表格。
+          notes="docs/release-notes/$V.md"
+          {
+            if [ -f "$notes" ]; then
+              cat "$notes"
+            else
+              printf '%s\n' "$CHANGELOG_INPUT"
+            fi
+            echo ""
+            echo "## SHA-256 Checksums"
+            echo ""
+            echo "| 文件 | SHA-256 |"
+            echo "|------|---------|"
+            for f in dist/HMCL-*; do
+              printf '| `%s` | `%s` |\n' "$(basename "$f")" "$(sha256sum "$f" | awk '{print $1}')"
+            done
+          } > dist/RELEASE_NOTES.md
+          echo "----- RELEASE_NOTES.md -----"; cat dist/RELEASE_NOTES.md
 
-      - name: Clean stale release assets
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag }}
+          V: ${{ github.event.inputs.version }}
+          PRERELEASE: ${{ github.event.inputs.prerelease }}
         run: |
-          # Remove any previously-uploaded assets for this tag so renamed/old-named files don't linger.
-          for a in $(gh release view "${{ github.event.inputs.tag }}" --json assets --jq '.assets[].name'); do
-            gh release delete-asset "${{ github.event.inputs.tag }}" "$a" -y || true
-          done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload to GitHub release
-        run: gh release upload "${{ github.event.inputs.tag }}" dist/* --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          set -euo pipefail
+          pre=""
+          [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "HMCL-AE $V" --notes-file dist/RELEASE_NOTES.md $pre
+            # 清掉旧资产,避免重命名/旧名文件残留
+            for a in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
+              gh release delete-asset "$TAG" "$a" -y || true
+            done
+            gh release upload "$TAG" dist/HMCL-* --clobber
+          else
+            gh release create "$TAG" --title "HMCL-AE $V" --notes-file dist/RELEASE_NOTES.md $pre dist/HMCL-*
+          fi
