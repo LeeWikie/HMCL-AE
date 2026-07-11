@@ -759,7 +759,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             }
         };
         dialog.setTitle(i18n("ai.settings.model.dialog_title"));
-        dialog.setBody(bodyBox);
+        // Fixed-height scroll body: expanding the folded 高级设置/定价 sections now grows/scrolls only
+        // INSIDE this viewport instead of pushing the whole dialog frame outward (2026-07-11 feedback).
+        ScrollPane bodyScroll = wrapScroll(bodyBox);
+        FXUtils.setLimitHeight(bodyScroll, MODEL_DIALOG_BODY_HEIGHT);
+        dialog.setBody(bodyScroll);
         Controllers.dialog(dialog);
     }
 
@@ -793,6 +797,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     static final double MODEL_TOP_ROW_VGAP = 16;   // 模型ID / 别名 top grid vgap
     static final double MODEL_FIELD_HEIGHT = 42;   // input visual height
     static final Insets MODEL_SECTION_PADDING = new Insets(22, 20, 20, 20); // expanded-section content padding
+    /// Fixed height of the model dialog's scrollable body (2026-07-11 feedback: expanding the folded
+    /// 高级设置/定价 sections used to balloon the whole dialog outward — "弹窗四周被向外扩展"). With a
+    /// fixed-height scroll viewport the dialog frame stays put and a section's expansion grows/scrolls
+    /// only INSIDE it. Value picked to show the top ID/别名 rows plus one expanded section comfortably;
+    /// tune on real hardware if the collapsed state looks too empty or an expanded section clips.
+    static final double MODEL_DIALOG_BODY_HEIGHT = 440;
 
     /// Wraps a field with its label as small caption text at the top-left, for the 2x2
     /// 高级/定价 grids in the model dialog. Caption→field spacing is {@link #MODEL_CAPTION_GAP}.
