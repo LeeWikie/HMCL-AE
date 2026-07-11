@@ -1,6 +1,6 @@
 {
   "name": "set-skin",
-  "description": "Changes one account's skin, cape, or player model via account(action=set_skin) — online accounts take a local PNG only, offline accounts also allow capes and Steve/Alex presets. Use when the user wants to set or change a skin, cape, or model (\"换皮肤\",\"设置皮肤\",\"披风\",\"改模型\"); logging in or switching accounts is login-and-switch.",
+  "description": "Changes one account's skin, cape, or player model via account(action=set_skin). Online accounts take a local PNG only; offline accounts also allow capes and Steve/Alex presets. Use when the user wants to set or change a skin, cape, or model (\"换皮肤\",\"设置皮肤\",\"披风\",\"改模型\"); logging in or switching accounts is login-and-switch.",
   "version": "1.0",
   "triggers": [
     "皮肤",

@@ -251,14 +251,14 @@ public final class AiPromptBuilderSkillInjectionTest {
                 "dev-mode must never be matched via the normal trigger/BM25 retrieval pool");
     }
 
-    // --- Skill tree in the stable prefix (replaces the old scenario-only flat index) ---
+    // --- Flat skill index in the stable prefix (replaced the earlier domain-grouped tree) ---
 
-    /// The stable prefix's skill index must be the full, domain-grouped tree over the REAL
-    /// built-in catalog: scenario-level playbooks at the root, operation-level ones grouped under
-    /// their domain directory (previously invisible in the prompt entirely), and dev-mode — which
-    /// has its own dedicated injection path — absent from it.
+    /// The stable prefix's skill index must be a FLAT, MEMORY-style list over the REAL built-in
+    /// catalog: one line per loadable skill, scenario- and operation-level skills alike at the SAME
+    /// level (no "Scenario/Operation playbooks" section headers, no "<domain>/" group lines, no
+    /// indented nesting), and dev-mode — which has its own dedicated injection path — absent.
     @Test
-    public void stablePrefixCarriesTheDomainGroupedSkillTree(@TempDir Path dir) throws Exception {
+    public void stablePrefixCarriesTheFlatSkillIndex(@TempDir Path dir) throws Exception {
         SkillRegistry registry = new SkillRegistry();
         registry.setSkillsDir(dir.resolve("skills"));
         registry.refresh(); // loads the real built-in skills (both levels) from bundled JSON
@@ -266,13 +266,53 @@ public final class AiPromptBuilderSkillInjectionTest {
         AiPromptBuilder pb = new AiPromptBuilder(settings, new ToolRegistry(), registry, new AiSearchConfig());
 
         String prefix = pb.buildStablePrefix();
-        assertTrue(prefix.contains("Scenario playbooks"), "tree must have a scenario section");
+        // Both a scenario-level and an operation-level skill appear as plain, un-indented flat lines.
         assertTrue(prefix.contains("- diagnose-crash:"), "a real scenario skill must be listed with a brief");
-        assertTrue(prefix.contains("- instance/"), "operation skills must be grouped by their domain");
-        assertTrue(prefix.contains("  - mods-install:"),
-                "a real operation-level skill must now be listed in the tree (it never was before)");
+        assertTrue(prefix.contains("- mods-install:"),
+                "an operation-level skill must be listed flat, by its bare name, not nested under a domain");
+        // No tree scaffolding survives: no section headers, no domain group line, no indentation.
+        assertFalse(prefix.contains("Scenario playbooks"), "flat index must have no scenario section header");
+        assertFalse(prefix.contains("Operation playbooks"), "flat index must have no operation section header");
+        assertFalse(prefix.contains("- instance/"), "flat index must not group operation skills by domain");
+        assertFalse(prefix.contains("  - mods-install:"), "flat index must not indent any skill under a domain");
         assertFalse(prefix.contains("- dev-mode"),
-                "dev-mode must not be offered in the tree — it is never a load_skill target");
+                "dev-mode must not be offered in the index — it is never a load_skill target");
+    }
+
+    /// Data-driven guard for the "first-sentence brief truncated with …" bug (a shipped
+    /// description whose first sentence ran past the {@code oneLineBrief} cap lost its
+    /// disambiguating tail to an ellipsis). Runs over the REAL built-in catalog — the earlier
+    /// tests only exercised synthetic descriptions and so missed the actual offenders.
+    @Test
+    public void noBuiltinSkillBriefIsTruncated() {
+        for (var m : org.jackhuang.hmcl.ai.skills.SkillLoader.loadBuiltinSkills()) {
+            String brief = AiPromptBuilder.oneLineBrief(m.getDescription());
+            assertFalse(brief.endsWith("…"),
+                    "skill '" + m.getName() + "' first-sentence brief is ellipsis-truncated (shorten its first "
+                            + "sentence to end with a real '. '/'。' under the cap): " + brief);
+        }
+    }
+
+    /// Regression guard for the "skill_hint flooding" the user reported: a short, generic message
+    /// must match only a BOUNDED handful of skills, never a dozen-plus. Exercises the whole
+    /// count-limiting stack against the REAL catalog — BM25 relative-score floor + query-side
+    /// bigram-only CJK tokenization (SkillIndex) and the requires-expansion total cap
+    /// (AiPromptBuilder). A purpose-free ASCII token that shares nothing with any skill must match
+    /// nothing at all (the weak tail is cut, not merely capped).
+    @Test
+    public void shortGenericMessageMatchesABoundedNumberOfSkills(@TempDir Path dir) throws Exception {
+        SkillRegistry registry = new SkillRegistry();
+        registry.setSkillsDir(dir.resolve("skills"));
+        registry.refresh(); // loads the real built-in catalog (~30 skills) from bundled JSON
+        AiSettings settings = new AiSettings(dir.resolve("settings"));
+        AiPromptBuilder pb = new AiPromptBuilder(settings, new ToolRegistry(), registry, new AiSearchConfig());
+
+        List<String> generic = pb.matchSkills("帮我看看这个");
+        assertTrue(generic.size() <= AiPromptBuilder.SKILL_HINT_MAX_TOTAL,
+                "a short generic message must not flood the hint — got " + generic.size() + ": " + generic);
+
+        assertTrue(pb.matchSkills("qzxwvk").isEmpty(),
+                "an ASCII token sharing nothing with any skill must match nothing (weak tail cut, not just capped)");
     }
 
     /// oneLineBrief() is what keeps the always-present tree cheap: it must cut a shipped-style

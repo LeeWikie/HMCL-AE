@@ -97,9 +97,12 @@ public final class AiPromptBuilder {
             "- ocr_image(image[, instance]): READ the text inside an image — use when a crash/error is given as a SCREENSHOT instead of text, then diagnose from the recognized text. Needs OCR enabled in AI 设置 > OCR; if it returns a 'not enabled/not implemented' error, tell the user to configure it.",
             "Memory (persists across conversations, file-based):",
             "- remember(title, content[, tags]): store a durable fact (user preferences, decisions, recurring setups). recall(query[, tag, limit]): retrieve them. Use recall at the start when a task may depend on remembered preferences; use remember when the user states a lasting preference.",
-            "Web / dialog:",
-            "- web_search: search the web for current info. PREFER this for any 'search/look up/find online' request.",
-            "- web_fetch: fetch a SPECIFIC, already-known URL. Do NOT use web_fetch to 'search' — web_search first, then web_fetch a result's URL.",
+            // web_search/web_fetch are NOT listed here: their availability tracks the "web search
+            // enabled" setting (same switch that gates their tool REGISTRATION), so listing them
+            // unconditionally in this always-present static guide would advertise ghost tools
+            // whenever the user has web access off. They are documented instead in the volatile
+            // suffix, only when searchConfig.isEnabled() — see buildVolatileSuffix.
+            "Dialog:",
             "- ask: pops a structured UI dialog — reserve it for 2+ concrete single/multi-select options, or for bundling 2+ related sub-questions into ONE dialog (a free-text sub-question is fine there, alongside a structured one). For a single open-ended question or a vague/fuzzy opinion or preference with no discrete options, do NOT call this tool — just ask directly in your response text and end the turn normally (see rule 15). A '自定义/custom' choice is appended automatically to single/multi questions — do NOT add it yourself. Example: vague 'install a version then Sodium + addons' -> instance(action=list), search(action=mods), then ask {version? single [1.21.1,1.20.1]; loader? single [Fabric,Forge,NeoForge,Quilt]; which addons? multi}, then instance(action=create) + instance(action=mods_install) with the answers.",
             "Do not print whole files via shell just to show them — read and summarize in plain text.");
 
@@ -220,6 +223,17 @@ public final class AiPromptBuilder {
     /// candidates costs almost nothing while improving recall for the model to choose from.
     static final int SKILL_MATCH_LIMIT = 8;
 
+    /// Hard ceiling on the TOTAL number of skills a single turn's {@code skill_hint} nudge may
+    /// name — Layer-1 + Layer-2 retrieval ({@link #SKILL_MATCH_LIMIT}) PLUS the {@code requires:}
+    /// expansion that follows. Retrieval is already bounded by {@link #SKILL_MATCH_LIMIT}, but
+    /// {@code requires:}-expansion is otherwise unbounded (a scenario skill can pull in 4-5
+    /// operation skills, and several scenario skills can match at once), which is how a nudge grew
+    /// to a dozen-plus entries in live testing. This caps the whole set so the nudge stays a short,
+    /// scannable checklist rather than a wall — matched skills are added before requires, so under
+    /// pressure the model still sees the skills that actually matched, just fewer of their
+    /// transitively-required ones.
+    static final int SKILL_HINT_MAX_TOTAL = 12;
+
     /// Literal, deterministic "[Dev]" testing/debug-collaboration tag — an established convention
     /// of the project's own tester/developer when reporting a bug while live-testing the app (e.g.
     /// {@code "[Dev]为什么工具识别为共享？"}). Detected as a plain substring, NOT via
@@ -270,7 +284,9 @@ public final class AiPromptBuilder {
     ///    left empty (up to {@link #SKILL_MATCH_LIMIT} total) from the skills Layer 1 didn't hit.
     /// 3. For every skill matched by either layer, its {@code requires:} list (operation-level
     ///    skills a scenario skill's playbook orchestrates) is added too — deterministic, and NOT
-    ///    counted against {@link #SKILL_MATCH_LIMIT}, since it isn't a retrieval guess.
+    ///    counted against {@link #SKILL_MATCH_LIMIT}, since it isn't a retrieval guess. The whole
+    ///    set (retrieval matches + requires-expansion) is finally capped at
+    ///    {@link #SKILL_HINT_MAX_TOTAL} so the nudge can't balloon to a dozen-plus entries.
     ///
     /// The dev-mode skill (see {@link #DEV_MODE_SKILL_NAME}) is excluded from the candidate pool
     /// entirely — it is never a retrieval guess, it has its own dedicated, deterministic,
@@ -312,11 +328,17 @@ public final class AiPromptBuilder {
             }
         }
         for (String name : List.copyOf(names)) {
+            if (names.size() >= SKILL_HINT_MAX_TOTAL) {
+                break;
+            }
             SkillManifest m = byName.get(name);
             if (m == null) {
                 continue;
             }
             for (String required : m.getRequires()) {
+                if (names.size() >= SKILL_HINT_MAX_TOTAL) {
+                    break;
+                }
                 if (byName.containsKey(required)) {
                     names.add(required);
                 }
@@ -406,9 +428,16 @@ public final class AiPromptBuilder {
             blocks.add(PLAN);
         }
 
+        // Web tools are documented HERE (volatile suffix), gated on the SAME "web search enabled"
+        // state that gates their registration — so when web access is off they are neither
+        // registered nor advertised (no ghost tools), and when on the model gets their full usage
+        // guidance rather than a bare "enabled" note.
         if (searchConfig.isEnabled()) {
             addBlankIfNonEmpty(blocks);
-            blocks.add("Web search is enabled — use it for current information and cite source URLs.");
+            blocks.add(String.join("\n",
+                    "Web tools are ENABLED this turn — use them for current information and cite source URLs:",
+                    "- web_search: search the web for current info. PREFER this for any 'search/look up/find online' request.",
+                    "- web_fetch: fetch a SPECIFIC, already-known URL. Do NOT use web_fetch to 'search' — web_search first, then web_fetch a result's URL."));
         }
 
         // Mirror EXACTLY the constructor ChatAgentFactory uses for the policy that actually
@@ -580,15 +609,17 @@ public final class AiPromptBuilder {
         return d;
     }
 
-    /// The always-present skill index, tree-shaped: scenario-level playbooks at the root, then
-    /// operation-level playbooks grouped by their domain directory, ONE line (name + first-sentence
-    /// brief) per skill — full playbook text is never preloaded. Replaces the old scenario-only
-    /// flat index: with bodies no longer auto-injected, the model must be able to see EVERY
-    /// loadable skill (both levels) to decide what to {@code load_skill}, and one-line briefs keep
-    /// the whole tree cheaper than a single old full-body injection. Deterministically sorted so
-    /// the stable prefix stays byte-identical for a given registry state. {@code null} when no
-    /// skills are enabled. The dev-mode skill is excluded — it has its own dedicated injection
-    /// path and must never be self-served via load_skill (see {@link #DEV_MODE_SKILL_NAME}).
+    /// The always-present skill index: a FLAT, MEMORY-style list — ONE line per loadable skill
+    /// ({@code - <name>: <first-sentence brief>}), sorted by name, no domain headers and no
+    /// indented nesting. (Replaced an earlier two-level domain-grouped tree, per the user's
+    /// 2026-07-10 feedback that the nested layout was noisy: a flat one-line-per-skill list reads
+    /// like the MEMORY index and is easier for the model to scan.) Full playbook text is never
+    /// preloaded — every skill here is reachable by {@code load_skill(name=...)} using the exact
+    /// name shown; scenario-level playbooks pull in the operation-level skills they {@code
+    /// requires:} automatically when loaded. Deterministically sorted so the stable prefix stays
+    /// byte-identical for a given registry state. {@code null} when no skills are enabled. The
+    /// dev-mode skill is excluded — it has its own dedicated injection path and must never be
+    /// self-served via load_skill (see {@link #DEV_MODE_SKILL_NAME}).
     @Nullable
     private String skillTreeBlock() {
         List<SkillManifest> enabled = skillRegistry.enabled().stream()
@@ -597,79 +628,33 @@ public final class AiPromptBuilder {
         if (enabled.isEmpty()) {
             return null;
         }
-        java.util.TreeMap<String, java.util.TreeMap<String, String>> domains = new java.util.TreeMap<>();
-        java.util.TreeMap<String, String> scenarios = new java.util.TreeMap<>();
-        Path skillsDir = skillRegistry.getSkillsDir();
+        // Flat, one line per skill, keyed by name so ordering is deterministic (byte-identical
+        // stable prefix for a given registry state) and there are never two collapsed entries.
+        java.util.TreeMap<String, String> lines = new java.util.TreeMap<>();
         for (SkillManifest m : enabled) {
             String line = m.getName();
             String brief = oneLineBrief(m.getDescription());
             if (!brief.isEmpty()) {
                 line += ": " + brief;
             }
-            if (SkillLoader.isScenarioLevel(skillsDir, m)) {
-                scenarios.put(m.getName(), line);
-            } else {
-                String domain = operationDomain(skillsDir, m);
-                domains.computeIfAbsent(domain != null ? domain : "misc", d -> new java.util.TreeMap<>())
-                        .put(m.getName(), line);
-            }
+            lines.put(m.getName(), line);
         }
-        StringBuilder tree = new StringBuilder();
-        if (!scenarios.isEmpty()) {
-            tree.append("Scenario playbooks (task-level):\n");
-            for (String line : scenarios.values()) {
-                tree.append("- ").append(line).append('\n');
-            }
+        StringBuilder list = new StringBuilder();
+        for (String line : lines.values()) {
+            list.append("- ").append(line).append('\n');
         }
-        if (!domains.isEmpty()) {
-            tree.append("Operation playbooks (single concrete operations, grouped by domain — load by the bare name shown):\n");
-            for (Map.Entry<String, java.util.TreeMap<String, String>> domain : domains.entrySet()) {
-                tree.append("- ").append(domain.getKey()).append("/\n");
-                for (String line : domain.getValue().values()) {
-                    tree.append("  - ").append(line).append('\n');
-                }
-            }
-        }
-        return "Domain skills — step-by-step playbooks for Minecraft/HMCL tasks. This tree (one line per skill:\n"
-                + "name + what it covers) is the ONLY part preloaded; no playbook's full text is in context until you load it.\n"
+        return "Domain skills — step-by-step playbooks for Minecraft/HMCL tasks. This flat list (one line per\n"
+                + "skill: name + what it covers) is the ONLY part preloaded; no playbook's full text is in context\n"
+                + "until you load it. Load a skill by the exact name shown.\n"
                 + "- When part of the task falls under a skill, call load_skill(name=\"...\") FIRST and follow the returned\n"
                 + "  steps for that part — do not improvise a procedure a playbook covers, and do NOT use the read tool\n"
                 + "  for SKILL files. Load several at once with load_skill(names=[...]).\n"
-                + "- Loading a scenario-level skill automatically includes the operation-level skills it requires.\n"
+                + "- Some skills orchestrate others: loading one automatically also loads the skills it requires.\n"
                 + "- A <" + org.jackhuang.hmcl.ai.langchain4j.GuardMessageFormatter.TAG + " type=\"" + SKILL_HINT_GUARD_TYPE
                 + "\"> notice in a turn flags skills whose trigger words matched that\n"
                 + "  message. Treat it as a checklist: load what is (or might be) relevant BEFORE acting — when unsure,\n"
                 + "  load it — or consciously decide none apply and continue without loading.\n"
-                + tree.toString().strip();
-    }
-
-    /// Domain directory of an operation-level skill (`<domain>/<slug>`): parsed from the bundled
-    /// classpath resource path for a built-in, or by relativizing against {@code skillsDir} for a
-    /// user-authored one. {@code null} when it cannot be determined (grouped as "misc").
-    @Nullable
-    private static String operationDomain(@Nullable Path skillsDir, SkillManifest m) {
-        String path = m.getPath();
-        if (path == null) {
-            return null;
-        }
-        if (m.isBuiltin()) {
-            // "/assets/skills/<domain>/<slug>/SKILL.json"
-            String[] parts = path.split("/");
-            return parts.length >= 4 ? parts[parts.length - 3] : null;
-        }
-        if (skillsDir == null) {
-            return null;
-        }
-        Path parent = Path.of(path).getParent();
-        if (parent == null) {
-            return null;
-        }
-        try {
-            Path relative = skillsDir.relativize(parent);
-            return relative.getNameCount() == 2 ? relative.getName(0).toString() : null;
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+                + list.toString().strip();
     }
 
     /// Maps a reply-language mode to a directive, or {@code null} for `auto` / unknown.

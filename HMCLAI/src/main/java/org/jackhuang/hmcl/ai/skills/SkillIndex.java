@@ -48,6 +48,14 @@ public final class SkillIndex {
     private static final double K1 = 1.5;
     private static final double B = 0.75;
 
+    /// Relative-score floor: a Layer-2 hit is kept only if its BM25 score is at least this fraction
+    /// of the TOP hit's score for the same query. Without it, BM25 returns a long tail of documents
+    /// that share just one weak, common term with the query — for a short generic message that tail
+    /// filled every open match slot (the "skill flooding" the user reported). Anchoring the cutoff
+    /// to the top score (rather than an absolute threshold) keeps it scale-free across queries of
+    /// different lengths/rarities: only skills genuinely close to the best match survive.
+    private static final double RELATIVE_SCORE_FLOOR = 0.3;
+
     private final List<SkillManifest> skills;
     private final List<Map<String, Integer>> termFrequencies;
     private final Map<String, Integer> documentFrequency;
@@ -98,7 +106,7 @@ public final class SkillIndex {
         if (query == null || query.isBlank() || skills.isEmpty() || limit <= 0) {
             return List.of();
         }
-        List<String> queryTerms = tokenize(query);
+        List<String> queryTerms = tokenize(query, true);
         if (queryTerms.isEmpty()) {
             return List.of();
         }
@@ -141,8 +149,16 @@ public final class SkillIndex {
             return nameOf(skills.get(a)).compareTo(nameOf(skills.get(b)));
         });
 
+        // Relative-score floor: `order` is sorted descending, so the first entry is the top score.
+        // Keep only hits scoring at least RELATIVE_SCORE_FLOOR of it; once one falls below, every
+        // later one does too, so we can stop. This drops the weak, one-common-term tail that used
+        // to flood the match slots on short generic queries.
+        double floor = order.isEmpty() ? 0 : scores[order.get(0)] * RELATIVE_SCORE_FLOOR;
         List<SkillManifest> results = new ArrayList<>(Math.min(limit, order.size()));
         for (int i = 0; i < order.size() && results.size() < limit; i++) {
+            if (scores[order.get(i)] < floor) {
+                break;
+            }
             results.add(skills.get(order.get(i)));
         }
         return results;
@@ -153,17 +169,31 @@ public final class SkillIndex {
         return m.getName() != null ? m.getName() : "";
     }
 
-    /// Splits text into lower-cased ASCII word tokens plus, for each CJK run, both overlapping
-    /// character bigrams AND every individual character as its own unigram — so a single-character
-    /// query can match a document where that character occurs anywhere inside a longer run, not
-    /// only when the run itself is exactly 1 character. Punctuation/whitespace are token separators
-    /// throughout.
-    ///
-    /// NFKC-normalizes first so fullwidth Latin letters/digits (common from CJK input methods,
-    /// e.g. "ＭＯＤ") fold to their halfwidth equivalents and tokenize identically to ASCII "mod" —
-    /// without this they fell into the CJK/isWordChar gap and could never match a halfwidth query
-    /// or trigger phrase.
+    /// Document-side tokenizer (see {@link #tokenize(String, boolean)} with {@code forQuery=false}):
+    /// lower-cased ASCII word tokens plus, for each CJK run, both overlapping character bigrams AND
+    /// every individual character as its own unigram. Package-private so the tokenizer tests can
+    /// assert the indexed (document) token set directly.
     static List<String> tokenize(String text) {
+        return tokenize(text, false);
+    }
+
+    /// Splits text into lower-cased ASCII word tokens plus CJK n-grams. Punctuation/whitespace are
+    /// token separators throughout. NFKC-normalizes first so fullwidth Latin letters/digits (common
+    /// from CJK input methods, e.g. "ＭＯＤ") fold to their halfwidth equivalents and tokenize
+    /// identically to ASCII "mod" — without this they fell into the CJK/isWordChar gap and could
+    /// never match a halfwidth query or trigger phrase.
+    ///
+    /// CJK unigram emission is ASYMMETRIC between documents and queries, and that asymmetry is the
+    /// point:
+    /// - DOCUMENTS ({@code forQuery=false}) emit every character of a run as a unigram AND all
+    ///   overlapping bigrams — so a genuine single-character query can still find a character that
+    ///   only ever appears embedded inside a longer run.
+    /// - QUERIES ({@code forQuery=true}) emit a unigram ONLY for a run that is itself a single
+    ///   character; a multi-character query run emits bigrams ONLY. This means a normal
+    ///   multi-character message must share at least a 2-character sequence with a skill to match
+    ///   it — it can no longer light up nearly every skill via one incidentally-shared common
+    ///   character, which is what let short generic messages flood the Layer-2 match slots.
+    static List<String> tokenize(String text, boolean forQuery) {
         text = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC);
         List<String> tokens = new ArrayList<>();
         int length = text.length();
@@ -182,12 +212,12 @@ public final class SkillIndex {
                     i++;
                 }
                 String run = text.substring(start, i);
-                // Every character of the run as its own unigram (not just when the run is exactly
-                // 1 character) — otherwise a single-character query almost never matches a document,
-                // since most CJK text has that character embedded in a longer run and only ever
-                // emitted as part of overlapping bigrams.
-                for (int j = 0; j < run.length(); j++) {
-                    tokens.add(run.substring(j, j + 1));
+                // Unigrams: always for a document; for a query, only a single-character run (see the
+                // method doc for why this asymmetry stops short generic queries over-matching).
+                if (!forQuery || run.length() == 1) {
+                    for (int j = 0; j < run.length(); j++) {
+                        tokens.add(run.substring(j, j + 1));
+                    }
                 }
                 for (int j = 0; j + 1 < run.length(); j++) {
                     tokens.add(run.substring(j, j + 2));
