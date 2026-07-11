@@ -1668,12 +1668,12 @@ public final class FXUtils {
     }
 
     /**
-     * Horizontal mirror of {@link #determineOptimalPopupPosition(Node, JFXPopup)}: decides whether a
-     * popup should expand to the RIGHT (default) or flip and expand to the LEFT so it does not run
-     * past the window's left/right edge — the same idea a Windows context menu uses to flip up/down
-     * near a screen edge, applied here to left/right against the WINDOW (Stage) bounds because a
-     * JFXPopup has autoFix disabled and no horizontal scrollbar, so anything past the edge is simply
-     * unreachable.
+     * Horizontal mirror of {@link #determineOptimalPopupPosition(Node, JFXPopup)}: opens the popup
+     * toward whichever side has more room inside the WINDOW (Stage) bounds, so a right-group control
+     * (model / thinking / context ring) expands LEFT — right-aligned under the anchor, away from the
+     * toolbar's right edge — while a left-group control expands RIGHT. Choosing the roomier side also
+     * inherently keeps the popup off the nearest window edge (a JFXPopup has autoFix disabled and no
+     * horizontal scrollbar, so anything past the edge is simply unreachable).
      *
      * <p>JFXPopup's {@code PopupHPosition} is anchor-EDGE alignment, not an expansion direction:
      * {@code LEFT} aligns the popup's left edge to the anchor and expands rightward (pass offsetX 0),
@@ -1718,30 +1718,16 @@ public final class FXUtils {
         double availableSpaceRight = clipMaxX - itemScreenMinX;
         double availableSpaceLeft = itemScreenMaxX - clipMinX;
 
-        Region popupContent = popupInstance.getPopupContent();
-        double menuWidth;
-        if (popupContent.getWidth() <= 0) {
-            popupContent.autosize();
-            popupContent.applyCss();
-            popupContent.layout();
-            menuWidth = popupContent.getWidth();
-            if (menuWidth <= 0) {
-                menuWidth = 300; // fallback matching the composer popups' pref width
-            }
-        } else {
-            menuWidth = popupContent.getWidth();
-        }
-        menuWidth += 20; // safety margin, matching the vertical helper
-
-        // Flip to expand LEFT only when there is genuinely not enough room to the right AND either
-        // enough room to the left or at least MORE room to the left (same tie-break as the vertical
-        // helper — when neither side fits, pick the side that truncates less).
-        if (availableSpaceRight < menuWidth
-                && (availableSpaceLeft > menuWidth || availableSpaceLeft > availableSpaceRight)) {
-            return JFXPopup.PopupHPosition.RIGHT;  // not enough room right → expand leftward
-        } else {
-            return JFXPopup.PopupHPosition.LEFT;   // default → expand rightward from the anchor
-        }
+        // Open toward whichever side has more room inside the window. A right-group control
+        // (model / thinking / context ring) has most of the window to its left, so it expands
+        // LEFT (right-aligned under the anchor); a left-group control (approval badge) expands
+        // RIGHT. Picking the roomier side also keeps the popup off the nearest window edge and
+        // truncates least in a narrow window (same tie-break spirit as the vertical helper).
+        // popupInstance is kept in the signature to mirror the vertical helper; width is not
+        // needed since the roomier side already minimises overflow.
+        return availableSpaceLeft > availableSpaceRight
+                ? JFXPopup.PopupHPosition.RIGHT   // more room left → align popup's right edge to anchor, expand leftward
+                : JFXPopup.PopupHPosition.LEFT;   // more room right → align popup's left edge to anchor, expand rightward
     }
 
     public static void useJFXContextMenu(TextInputControl control) {
