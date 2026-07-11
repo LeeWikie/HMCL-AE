@@ -65,6 +65,32 @@ public final class GameContextTool implements ToolSpec {
         return isolated;
     }
 
+    @Nullable
+    private String gameVersion;
+    @Nullable
+    private String versionType;
+
+    /// Records the AUTHORITATIVE Minecraft version (e.g. {@code "1.21.1"}) and its release-type id
+    /// ({@code "release"}/{@code "snapshot"}/…) of the selected instance, resolved from the
+    /// launcher's own version metadata. This exists so the agent can answer "is this a release or a
+    /// snapshot" from a fact instead of guessing from its (possibly stale) training memory — the
+    /// exact failure the {@code VERSION_FRESHNESS} guardrail warns against (a real released version
+    /// mislabelled as "probably a snapshot" simply because it postdates the model's cutoff).
+    public void setVersionInfo(@Nullable String gameVersion, @Nullable String versionType) {
+        this.gameVersion = gameVersion;
+        this.versionType = versionType;
+    }
+
+    @Nullable
+    public String getGameVersion() {
+        return gameVersion;
+    }
+
+    @Nullable
+    public String getVersionType() {
+        return versionType;
+    }
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.READ_ONLY;
@@ -119,6 +145,13 @@ public final class GameContextTool implements ToolSpec {
                 + "paths.\n\n");
         if (instanceName != null) {
             sb.append("selectedInstance: ").append(instanceName).append('\n');
+        }
+        if (gameVersion != null) {
+            sb.append("gameVersion: ").append(gameVersion);
+            if (versionType != null) {
+                sb.append(" (").append(versionType).append(')');
+            }
+            sb.append('\n');
         }
         sb.append("versionIsolation: ").append(isolated
                 ? "ON (mods/saves/config under versions/" + (instanceName != null ? instanceName : "<name>") + "/)"

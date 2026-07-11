@@ -783,6 +783,22 @@ public final class AiPromptBuilder {
                             : "OFF — follows the global/parent preset's own directory setting instead of its own "
                                 + "versions/<name>/ folder (commonly the shared base .minecraft, but whatever that "
                                 + "global default currently is — don't assume)"));
+                // AUTHORITATIVE version + release type of the selected instance (see the
+                // VERSION_FRESHNESS guardrail): the model must READ this instead of guessing whether
+                // the version is a release or a snapshot from its stale memory.
+                String ver = gct.getGameVersion();
+                if (ver != null) {
+                    String vt = gct.getVersionType();
+                    String typeNote;
+                    if ("release".equals(vt)) {
+                        typeNote = "release — an official STABLE release, NOT a snapshot";
+                    } else if ("snapshot".equals(vt)) {
+                        typeNote = "snapshot";
+                    } else {
+                        typeNote = vt != null ? vt : "unknown";
+                    }
+                    ctx.add("- Minecraft version: " + ver + " (" + typeNote + ")");
+                }
             }
             ctx.add("- Logs: " + gameDir.resolve("logs"));
             ctx.add("- Crash reports: " + gameDir.resolve("crash-reports"));
