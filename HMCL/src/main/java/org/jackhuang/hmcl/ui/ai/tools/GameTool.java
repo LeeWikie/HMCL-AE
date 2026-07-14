@@ -58,7 +58,9 @@ public final class GameTool implements ToolSpec {
                 + "each one running (a '(running)' marker; HMCL can only see processes it launched itself); "
                 + "launch(instance) — start an instance's game process (DESTRUCTIVE in the sense that it "
                 + "starts a real process; an account/download prompt may appear; returns immediately without "
-                + "waiting for the game to finish loading). CAUTION: a loader/game-version/mod mismatch is NOT "
+                + "waiting for the game to finish loading); pass testMode=true to launch in TEST mode (launcher "
+                + "stays open + log window shown for this launch only, saved settings unchanged). CAUTION: a "
+                + "loader/game-version/mod mismatch is NOT "
                 + "reported back to this chat — it only shows up as an in-game crash or an immediate exit, "
                 + "which you cannot see directly; if this instance was just created or had mods "
                 + "installed/updated this conversation, consider instance(action=\"mods_check_updates\") or "
@@ -83,7 +85,8 @@ public final class GameTool implements ToolSpec {
                  "type": "object",
                  "properties": {
                    "action": {"type": "string", "enum": ["list", "launch", "stop"], "description": "Which operation to perform."},
-                   "instance": {"type": "string", "description": "Target instance id for launch/stop; defaults to the currently selected instance."}
+                   "instance": {"type": "string", "description": "Target instance id for launch/stop; defaults to the currently selected instance."},
+                   "testMode": {"type": "boolean", "description": "For launch only: true starts the instance in TEST mode — keeps the launcher window open and shows the game log window for THIS launch only, without changing the instance's saved launcher-visibility/show-logs settings (so an early crash/immediate exit is visible). Defaults to false."}
                  },
                  "required": ["action"]
                }

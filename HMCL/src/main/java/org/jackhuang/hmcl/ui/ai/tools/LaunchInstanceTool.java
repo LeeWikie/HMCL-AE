@@ -25,6 +25,7 @@ import org.jackhuang.hmcl.setting.Profile;
 import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.ui.versions.Versions;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Map;
@@ -72,7 +73,12 @@ public final class LaunchInstanceTool implements Tool {
     public String getDescription() {
         return "Launches a Minecraft instance of the selected profile. "
                 + "Parameters: instance (string, optional: the instance/version id to launch; "
-                + "defaults to the currently selected instance). "
+                + "defaults to the currently selected instance); "
+                + "testMode (boolean, optional, default false): when true, launches in TEST mode — the "
+                + "launcher window is kept open and the game log window is shown so an early crash or "
+                + "immediate exit is visible, WITHOUT changing the instance's saved launcher-visibility "
+                + "or show-logs settings (a one-time override for this launch only). Use it to diagnose a "
+                + "launch that might fail (e.g. after creating an instance or changing mods/loaders). "
                 + "Dispatches the launch on the UI thread (an account or download prompt may appear) "
                 + "and returns immediately once launching has started. This starts the game process. "
                 + "If any world in this instance was imported since its last launch, an automatic safety "
@@ -125,13 +131,31 @@ public final class LaunchInstanceTool implements Tool {
         List<WorldBackupManager.InterruptedRestoreLeftover> restoreLeftovers =
                 WorldBackupManager.scanInterruptedRestores(id);
 
+        // testMode reuses HMCL's native "test game" entry point verbatim: Versions.testGame ==
+        // launch(profile, id, LauncherHelper::setTestMode), which forces launcherVisibility=KEEP and
+        // showLogs=true for THIS launch only (a transient override on the LauncherHelper — it never
+        // touches the persisted per-instance game settings). Everything else about the launch (the
+        // pre-launch safety-net backups above, account/download prompts, async dispatch) is identical.
+        final boolean testMode = parseBoolean(parameters.get("testMode"));
+
         try {
-            Platform.runLater(() -> Versions.launch(profile, id));
+            if (testMode) {
+                Platform.runLater(() -> Versions.testGame(profile, id));
+            } else {
+                Platform.runLater(() -> Versions.launch(profile, id));
+            }
         } catch (Throwable e) {
             return ToolResult.failure("Failed to dispatch launch for '" + id + "': " + e.getMessage());
         }
 
         StringBuilder message = new StringBuilder(baseLaunchReceipt(id, alreadyRunning));
+        if (testMode) {
+            message.append("\nTEST MODE: launched in test mode — the launcher window is kept open and the "
+                    + "game log window is shown so an early crash or immediate exit is visible. This is a "
+                    + "one-time override for this launch and does NOT change the instance's saved "
+                    + "launcher-visibility or show-logs settings. Watch the log window (or latest.log) for the "
+                    + "outcome before reporting whether the game actually started.");
+        }
         if (!pendingBackups.backedUpWorlds().isEmpty()) {
             message.append("\nAutomatic pre-launch safety backup taken for freshly-imported world(s): ")
                     .append(String.join(", ", pendingBackups.backedUpWorlds())).append('.');
@@ -176,6 +200,17 @@ public final class LaunchInstanceTool implements Tool {
                     + "that was not intended.");
         }
         return message.toString();
+    }
+
+    /// Lenient boolean parse for the optional {@code testMode} flag, matching the convention of the
+    /// sibling write tools (e.g. {@link SetInstanceIsolationTool}): a real {@code Boolean} passes
+    /// through, the string {@code "true"} (case-insensitive, trimmed) is true, and anything else —
+    /// including {@code null}/absent — is false, so an omitted flag simply means a normal launch.
+    private static boolean parseBoolean(@Nullable Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        return value != null && "true".equalsIgnoreCase(value.toString().trim());
     }
 
     private static String describeLeftoverKind(String kind) {

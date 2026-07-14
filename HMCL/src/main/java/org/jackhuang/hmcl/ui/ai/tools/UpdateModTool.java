@@ -39,9 +39,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /// A controlled-write tool that updates a single installed mod to its newest
 /// compatible version and archives the old jar, so two active copies of the same
@@ -118,39 +121,144 @@ public final class UpdateModTool implements ToolSpec {
                  "$schema": "https://json-schema.org/draft/2020-12/schema",
                  "type": "object",
                  "properties": {
-                   "mod": {"type": "string", "description": "A case-insensitive substring of the mod's file name, display name or mod id that matches exactly one installed mod (e.g. \\"sodium\\")."},
+                   "mod": {"type": "string", "description": "A case-insensitive substring of the mod's file name, display name or mod id that matches exactly one installed mod (e.g. \\"sodium\\"). Provide this, or 'mods', or 'all'."},
+                   "mods": {"type": "array", "items": {"type": "string"}, "description": "Batch: several mod substrings to update in one call; each must match exactly one installed mod. An unmatched/ambiguous entry is reported but does not abort the rest."},
+                   "all": {"type": "boolean", "description": "Batch: when true, update every installed mod that has a newer compatible version. Can be slow with many mods; consider check_mod_updates first."},
                    "instance": {"type": "string", "description": "Optional instance/version id; defaults to the currently selected instance."},
                    "source": {"type": "string", "enum": ["modrinth", "curseforge"], "description": "Optional: restrict the update lookup to a single source. By default both Modrinth and CurseForge are checked and the newest match wins."}
                  },
-                 "required": ["mod"]
+                 "required": []
                }
                """;
     }
 
     @Override
     public String getDescription() {
-        return "Updates a single installed mod to its newest compatible version and removes the old jar, so two "
+        return "Updates installed mod(s) to the newest compatible version and removes the old jar, so two "
                 + "versions of the same mod never coexist (which would crash the game on launch). "
-                + "Parameters: mod (required, a case-insensitive substring of the mod's file name, display name or mod id "
-                + "that matches exactly one installed mod), "
+                + "Parameters: mod (a case-insensitive substring of the mod's file name, display name or mod id "
+                + "that matches exactly one installed mod), OR mods (an array of such substrings, each matched to one "
+                + "installed mod), OR all=true (update every installed mod that has an update — can be slow, run "
+                + "check_mod_updates first), "
                 + "instance (optional, the instance/version id; defaults to the selected instance), "
                 + "source (optional, \"modrinth\" or \"curseforge\"; by default both are checked and the newest wins). "
                 + "It hashes the local jar to match it to a remote project (same as the 'check for updates' button), "
                 + "downloads the newer file, then archives the old jar with the '.old' suffix (the native mod list "
-                + "can roll back to it). "
+                + "can roll back to it). Batch calls update each mod independently and report a per-mod summary. "
                 + "Use check_mod_updates first to see what can be updated. Network calls are time-bounded.";
     }
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
+        // Batch dispatch: `all=true` updates every installed mod; a `mods` array updates each
+        // listed mod. Both reuse the exact single-mod update core (updateResolvedMod) per mod.
+        // With neither present the original single-mod path runs unchanged.
+        boolean updateAll = parseBooleanFlag(parameters.get("all"));
+        List<String> modQueries = extractModQueries(parameters);
+        if (updateAll || modQueries != null) {
+            return executeBatch(parameters, updateAll, modQueries);
+        }
+        return executeSingle(parameters);
+    }
+
+    /// The original single-mod path, behaviourally unchanged: resolve exactly one installed mod by
+    /// substring and update it (or report it already current / ambiguous / missing).
+    private ToolResult executeSingle(Map<String, Object> parameters) {
         String query = ToolParams.string(parameters, "mod", "name", "id", "modId", "query");
         if (query.isEmpty()) {
             return ToolResult.failure("Missing required parameter: mod (a substring of the mod file/display name or id).");
         }
         @Nullable RemoteAddon.Source onlySource = parseSource(String.valueOf(parameters.getOrDefault("source", "")).trim());
 
-        ModManager modManager;
+        ResolveResult resolved = resolve(parameters);
+        if (resolved.earlyReturn() != null) {
+            return resolved.earlyReturn();
+        }
+
+        MatchResult match = matchOne(query, resolved.all(), resolved.target());
+        if (match.failure() != null) {
+            return match.failure();
+        }
+        return updateResolvedMod(match.mod(), resolved.target(), resolved.gameVersion(), onlySource);
+    }
+
+    /// Updates several mods in one call, reusing {@link #updateResolvedMod} per mod and aggregating
+    /// the per-mod receipts. `updateAll` updates every installed mod; otherwise every entry of
+    /// `modQueries` is matched to exactly one installed mod (the same matcher the single path uses),
+    /// with an unmatched/ambiguous query recorded as unresolved rather than aborting the batch.
+    private ToolResult executeBatch(Map<String, Object> parameters, boolean updateAll,
+                                    @Nullable List<String> modQueries) {
+        @Nullable RemoteAddon.Source onlySource = parseSource(String.valueOf(parameters.getOrDefault("source", "")).trim());
+
+        ResolveResult resolved = resolve(parameters);
+        if (resolved.earlyReturn() != null) {
+            return resolved.earlyReturn();
+        }
+        String target = resolved.target();
+        String gameVersion = resolved.gameVersion();
+        List<LocalModFile> all = resolved.all();
+
+        // Ordered, de-duplicated set of mods to update (dedup by file path so the same mod listed
+        // twice, or matched by two queries, is only updated once).
+        LinkedHashMap<Path, LocalModFile> byFile = new LinkedHashMap<>();
+        List<String> unresolved = new ArrayList<>();
+        if (updateAll) {
+            for (LocalModFile mod : all) {
+                byFile.putIfAbsent(mod.getFile(), mod);
+            }
+        } else {
+            for (String query : modQueries) {
+                MatchResult match = matchOne(query, all, target);
+                if (match.failure() != null) {
+                    unresolved.add("[UNRESOLVED] \"" + query + "\": " + match.failure().getError());
+                } else {
+                    byFile.putIfAbsent(match.mod().getFile(), match.mod());
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Batch mod update for instance '").append(target).append("' (Minecraft ").append(gameVersion)
+                .append("): ").append(updateAll
+                        ? "updating all " + all.size() + " installed mod(s)."
+                        : modQueries.size() + " mod query/queries.").append('\n');
+
+        int ok = 0;
+        int failed = 0;
+        for (LocalModFile mod : byFile.values()) {
+            ToolResult res = updateResolvedMod(mod, target, gameVersion, onlySource);
+            boolean success = res.isSuccess();
+            if (success) {
+                ok++;
+            } else {
+                failed++;
+            }
+            String label = safe(mod.getName()).isBlank() ? mod.getFileName() : mod.getName();
+            sb.append('\n').append(success ? "[OK] " : "[FAILED] ").append(label).append('\n');
+            String body = success ? res.getOutput() : res.getError();
+            sb.append(indentLines(body)).append('\n');
+        }
+        for (String note : unresolved) {
+            sb.append('\n').append(note).append('\n');
+        }
+
+        sb.append("\nSummary: ").append(ok).append(" updated or already current / ").append(failed).append(" failed");
+        if (!unresolved.isEmpty()) {
+            sb.append(" / ").append(unresolved.size()).append(" unresolved");
+        }
+        sb.append(" of ").append(byFile.size() + unresolved.size()).append(" mod(s).");
+
+        String text = sb.toString().trim();
+        // At least one mod updated (or already current) → success; otherwise a failure envelope.
+        return ok > 0 ? ToolResult.success(text) : ToolResult.failure(text);
+    }
+
+    /// Shared instance resolution + mod listing used by both the single and batch paths. Returns a
+    /// populated result, or one whose {@link ResolveResult#earlyReturn()} the caller must return
+    /// immediately (a resolution failure, or the "no mods installed" success).
+    private static ResolveResult resolve(Map<String, Object> parameters) {
         String target;
+        ModManager modManager;
         String gameVersion;
         try {
             Profile profile = Profiles.getSelectedProfile();
@@ -158,31 +266,36 @@ public final class UpdateModTool implements ToolSpec {
             InstanceToolSupport.ResolvedInstance resolved =
                     InstanceToolSupport.resolveInstance(repo, parameters, false);
             if (resolved.failure() != null) {
-                return resolved.failure();
+                return ResolveResult.early(resolved.failure());
             }
             target = resolved.name();
             modManager = repo.getModManager(target);
             gameVersion = repo.getGameVersion(target).orElse(null);
         } catch (Throwable t) {
-            return ToolResult.failure("Could not resolve the instance's mods: " + t.getMessage());
+            return ResolveResult.early(ToolResult.failure("Could not resolve the instance's mods: " + t.getMessage()));
         }
 
         if (gameVersion == null || gameVersion.isBlank()) {
-            return ToolResult.failure("Could not determine the Minecraft version of instance '" + target
-                    + "', which is required to match a compatible update.");
+            return ResolveResult.early(ToolResult.failure("Could not determine the Minecraft version of instance '" + target
+                    + "', which is required to match a compatible update."));
         }
 
         List<LocalModFile> all;
         try {
             all = new ArrayList<>(modManager.getLocalFiles());
         } catch (Throwable t) {
-            return ToolResult.failure("Failed to parse mods in instance '" + target + "': " + t.getMessage());
+            return ResolveResult.early(ToolResult.failure("Failed to parse mods in instance '" + target + "': " + t.getMessage()));
         }
         if (all.isEmpty()) {
-            return ToolResult.success("Instance '" + target + "' has no mods installed.");
+            return ResolveResult.early(ToolResult.success("Instance '" + target + "' has no mods installed."));
         }
+        return ResolveResult.ready(target, gameVersion, all);
+    }
 
-        // Resolve exactly one mod by substring over file name / display name / id.
+    /// Resolves exactly one installed mod by a case-insensitive substring over its file name,
+    /// display name or id — the original single-mod matcher, reused verbatim by both paths. Returns
+    /// the matched mod, or a failure describing a missing / ambiguous match.
+    private static MatchResult matchOne(String query, List<LocalModFile> all, String target) {
         String needle = query.toLowerCase(Locale.ROOT);
         List<LocalModFile> matches = new ArrayList<>();
         for (LocalModFile mod : all) {
@@ -193,8 +306,8 @@ public final class UpdateModTool implements ToolSpec {
             }
         }
         if (matches.isEmpty()) {
-            return ToolResult.failure("No installed mod matches \"" + query + "\" in instance '" + target
-                    + "'. Use list_mods to see the available mods.");
+            return MatchResult.miss(ToolResult.failure("No installed mod matches \"" + query + "\" in instance '" + target
+                    + "'. Use list_mods to see the available mods."));
         }
         if (matches.size() > 1) {
             StringBuilder sb = new StringBuilder();
@@ -208,11 +321,16 @@ public final class UpdateModTool implements ToolSpec {
                 }
                 sb.append('\n');
             }
-            return ToolResult.failure(sb.toString().trim());
+            return MatchResult.miss(ToolResult.failure(sb.toString().trim()));
         }
+        return MatchResult.hit(matches.get(0));
+    }
 
-        LocalModFile mod = matches.get(0);
-
+    /// Updates a single, already-resolved mod: the original single-mod update core (find newest
+    /// version across sources, download, archive the old jar, format the receipt), unchanged and
+    /// now shared by the single and batch paths.
+    private ToolResult updateResolvedMod(LocalModFile mod, String target, String gameVersion,
+                                         @Nullable RemoteAddon.Source onlySource) {
         // Find the newest available update across the requested source(s).
         DownloadProvider provider = DownloadProviders.getDownloadProvider();
         RemoteAddon.Source[] sources = onlySource != null
@@ -426,5 +544,97 @@ public final class UpdateModTool implements ToolSpec {
 
     private static String safe(@Nullable String value) {
         return value == null ? "" : value;
+    }
+
+    /// Parses the optional `all` batch flag. Accepts a JSON boolean, or the strings
+    /// "true"/"1"/"yes"/"all"; anything else (including absent) means "not an update-all".
+    private static boolean parseBooleanFlag(@Nullable Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value instanceof String s) {
+            String t = s.trim().toLowerCase(Locale.ROOT);
+            return t.equals("true") || t.equals("1") || t.equals("yes") || t.equals("all");
+        }
+        return false;
+    }
+
+    /// Extracts the optional `mods` batch parameter as an ordered, de-duplicated list of non-blank
+    /// mod substrings. Accepts a JSON array (a `List`), a raw `Object[]`, or — leniently — a single
+    /// comma-separated string (not whitespace-split, since a mod query may itself contain spaces).
+    /// Returns `null` when absent or empty, so the caller falls back to the single-mod path.
+    @Nullable
+    private static List<String> extractModQueries(Map<String, Object> params) {
+        Object raw = params.get("mods");
+        if (raw == null) {
+            return null;
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                addQuery(out, o);
+            }
+        } else if (raw instanceof Object[] arr) {
+            for (Object o : arr) {
+                addQuery(out, o);
+            }
+        } else if (raw instanceof String s) {
+            for (String part : s.split(",")) {
+                addQuery(out, part);
+            }
+        }
+        return out.isEmpty() ? null : new ArrayList<>(out);
+    }
+
+    private static void addQuery(Set<String> out, @Nullable Object value) {
+        if (value != null) {
+            String s = value.toString().trim();
+            if (!s.isEmpty()) {
+                out.add(s);
+            }
+        }
+    }
+
+    /// Indents every line of a per-mod receipt by two spaces so it reads as a nested block under
+    /// its `[OK]`/`[FAILED]` header in the aggregated batch output.
+    private static String indentLines(@Nullable String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        String[] lines = text.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append("  ").append(lines[i]);
+        }
+        return sb.toString();
+    }
+
+    /// Outcome of {@link #resolve}: either an {@code earlyReturn} the caller must return as-is (a
+    /// resolution failure or the "no mods installed" success), or the resolved target/gameVersion/
+    /// mod list.
+    private record ResolveResult(@Nullable ToolResult earlyReturn, @Nullable String target,
+                                 @Nullable String gameVersion, @Nullable List<LocalModFile> all) {
+        static ResolveResult early(ToolResult result) {
+            return new ResolveResult(result, null, null, null);
+        }
+
+        static ResolveResult ready(String target, String gameVersion, List<LocalModFile> all) {
+            return new ResolveResult(null, target, gameVersion, all);
+        }
+    }
+
+    /// Outcome of {@link #matchOne}: either a {@code failure} (missing / ambiguous match) or the
+    /// single matched mod.
+    private record MatchResult(@Nullable ToolResult failure, @Nullable LocalModFile mod) {
+        static MatchResult miss(ToolResult failure) {
+            return new MatchResult(failure, null);
+        }
+
+        static MatchResult hit(LocalModFile mod) {
+            return new MatchResult(null, mod);
+        }
     }
 }

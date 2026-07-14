@@ -32,6 +32,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -81,8 +82,11 @@ public final class InstallModTool implements Tool {
     @Override
     public String getDescription() {
         return "Downloads a mod into the selected instance's mods folder. "
-                + "Parameters: id (string, required: the Modrinth/CurseForge project id or slug from "
-                + "search(action=\"mods\")), "
+                + "Parameters: id (string: the Modrinth/CurseForge project id or slug from "
+                + "search(action=\"mods\") — required unless 'ids' is given), "
+                + "ids (string array, optional: several project ids/slugs to install in one call; each "
+                + "reuses the same source/loader/gameVersion/version options and is reported separately. "
+                + "Dependencies are NOT auto-installed), "
                 + "source (string, optional: \"modrinth\" (default) or \"curseforge\"), "
                 + "loader (string, optional: fabric/forge/neoforge/quilt - filters to a matching version), "
                 + "gameVersion (string, optional Minecraft version like \"1.20.1\" - filters to a matching version), "
@@ -97,13 +101,60 @@ public final class InstallModTool implements Tool {
 
     @Override
     public ToolResult execute(Map<String, Object> parameters) {
+        // Batch path: an optional `ids` array installs several already-known project ids in one
+        // call, reusing the exact single-id logic per id and aggregating the per-id receipts. It
+        // does NOT auto-install dependencies — each per-id result still reports what's missing.
+        List<String> ids = extractIds(parameters);
+        if (ids != null) {
+            return executeBatch(ids, parameters);
+        }
+
         // Fall back to "query" since the tool schema currently advertises a single param.
         String id = extractString(parameters, "id", extractString(parameters, "query", null));
         if (id == null || id.isBlank()) {
             return ToolResult.failure("Missing required parameter: id (the mod slug/project id from "
                     + "search(action=\"mods\"))");
         }
+        return installSingle(id, parameters);
+    }
 
+    /// Installs a batch of already-known project ids by delegating to {@link #installSingle} for
+    /// each — every id therefore gets the exact same live-target resolution, dependency reporting
+    /// and download the single-id path performs — then aggregates the per-id receipts.
+    ///
+    /// Deliberately does NOT auto-install dependencies: recursive dependency installation needs
+    /// dedup + cycle detection + a depth cap and is left as a separate feature. The per-id
+    /// dependency notes still tell the caller exactly what to install next.
+    private ToolResult executeBatch(List<String> ids, Map<String, Object> parameters) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Batch mod install: ").append(ids.size()).append(" project id(s) requested.\n");
+        int ok = 0;
+        int failed = 0;
+        for (String id : ids) {
+            ToolResult result = installSingle(id, parameters);
+            boolean success = result.isSuccess();
+            if (success) {
+                ok++;
+            } else {
+                failed++;
+            }
+            sb.append('\n').append(success ? "[OK] " : "[FAILED] ").append(id).append('\n');
+            String body = success ? result.getOutput() : result.getError();
+            sb.append(indentLines(body)).append('\n');
+        }
+        sb.append("\nSummary: ").append(ok).append(" installed / ").append(failed)
+                .append(" failed of ").append(ids.size())
+                .append(". Dependencies were NOT auto-installed — review each result's dependency "
+                        + "note and install any missing REQUIRED dependency with another call.");
+        String text = sb.toString().trim();
+        // Mirror the single-id contract: a batch where at least one id installed is a success
+        // (per-id failures are still listed); only a wholesale failure surfaces as a failure.
+        return ok > 0 ? ToolResult.success(text) : ToolResult.failure(text);
+    }
+
+    /// Installs a single project id. This is the original single-id body verbatim; both the
+    /// single-call path and each iteration of {@link #executeBatch} run through it unchanged.
+    private ToolResult installSingle(String id, Map<String, Object> parameters) {
         String source = extractString(parameters, "source", "modrinth");
         String loaderStr = extractString(parameters, "loader", null);
         String gameVersion = extractString(parameters, "gameVersion", null);
@@ -336,5 +387,58 @@ public final class InstallModTool implements Tool {
             return s;
         }
         return fallback;
+    }
+
+    /// Extracts the optional `ids` batch parameter as an ordered, de-duplicated list of non-blank
+    /// project ids. Accepts a JSON array (parsed as a `List`), a raw `Object[]`, or — leniently — a
+    /// single string with several ids separated by commas/whitespace. Returns `null` when the
+    /// parameter is absent or yields nothing usable, so the caller falls back to the single-id path.
+    @Nullable
+    private static List<String> extractIds(Map<String, Object> params) {
+        Object raw = params.get("ids");
+        if (raw == null) {
+            return null;
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                addId(out, o);
+            }
+        } else if (raw instanceof Object[] arr) {
+            for (Object o : arr) {
+                addId(out, o);
+            }
+        } else if (raw instanceof String s) {
+            for (String part : s.split("[,\\s]+")) {
+                addId(out, part);
+            }
+        }
+        return out.isEmpty() ? null : new ArrayList<>(out);
+    }
+
+    private static void addId(Set<String> out, @Nullable Object value) {
+        if (value != null) {
+            String s = value.toString().trim();
+            if (!s.isEmpty()) {
+                out.add(s);
+            }
+        }
+    }
+
+    /// Indents every line of a per-id receipt by two spaces so it reads as a nested block under its
+    /// `[OK]`/`[FAILED]` header in the aggregated batch output.
+    private static String indentLines(@Nullable String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        String[] lines = text.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append("  ").append(lines[i]);
+        }
+        return sb.toString();
     }
 }

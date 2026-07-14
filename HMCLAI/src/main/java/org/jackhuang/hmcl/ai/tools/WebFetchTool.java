@@ -79,6 +79,18 @@ public final class WebFetchTool implements ToolSpec {
 
     private static final int MAX_CHARS = 24_000;
 
+    /// Hard cap on how much of the (untrusted, unbounded) response body the HTML text extraction
+    /// is allowed to see. The extraction regexes below are non-linear in the worst case: a crafted
+    /// page with many unclosed `<script>`/`<style>`/`<!--`, or a long run of `<` with no `>`, makes
+    /// the non-greedy `.*?</…>` and the `<[^>]+>` scans backtrack to EOF from every start position
+    /// — i.e. O(n²). Because the body is read with no size limit (`BodyHandlers.ofString`) and is
+    /// attacker-influenced content, an unbounded input could pin a worker thread for seconds to
+    /// minutes on a multi-MB page. Truncating the *input* before any regex runs converts that into
+    /// a fixed ceiling. The cap is far larger than is needed to fill the [`#MAX_CHARS`] output
+    /// budget from typical HTML (markup is pruned to a fraction of its size), so real READMEs /
+    /// manifests / doc pages are unaffected.
+    private static final int MAX_HTML_EXTRACT_CHARS = 128 * 1024;
+
     @Override
     public ToolPermission getPermission() {
         return ToolPermission.READ_ONLY;
@@ -205,6 +217,18 @@ public final class WebFetchTool implements ToolSpec {
             }
             String body = response == null ? "" : response.body();
             if (body == null) body = "";
+            // Spend the character budget on readable content, not markup: if the response is
+            // HTML, extract its text (drop scripts/styles/head/comments, keep link text, block
+            // tags -> newlines, strip the rest, decode common entities, collapse whitespace)
+            // BEFORE truncating, so the window lands on real content. Best-effort and robust:
+            // non-HTML input or any extraction failure falls straight back to the raw body.
+            String contentType = response == null
+                    ? null
+                    : response.headers().firstValue("Content-Type").orElse(null);
+            String extracted = extractReadableTextFromHtml(body, contentType);
+            if (extracted != null && !extracted.isEmpty()) {
+                body = extracted;
+            }
             if (body.length() > MAX_CHARS) {
                 body = body.substring(0, MAX_CHARS) + "\n…(truncated)";
             }
@@ -272,5 +296,144 @@ public final class WebFetchTool implements ToolSpec {
         }
         byte[] b = addr.getAddress();
         return b.length == 16 && (b[0] & 0xfe) == 0xfc;
+    }
+
+    /// Best-effort extraction of the human-readable text from an HTML document, so the character
+    /// budget ([`#MAX_CHARS`]) is spent on content rather than markup, scripts and styling. Pure
+    /// Java/regex, no extra dependencies.
+    ///
+    /// Robust by contract: returns {@code null} when the response is not HTML (per a present
+    /// `Content-Type`, or by sniffing the body when the header is absent) or when anything goes
+    /// wrong, so the caller falls straight back to the raw body. Never throws.
+    ///
+    /// Steps, in order: strip comments / `<script>` / `<style>` / `<head>` / `<noscript>` (with
+    /// their contents), rewrite `<a href="…">text</a>` to `text (href)` to keep link targets,
+    /// turn line-break and block-level tags into newlines, drop every remaining tag, decode common
+    /// HTML entities, then collapse runs of whitespace.
+    ///
+    /// Package-private for unit testing.
+    static String extractReadableTextFromHtml(String body, String contentType) {
+        if (body == null || body.isEmpty()) {
+            return null;
+        }
+        try {
+            if (contentType != null && !contentType.isEmpty()) {
+                // Trust a present Content-Type: only text/html and application/xhtml+xml are
+                // treated as HTML; anything else (json, plain, xml, binary) is left verbatim.
+                if (!contentType.toLowerCase(java.util.Locale.ROOT).contains("html")) {
+                    return null;
+                }
+            } else {
+                // No Content-Type header — sniff the start of the body for HTML markers.
+                String head = body.length() > 4096 ? body.substring(0, 4096) : body;
+                String lower = head.toLowerCase(java.util.Locale.ROOT);
+                boolean looksHtml = lower.contains("<!doctype html") || lower.contains("<html")
+                        || lower.contains("<head") || lower.contains("<body")
+                        || lower.contains("<div") || lower.contains("<p>") || lower.contains("<p ")
+                        || lower.contains("<span") || lower.contains("<a ");
+                if (!looksHtml) {
+                    return null;
+                }
+            }
+
+            // Cap the input before any regex touches it. The steps below are O(n²) in the worst
+            // case on adversarial markup (unclosed <script>/<style>/<!-- , or a run of '<' with no
+            // '>'), and this body is untrusted and was read with no size limit — so a fixed ceiling
+            // is what keeps a malicious multi-MB page from pinning this thread. Truncating here (not
+            // after extraction) is the point: it bounds the regex work itself. The cap sits far
+            // above what real HTML needs to fill the MAX_CHARS output budget.
+            String s = body.length() > MAX_HTML_EXTRACT_CHARS
+                    ? body.substring(0, MAX_HTML_EXTRACT_CHARS)
+                    : body;
+            // 1. Remove comments and elements whose contents are never readable prose.
+            s = s.replaceAll("(?is)<!--.*?-->", " ");
+            s = s.replaceAll("(?is)<script\\b[^>]*>.*?</script>", " ");
+            s = s.replaceAll("(?is)<style\\b[^>]*>.*?</style>", " ");
+            s = s.replaceAll("(?is)<head\\b[^>]*>.*?</head>", " ");
+            s = s.replaceAll("(?is)<noscript\\b[^>]*>.*?</noscript>", " ");
+            // 2. Keep link targets: <a href="URL">text</a> -> "text (URL)".
+            s = s.replaceAll("(?is)<a\\b[^>]*\\bhref\\s*=\\s*[\"']([^\"']*)[\"'][^>]*>(.*?)</a>", "$2 ($1)");
+            // 3. Line-break and block-level tags become newlines so text keeps its structure.
+            s = s.replaceAll("(?i)<br\\b[^>]*>", "\n");
+            s = s.replaceAll("(?i)<hr\\b[^>]*>", "\n");
+            s = s.replaceAll("(?i)</?(?:p|div|li|ul|ol|h[1-6]|tr|table|thead|tbody|section|article"
+                    + "|header|footer|nav|blockquote|pre|figure|figcaption|aside|main|form|dl|dt|dd)\\b[^>]*>", "\n");
+            // 4. Drop every remaining tag, then decode entities (after stripping, so decoded angle
+            //    brackets are never mistaken for tags).
+            s = s.replaceAll("(?s)<[^>]+>", "");
+            s = decodeHtmlEntities(s);
+            // 5. Collapse whitespace: horizontal runs -> single space, tidy around newlines, at
+            //    most one blank line between blocks.
+            s = s.replaceAll("[ \\t\\x0B\\f\\r\\u00A0]+", " ");
+            s = s.replaceAll(" *\\n *", "\n");
+            s = s.replaceAll("\\n{3,}", "\n\n");
+            return s.trim();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /// Decodes the handful of HTML entities that actually show up in prose (named specials plus
+    /// numeric `&#NN;` / `&#xHH;`). Unknown or malformed entities are left untouched.
+    private static String decodeHtmlEntities(String s) {
+        if (s.indexOf('&') < 0) {
+            return s;
+        }
+        StringBuilder out = new StringBuilder(s.length());
+        int i = 0;
+        int n = s.length();
+        while (i < n) {
+            char c = s.charAt(i);
+            if (c == '&') {
+                int semi = s.indexOf(';', i + 1);
+                if (semi > i && semi - i <= 12) {
+                    String ent = s.substring(i + 1, semi);
+                    String rep = null;
+                    if (!ent.isEmpty() && ent.charAt(0) == '#') {
+                        try {
+                            int cp;
+                            if (ent.length() > 1 && (ent.charAt(1) == 'x' || ent.charAt(1) == 'X')) {
+                                cp = Integer.parseInt(ent.substring(2), 16);
+                            } else {
+                                cp = Integer.parseInt(ent.substring(1));
+                            }
+                            if (cp > 0 && Character.isValidCodePoint(cp)) {
+                                rep = new String(Character.toChars(cp));
+                            }
+                        } catch (NumberFormatException ignored) {
+                            rep = null;
+                        }
+                    } else {
+                        switch (ent) {
+                            case "amp":    rep = "&";       break;
+                            case "lt":     rep = "<";       break;
+                            case "gt":     rep = ">";       break;
+                            case "quot":   rep = "\"";      break;
+                            case "apos":   rep = "'";       break;
+                            case "nbsp":   rep = " ";       break;
+                            case "copy":   rep = "©";  break;
+                            case "reg":    rep = "®";  break;
+                            case "trade":  rep = "™";  break;
+                            case "hellip": rep = "…";  break;
+                            case "mdash":  rep = "—";  break;
+                            case "ndash":  rep = "–";  break;
+                            case "lsquo":  rep = "‘";  break;
+                            case "rsquo":  rep = "’";  break;
+                            case "ldquo":  rep = "“";  break;
+                            case "rdquo":  rep = "”";  break;
+                            default:       rep = null;
+                        }
+                    }
+                    if (rep != null) {
+                        out.append(rep);
+                        i = semi + 1;
+                        continue;
+                    }
+                }
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
     }
 }

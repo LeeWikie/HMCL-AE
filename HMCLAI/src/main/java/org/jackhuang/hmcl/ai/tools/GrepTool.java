@@ -105,7 +105,8 @@ public final class GrepTool implements ToolSpec {
         return "Search file contents by regular expression. Pass 'pattern' (Java regex), "
                 + "optional 'path' (sub-directory or single file to search) and optional 'glob' "
                 + "(filename filter like *.json, ignored when 'path' names a single file). "
-                + "Returns matching 'path:line: text' lines."
+                + "Optional 'contextBefore'/'contextAfter' include surrounding lines like grep -B/-A. "
+                + "Returns matching 'path:line: text' lines (context lines use 'path-line- text')."
                 + FileToolFailures.allowedRootsSentence(roots);
     }
 
@@ -123,7 +124,9 @@ public final class GrepTool implements ToolSpec {
                  "properties": {
                    "pattern": {"type": "string", "description": "Java regular expression to search for."},
                    "path": {"type": "string", "description": "Optional sub-directory or single file (relative to config root or absolute) to search under."},
-                   "glob": {"type": "string", "description": "Optional filename glob filter, e.g. *.json or *.log."}
+                   "glob": {"type": "string", "description": "Optional filename glob filter, e.g. *.json or *.log."},
+                   "contextBefore": {"type": "integer", "minimum": 0, "description": "Optional number of lines of context to include before each match, like grep -B. Default 0. Context lines are printed as 'path-line- text'."},
+                   "contextAfter": {"type": "integer", "minimum": 0, "description": "Optional number of lines of context to include after each match, like grep -A. Default 0. Context lines are printed as 'path-line- text'."}
                  },
                  "required": ["pattern"]
                }
@@ -147,6 +150,9 @@ public final class GrepTool implements ToolSpec {
                     "this is Java regex, not glob/PCRE",
                     "escape literal '(' ')' '.' etc. and retry; do not retry unchanged");
         }
+
+        int contextBefore = optionalNonNegativeInt(parameters, "contextBefore");
+        int contextAfter = optionalNonNegativeInt(parameters, "contextAfter");
 
         Path base;
         Object pathObj = parameters.get("path");
@@ -175,7 +181,7 @@ public final class GrepTool implements ToolSpec {
             List<String> results = new ArrayList<>();
             Path fileName = base.getFileName();
             String rel = fileName != null ? fileName.toString() : base.toString();
-            searchFile(base, rel, pattern, results);
+            searchFile(base, rel, pattern, results, contextBefore, contextAfter);
             if (results.isEmpty()) {
                 return ToolResult.success("(no matches)");
             }
@@ -208,7 +214,7 @@ public final class GrepTool implements ToolSpec {
                     continue;
                 }
                 String rel = base.relativize(file).toString();
-                if (searchFile(file, rel, pattern, results)) {
+                if (searchFile(file, rel, pattern, results, contextBefore, contextAfter)) {
                     filesScanned[0]++;
                 }
             }
@@ -245,9 +251,15 @@ public final class GrepTool implements ToolSpec {
     /// entries to [results] (capped at [MAX_MATCHES], each line truncated to 200 chars).
     /// Shared by both the single-file and directory-walk search paths.
     ///
+    /// When [contextBefore]/[contextAfter] are positive, the lines surrounding each match are
+    /// also appended (like grep -B/-A) as `rel-line- text`. Overlapping or adjacent windows are
+    /// de-duplicated so no source line is emitted twice; a context line that itself matches
+    /// [pattern] is still marked as a match (printed with `:` rather than `-`).
+    ///
     /// @return `true` if the file was within [MAX_FILE_SIZE] and thus actually scanned
     ///         (even if it turned out unreadable/binary); `false` if skipped due to size.
-    private static boolean searchFile(Path file, String rel, Pattern pattern, List<String> results) {
+    private static boolean searchFile(Path file, String rel, Pattern pattern, List<String> results,
+                                      int contextBefore, int contextAfter) {
         try {
             if (Files.size(file) > MAX_FILE_SIZE) return false;
         } catch (IOException e) {
@@ -259,13 +271,62 @@ public final class GrepTool implements ToolSpec {
         } catch (IOException e) {
             return true; // binary / unreadable, but still counts as scanned
         }
+        if (contextBefore <= 0 && contextAfter <= 0) {
+            // Fast path: no context requested — behaviour identical to before this feature existed.
+            for (int i = 0; i < lines.size() && results.size() < MAX_MATCHES; i++) {
+                if (pattern.matcher(lines.get(i)).find()) {
+                    results.add(rel + ":" + (i + 1) + ": " + truncate(lines.get(i)));
+                }
+            }
+            return true;
+        }
+        // Context path: emit each match together with its surrounding window. `lastEmitted` is the
+        // highest line index already appended for this file, so overlapping/adjacent windows never
+        // reprint a line (and the earlier window's copy wins, preserving output order).
+        int lastEmitted = -1;
         for (int i = 0; i < lines.size() && results.size() < MAX_MATCHES; i++) {
             if (pattern.matcher(lines.get(i)).find()) {
-                String text = lines.get(i).strip();
-                if (text.length() > 200) text = text.substring(0, 200) + "…";
-                results.add(rel + ":" + (i + 1) + ": " + text);
+                int from = Math.max(0, i - contextBefore);
+                int to = Math.min(lines.size() - 1, i + contextAfter);
+                if (from <= lastEmitted) {
+                    from = lastEmitted + 1; // skip lines already emitted by an earlier window
+                }
+                for (int j = from; j <= to && results.size() < MAX_MATCHES; j++) {
+                    boolean isMatch = j == i || pattern.matcher(lines.get(j)).find();
+                    String sep = isMatch ? ":" : "-";
+                    results.add(rel + sep + (j + 1) + sep + " " + truncate(lines.get(j)));
+                    lastEmitted = j;
+                }
             }
         }
         return true;
+    }
+
+    /// Strips a source line and caps it at 200 characters (appending an ellipsis when truncated),
+    /// matching the length handling applied to grep result lines since before context support.
+    private static String truncate(String line) {
+        String text = line.strip();
+        if (text.length() > 200) text = text.substring(0, 200) + "…";
+        return text;
+    }
+
+    /// Reads an optional non-negative integer parameter, tolerating the numeric ({@link Number})
+    /// and string encodings the model may send. Missing, negative, or unparseable values fall back
+    /// to {@code 0} so the context feature stays off by default and never fails a search.
+    private static int optionalNonNegativeInt(Map<String, Object> parameters, String key) {
+        Object value = parameters.get(key);
+        if (value == null) {
+            return 0;
+        }
+        if (value instanceof Number) {
+            int n = ((Number) value).intValue();
+            return Math.max(n, 0);
+        }
+        try {
+            int n = Integer.parseInt(value.toString().trim());
+            return Math.max(n, 0);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }
