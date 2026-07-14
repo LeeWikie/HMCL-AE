@@ -55,16 +55,16 @@ public final class ReasoningCardFxTest {
 
     @Test
     public void streamsAppendAndHeaderTogglesCollapse() throws Exception {
-        AIMainPage.ReasoningCard[] cardRef = new AIMainPage.ReasoningCard[1];
+        ReasoningCard[] cardRef = new ReasoningCard[1];
         FxToolkit.setupSceneRoot(() -> {
-            cardRef[0] = new AIMainPage.ReasoningCard("让我想想：", true);
+            cardRef[0] = new ReasoningCard("让我想想：", true);
             StackPane root = new StackPane(cardRef[0]);
             root.setPrefSize(500, 300);
             return root;
         });
         FxToolkit.showStage();
         WaitForAsyncUtils.waitForFxEvents();
-        AIMainPage.ReasoningCard card = cardRef[0];
+        ReasoningCard card = cardRef[0];
         FxRobot robot = new FxRobot();
 
         Label content = robot.from(card).lookup(".ai-caption").queryAs(Label.class);
@@ -97,16 +97,16 @@ public final class ReasoningCardFxTest {
     /// once finishTiming() runs (the visible answer starts). Event/direct-method injection (A7).
     @Test
     public void liveCardShowsThinkingThenDurationSummary() throws Exception {
-        AIMainPage.ReasoningCard[] cardRef = new AIMainPage.ReasoningCard[1];
+        ReasoningCard[] cardRef = new ReasoningCard[1];
         FxToolkit.setupSceneRoot(() -> {
-            cardRef[0] = new AIMainPage.ReasoningCard("", true); // empty → live/timed card
+            cardRef[0] = new ReasoningCard("", true); // empty → live/timed card
             StackPane root = new StackPane(cardRef[0]);
             root.setPrefSize(500, 300);
             return root;
         });
         FxToolkit.showStage();
         WaitForAsyncUtils.waitForFxEvents();
-        AIMainPage.ReasoningCard card = cardRef[0];
+        ReasoningCard card = cardRef[0];
         FxRobot robot = new FxRobot();
 
         CollapseHeader header = robot.from(card).lookup(".ai-collapse-header").queryAs(CollapseHeader.class);

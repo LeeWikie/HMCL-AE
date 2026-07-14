@@ -99,7 +99,7 @@ public final class RedlineStructureFxTest {
             WaitForAsyncUtils.waitForFxEvents();
 
             VBox messageList = (VBox) getField(page, "messageList");
-            int reasoningHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ReasoningCard, "reasoning card");
+            int reasoningHost = soleHostIndex(messageList, n -> n instanceof ReasoningCard, "reasoning card");
             int toolHost = soleHostIndex(messageList, n -> n instanceof ToolCard, "tool card");
             int answerHost = soleHostIndex(messageList, n -> n.getStyleClass().contains("ai-bubble-ai"), "AI answer bubble");
 
@@ -112,7 +112,7 @@ public final class RedlineStructureFxTest {
             // The two subordinate cards sit in single-purpose wrapper rows directly under
             // messageList (card -> wrapper -> messageList, nothing in between).
             Node reasoning = findDescendant(messageList.getChildren().get(reasoningHost),
-                    n -> n instanceof AIMainPage.ReasoningCard);
+                    n -> n instanceof ReasoningCard);
             Node tool = findDescendant(messageList.getChildren().get(toolHost),
                     n -> n instanceof ToolCard);
             assertSame(messageList, reasoning.getParent().getParent(),

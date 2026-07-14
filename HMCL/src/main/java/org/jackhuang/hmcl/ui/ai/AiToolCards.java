@@ -271,3 +271,67 @@ final class ToolCallGroupCard extends VBox {
         return icon;
     }
 }
+
+/// Collapsible card showing a model's reasoning/"thinking" (e.g. DeepSeek-R1's reasoning_content):
+/// expanded while it streams, collapsed once the answer starts or on reload. Self-contained so it
+/// can be reused by both the live stream path and the session-reload path.
+/// Package-private (not private) so the FX component test can drive it directly.
+final class ReasoningCard extends VBox {
+    private final Label content = new Label();
+    private final CollapseHeader header;
+    private final StringBuilder text = new StringBuilder();
+    /// Wall-clock start of the reasoning stream, for the "用时 N 秒" summary.
+    private final long startNanos = System.nanoTime();
+    /// True only for the live streaming card (created empty, then fed tokens): it shows a
+    /// running "思考中…" summary and captures a duration on [#finishTiming]. A reloaded card
+    /// (full text handed to the constructor) has no known duration, so it shows no summary.
+    private final boolean timed;
+    private boolean durationCaptured;
+
+    ReasoningCard(String initial, boolean expanded) {
+        // Shares .ai-tool-card with ToolCard/ToolCallGroupCard: the three inline subordinate
+        // cards keep a byte-identical box model (§B B2 constraint) from a single CSS rule.
+        getStyleClass().add("ai-tool-card");
+        setSpacing(4);
+        setMaxWidth(AIMainPage.AI_BUBBLE_MAX_WIDTH - 16); // 704 — unified subordinate-card width (VS §3.3)
+        content.setWrapText(true);
+        content.setMaxWidth(AIMainPage.AI_BUBBLE_MAX_WIDTH - 16);
+        content.getStyleClass().add("ai-caption");
+        if (initial != null) {
+            text.append(initial);
+            content.setText(initial);
+        }
+        header = new CollapseHeader(i18n("ai.reasoning.title"));
+        header.useCompactLayout(SVG.LIGHTBULB.createIcon(16));
+        timed = (initial == null || initial.isEmpty());
+        if (timed) {
+            header.setSummary(i18n("ai.reasoning.summary.thinking"));
+        }
+        content.visibleProperty().bind(header.expandedProperty());
+        content.managedProperty().bind(header.expandedProperty());
+        getChildren().addAll(header, content);
+        setExpanded(expanded);
+    }
+
+    void append(String token) {
+        text.append(token);
+        content.setText(text.toString());
+    }
+
+    /// Freezes the running "思考中…" summary into "用时 N 秒" once the reasoning stream ends
+    /// (the visible answer starts). No-op for reloaded cards and idempotent.
+    void finishTiming() {
+        if (!timed || durationCaptured) {
+            return;
+        }
+        durationCaptured = true;
+        long secs = Math.max(1, Math.round((System.nanoTime() - startNanos) / 1_000_000_000.0));
+        header.setSummary(i18n("ai.reasoning.duration", secs));
+    }
+
+    /// Thin wrapper kept for the streaming path (collapse the card once the visible answer
+    /// starts) and for tests — the expand state itself lives on the header.
+    void setExpanded(boolean expanded) {
+        header.setExpanded(expanded);
+    }
+}

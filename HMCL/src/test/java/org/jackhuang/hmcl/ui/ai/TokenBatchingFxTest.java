@@ -159,7 +159,7 @@ public final class TokenBatchingFxTest {
             producer.join(10_000);
             WaitForAsyncUtils.waitForFxEvents();
 
-            AIMainPage.ReasoningCard card = (AIMainPage.ReasoningCard) getField(page, "reasoningLiveCard");
+            ReasoningCard card = (ReasoningCard) getField(page, "reasoningLiveCard");
             assertNotNull(card, "reasoning tokens must create the live card");
             Label content = (Label) getField(card, "content");
             assertEquals(expected.toString(), content.getText(),
