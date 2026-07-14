@@ -254,7 +254,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 .startCategory(i18n("ai.settings.nav.general").toUpperCase(Locale.ROOT))
                 .addNavigationDrawerTab(tab, generalTab, i18n("ai.settings.nav.global"), SVG.TUNE)
                 .addNavigationDrawerTab(tab, providerTab, i18n("ai.settings.nav.providers"), SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
-                .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN)
+                .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN, SVG.FOLDER_OPEN_FILL)
                 .addNavigationDrawerTab(tab, advancedTab, i18n("ai.settings.nav.advanced_settings"), SVG.SETTINGS, SVG.SETTINGS_FILL)
                 .startCategory(i18n("ai.settings.nav.services").toUpperCase(Locale.ROOT))
                 .addNavigationDrawerTab(tab, skillsTab, i18n("ai.settings.nav.skills"), SVG.SCRIPT)
