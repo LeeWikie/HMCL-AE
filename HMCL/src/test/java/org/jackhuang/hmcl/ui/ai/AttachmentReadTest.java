@@ -50,7 +50,7 @@ public final class AttachmentReadTest {
     /// Mirrors AIMainPage.ATTACHMENT_MAX_CHARS (private constant; value is part of the contract
     /// asserted here — if the cap changes, this test should be updated deliberately).
     private static final int MAX_CHARS = 200_000;
-    private static final String TRUNCATION_SUFFIX = "\n…（文件过大，已截断）";
+    private static final String TRUNCATION_SUFFIX = "\n…(文件过大，已截断)";
 
     @TempDir
     Path tempDir;
@@ -109,7 +109,7 @@ public final class AttachmentReadTest {
         assertTrue(result.contains("[附件: ok.txt]"), "attachment header per file");
         assertTrue(result.contains("内容OK"), "readable file content included");
         assertTrue(result.contains("[附件: gone.txt]"));
-        assertTrue(result.contains("（读取失败："), "unreadable file reported inline, send not failed");
+        assertTrue(result.contains("(读取失败："), "unreadable file reported inline, send not failed");
     }
 
     @Test

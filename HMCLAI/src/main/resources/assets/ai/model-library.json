@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "models": {
     "abliterated-model": {
       "contextWindow": 150000,
@@ -2326,7 +2326,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "codestral-latest": {
       "contextWindow": 256000,
@@ -2560,7 +2561,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": true,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "cohere-embed-v3-english": {
       "contextWindow": 512,
@@ -2573,7 +2575,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "cohere-embed-v3-multilingual": {
       "contextWindow": 512,
@@ -2586,7 +2589,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "command-a": {
       "contextWindow": 256000,
@@ -4718,7 +4722,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "ernie-4.5-21B-a3b": {
       "contextWindow": 120000,
@@ -5823,7 +5828,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "gemini-flash-latest": {
       "contextWindow": 1048576,
@@ -11374,7 +11380,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "llama-4-maverick": {
       "contextWindow": 1048576,
@@ -11569,7 +11576,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": true,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "llama-nemotron-rerank-vl-1b-v2": {
       "contextWindow": 128000,
@@ -13220,7 +13228,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "mistral-large": {
       "contextWindow": 128000,
@@ -14520,7 +14529,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "north-mini-code-1-0": {
       "contextWindow": 256000,
@@ -14715,7 +14725,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "nv-embedcode-7b-v1": {
       "contextWindow": 32768,
@@ -14728,7 +14739,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "NVIDIA-Nemotron-3-Nano-30B-A3B": {
       "contextWindow": 32000,
@@ -15911,7 +15923,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "qianfan-ocr-fast": {
       "contextWindow": 65536,
@@ -17562,7 +17575,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "Qwen3-Embedding-0.6B": {
       "contextWindow": 40960,
@@ -17575,7 +17589,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "qwen3-embedding-4b": {
       "contextWindow": 32768,
@@ -17588,7 +17603,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "Qwen3-Embedding-4B": {
       "contextWindow": 32000,
@@ -17601,7 +17617,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "qwen3-embedding-8b": {
       "contextWindow": 32768,
@@ -17614,7 +17631,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "Qwen3-Embedding-8B": {
       "contextWindow": 32768,
@@ -17627,7 +17645,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "qwen3-livetranslate-flash-realtime": {
       "contextWindow": 53248,
@@ -18134,7 +18153,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": true,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "qwen3-vl-flash": {
       "contextWindow": 262144,
@@ -19798,7 +19818,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "text-embedding-3-large": {
       "contextWindow": 8191,
@@ -19811,7 +19832,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "text-embedding-3-small": {
       "contextWindow": 8191,
@@ -19824,7 +19846,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "text-embedding-ada-002": {
       "contextWindow": 8192,
@@ -19837,7 +19860,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "text-max": {
       "contextWindow": 1000000,
@@ -19863,7 +19887,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "text-prime": {
       "contextWindow": 196608,
@@ -19915,7 +19940,8 @@
       "cacheReadPricePerMillion": 0.0,
       "supportsTools": false,
       "supportsVision": false,
-      "supportsReasoning": false
+      "supportsReasoning": false,
+      "supportsEmbedding": true
     },
     "tongyi-intent-detect-v3": {
       "contextWindow": 8192,

@@ -20,7 +20,9 @@ package org.jackhuang.hmcl.ai.langchain4j;
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.jackhuang.hmcl.ai.LlmConfig;
 import org.jackhuang.hmcl.ai.net.ProxyAuthenticatorHolder;
@@ -171,6 +173,24 @@ public final class LangChain4jModelFactory {
         builder.returnThinking(true);
 
         return builder.build();
+    }
+
+    /// Builds a LangChain4j [`EmbeddingModel`] from the given configuration, for the knowledge-base
+    /// (RAG) LOCAL_INDEX path. HMCL stores an OpenAI-compatible chat-completions endpoint;
+    /// {@link #extractBaseUrl} strips it to the `/v1` base and LangChain4j appends `/embeddings`, so
+    /// the same endpoint that serves chat also serves embeddings on OpenAI-compatible providers (no
+    /// double-append). Honours HMCL's proxy via {@link #proxyAwareHttpClientBuilder()}, exactly like
+    /// the chat models. No temperature/reasoning here — embeddings take none.
+    public EmbeddingModel buildEmbeddingModel(LlmConfig config) {
+        return OpenAiEmbeddingModel.builder()
+                .httpClientBuilder(proxyAwareHttpClientBuilder())
+                .baseUrl(extractBaseUrl(config.getEndpoint()))
+                .apiKey(config.getApiKey())
+                .modelName(config.getModel())
+                .timeout(config.getTimeout())
+                .logRequests(logRequests)
+                .logResponses(logResponses)
+                .build();
     }
 
     /// Builds a LangChain4j Anthropic ChatModel from the given configuration.

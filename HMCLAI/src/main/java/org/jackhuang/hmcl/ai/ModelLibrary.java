@@ -278,6 +278,9 @@ public final class ModelLibrary {
         @SerializedName("supportsReasoning")
         private boolean supportsReasoning;
 
+        @SerializedName("supportsEmbedding")
+        private boolean supportsEmbedding;
+
         /// No-arg constructor so Gson applies the field defaults above.
         public ModelInfo() {
         }
@@ -335,6 +338,11 @@ public final class ModelLibrary {
         /// Whether the model exposes a reasoning/thinking mode.
         public boolean isSupportsReasoning() {
             return supportsReasoning;
+        }
+
+        /// Whether the model can produce text embeddings (usable as a KB embedding model).
+        public boolean isSupportsEmbedding() {
+            return supportsEmbedding;
         }
 
         /// Whether any non-zero price is known for this model.

@@ -276,6 +276,29 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
     /// Flip to {@code true} to restore the whole pricing UI.
     static final boolean PRICING_UI_ENABLED = false;
 
+    /// The RAG / knowledge-base feature (the 知识库 settings tab, the per-model "embedding" capability,
+    /// and the {@code kb_search} tool) is still immature (2026-07-14 decision), so it is HIDDEN in every
+    /// published build — exactly like {@link #PRICING_UI_ENABLED}, the code and any persisted state stay
+    /// wired up and untouched, only the UI surface and tool registration are gated. It is visible when
+    /// running an unpublished developer build (from source), and can be force-enabled in any build with
+    /// {@code -Dhmcl.experimental.ai.kb=true} (or force-hidden with {@code =false}).
+    /// {@link AISettingsPage#KNOWLEDGE_BASE_UI_ENABLED} mirrors this there; keep the two in lockstep.
+    static final boolean KNOWLEDGE_BASE_UI_ENABLED = computeKnowledgeBaseEnabled();
+
+    private static boolean computeKnowledgeBaseEnabled() {
+        String override = System.getProperty("hmcl.experimental.ai.kb");
+        if ("true".equalsIgnoreCase(override)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(override)) {
+            return false;
+        }
+        // Unpublished dev builds (run from source) carry the unreplaced "@develop@" placeholder version;
+        // every published build (alpha / nightly / stable) has a real version stamped in and stays hidden.
+        String version = Metadata.VERSION;
+        return version == null || version.isEmpty() || version.contains("@develop@");
+    }
+
     private final VBox sessionListBox = new VBox(2);
     @Nullable
     private AdvancedListBox sidebarScrollPane;
@@ -589,9 +612,14 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             .create();
     private static final String CHAT_SETTINGS_FILE = "ai-chat-settings.json";
     private static final String SEARCH_CONFIG_FILE = "ai-search-settings.json";
+    private static final String KB_CONFIG_FILE = "ai-kb-config.json";
     private static final String OCR_CONFIG_FILE = org.jackhuang.hmcl.ai.ocr.AiOcrConfig.FILE_NAME;
     /// Web-search config, loaded from disk and shared by the web_search tool + the prompt.
     private final org.jackhuang.hmcl.ai.search.AiSearchConfig searchConfig;
+    /// Shared knowledge-base config: constructed once here (single startup read point) and injected
+    /// into AISettingsPage; the Phase-3 KbSearchTool will hold this SAME instance so settings edits
+    /// are live to the tool. Never reassign.
+    private final org.jackhuang.hmcl.ai.kb.AiKbConfig kbConfig;
     /// OCR config, loaded from disk and shared by the ocr_image tool.
     private final org.jackhuang.hmcl.ai.ocr.AiOcrConfig ocrConfig;
     /// Global memory store (created in registerTools); shared with the prompt builder for auto-recall.
@@ -743,6 +771,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         this.chatSettings = loadChatSettings();
         this.searchConfig = loadSearchConfig();
         this.ocrConfig = loadOcrConfig();
+        this.kbConfig = loadKbConfig();
 
         if (sessionStore.getCurrentSession() == null) {
             sessionStore.createSession();
@@ -918,6 +947,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
                 this.webSearchRegistrationCondition, toolRegistry,
                 new org.jackhuang.hmcl.ai.search.WebSearchTool(searchConfig));
+        // Knowledge base (RAG) — hot-toggle like web_search: kb_search appears/disappears with the
+        // 启用知识库 switch (kbConfig's live enabledProperty, shared with the settings page). Endpoint /
+        // source-mode validity is checked inside the tool at call time (returns a helpful failure if
+        // unconfigured), mirroring WebSearchTool's enabled-gate + execute-time provider/key check —
+        // kbConfig exposes no observable for those non-enabled fields, so a full isValid() binding
+        // would need extra plumbing for no real gain over the execute-time guard.
+        // Gated by KNOWLEDGE_BASE_UI_ENABLED so a previously-persisted kbConfig.enabled=true (set in a dev
+        // build) never re-surfaces kb_search in a published build where the KB UI is hidden. When hidden,
+        // the AI still answers from its other tools (search / web_search) and built-in knowledge — the
+        // "下位替代" fallback — and when shown, kb_search sits alongside them without conflict.
+        if (KNOWLEDGE_BASE_UI_ENABLED) {
+            org.jackhuang.hmcl.ai.tools.ToggleToolsBinder.bind(
+                    kbConfig.enabledProperty(), toolRegistry,
+                    new org.jackhuang.hmcl.ai.kb.KbSearchTool(kbConfig));
+        }
         toolRegistry.register(gameContextTool);
         // Local instance/mod/world/content-management domain (merged facade — see InstanceTool).
         instanceTool = new org.jackhuang.hmcl.ui.ai.tools.InstanceTool(
@@ -1198,7 +1242,8 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
                 // made in the settings page take effect in chat immediately — the settings page
                 // used to load its own copies and the tools never saw any change.
                 this.searchConfig,
-                this.ocrConfig
+                this.ocrConfig,
+                this.kbConfig
         ));
     }
 
@@ -5615,7 +5660,7 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
         }
 
         /// Terminal success flag — only meaningful after [#complete]. Read by the group card to
-        /// build its per-tool "name ✓ / ✗" summary marks.
+        /// tally its success/failure status-count chips.
         boolean isSuccess() {
             return success;
         }
@@ -5642,10 +5687,17 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             progressBox.setManaged(false);
             header.getTitleLabel().setText(i18n(success ? "ai.tool.done" : "ai.tool.failed", toolName));
             getStyleClass().add(success ? "ai-tool-card-ok" : "ai-tool-card-fail");
-            // Compact-mode rich summary: the result mark (✓/✗) plus elapsed seconds if non-trivial.
+            // Swap the puzzle-piece leading icon for a themed SVG status icon (CHECK_CIRCLE on
+            // success, CANCEL on failure), replacing the old Unicode ✓/✗ mark that used to be
+            // concatenated into the summary text — the same SVG-status-icon treatment the todo rows
+            // already use (see updateTodoCard above; 2026-07-11 feedback). The ai-feedback-success /
+            // -error classes carry the native success=tertiary / error=error tint for the .svg fill.
+            Node statusIcon = (success ? SVG.CHECK_CIRCLE : SVG.CANCEL).createIcon(16);
+            statusIcon.getStyleClass().add(success ? "ai-feedback-success" : "ai-feedback-error");
+            header.setLeadingIcon(statusIcon);
+            // The summary now carries only the elapsed time (the ✓/✗ mark moved to the leading icon).
             long secs = Math.round((System.nanoTime() - startNanos) / 1_000_000_000.0);
-            String mark = success ? "✓" : "✗";
-            header.setSummary(secs >= 1 ? i18n("ai.tool.summary.timed", mark, secs) : mark);
+            header.setSummary(secs >= 1 ? i18n("ai.reasoning.duration", secs) : "");
             if (summary != null && !summary.isBlank()) {
                 String text = summary.strip();
                 // UI-side hard cap (BF 2-3): a Label with hundreds of KB stalls layout. The full
@@ -5697,32 +5749,75 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             cards.add(card);
             header.getTitleLabel().setText(i18n("ai.tool.group.summary", cards.size()));
             // A card is added at call time (result unknown), so refresh the rich summary now AND
-            // again when it completes — that's when its ✓/✗ mark becomes known.
+            // again when it completes — that's when its success/failure state becomes known.
             card.setCompletionListener(this::rebuildSummary);
             rebuildSummary();
         }
 
-        /// Builds the compact rich summary "instance ✓ · search ✓ · +3": the first up to three
-        /// finished tool names with their result marks, then a "+N" remainder. Still-running cards
-        /// are shown by name without a mark.
+        /// Builds the compact "B3" rich summary: the first three tools shown by NAME, each name
+        /// followed by a small themed SVG status icon (CHECK_CIRCLE on success, CANCEL on failure),
+        /// joined by " · ", with any remaining calls folded into a trailing " · +N" tail — e.g.
+        /// {@code t0 ✓ · t1 ✗ · t2 ✓ · +2}, only with real SVG icons in place of the ✓/✗ marks
+        /// (the 2026-07-11 SVG-status-icon improvement over B3's Unicode marks; mirrors the todo rows
+        /// and the tool card's leading status icon). Rendered as a TextFlow — tool names and the
+        /// " · " / "+N" separators are Text runs, the status marks are {@link SVGContainer} icons
+        /// tinted by ai-feedback-success / -error — and installed into the header's summary slot.
+        /// While no child has finished the summary stays blank, since the header title's
+        /// "已调用 N 个工具" already carries the running total.
         private void rebuildSummary() {
-            int shown = Math.min(3, cards.size());
-            StringBuilder sb = new StringBuilder();
+            boolean anyFinished = false;
+            for (ToolCard c : cards) {
+                if (c.isFinished()) {
+                    anyFinished = true;
+                    break;
+                }
+            }
+            if (!anyFinished) {
+                header.setSummary(""); // nothing finished yet
+                return;
+            }
+            javafx.scene.text.TextFlow flow = new javafx.scene.text.TextFlow();
+            // .ai-collapse-summary carries the 11px caption size; font is inherited by the child Text
+            // runs (a Text is a Shape, so it takes its colour from summaryText's inline -fx-fill).
+            flow.getStyleClass().add("ai-collapse-summary");
+            flow.setMouseTransparent(true);
+            int shown = Math.min(cards.size(), 3);
             for (int i = 0; i < shown; i++) {
                 ToolCard c = cards.get(i);
                 if (i > 0) {
-                    sb.append(" · ");
+                    flow.getChildren().add(summaryText(" · "));
                 }
-                sb.append(c.getToolName());
+                flow.getChildren().add(summaryText(c.getToolName()));
                 if (c.isFinished()) {
-                    sb.append(' ').append(c.isSuccess() ? "✓" : "✗");
+                    flow.getChildren().add(summaryText(" ")); // hair of space between the name and its mark
+                    flow.getChildren().add(summaryStatusIcon(c.isSuccess()));
                 }
             }
-            int remaining = cards.size() - shown;
-            if (remaining > 0) {
-                sb.append(" · ").append(i18n("ai.tool.group.more", remaining));
+            int overflow = cards.size() - shown;
+            if (overflow > 0) {
+                flow.getChildren().add(summaryText(" · +" + overflow));
             }
-            header.setSummary(sb.toString());
+            header.setSummaryNode(flow);
+        }
+
+        /// A caption-tinted Text run for the B3 rich summary (tool name / " · " separator / "+N"
+        /// tail). The colour is set inline to the themed on-surface-variant: a Text is a Shape, so
+        /// the .ai-collapse-summary rule's {@code -fx-text-fill} would not reach it — only the
+        /// inherited font size does.
+        private static javafx.scene.text.Text summaryText(String s) {
+            javafx.scene.text.Text t = new javafx.scene.text.Text(s);
+            t.setStyle("-fx-fill: -monet-on-surface-variant;");
+            return t;
+        }
+
+        /// A ~14px themed status icon for the B3 rich summary: CHECK_CIRCLE (tertiary) on success,
+        /// CANCEL (error) on failure. An {@link SVGContainer} (not a bare SVGPath) so the
+        /// {@code .ai-feedback-success/-error .svg} rule tints the glyph and it lays out at 14px
+        /// inside the TextFlow instead of reserving the icon's full 24px design box.
+        private static SVGContainer summaryStatusIcon(boolean success) {
+            SVGContainer icon = (success ? SVG.CHECK_CIRCLE : SVG.CANCEL).createIcon(14);
+            icon.getStyleClass().add(success ? "ai-feedback-success" : "ai-feedback-error");
+            return icon;
         }
     }
 
@@ -5911,6 +6006,21 @@ public final class AIMainPage extends DecoratorAnimatedPage implements Decorator
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
         } catch (IOException | JsonParseException e) {
             return new org.jackhuang.hmcl.ai.search.AiSearchConfig();
+        }
+    }
+
+    /// Loads the knowledge-base config from disk (defaults — disabled — if absent or corrupt).
+    private org.jackhuang.hmcl.ai.kb.AiKbConfig loadKbConfig() {
+        Path filePath = SettingsManager.localConfigDirectory().resolve(KB_CONFIG_FILE);
+        try {
+            String json = Files.readString(filePath, StandardCharsets.UTF_8);
+            org.jackhuang.hmcl.ai.kb.AiKbConfig loaded =
+                    CHAT_SETTINGS_GSON.fromJson(json, org.jackhuang.hmcl.ai.kb.AiKbConfig.class);
+            return loaded != null ? loaded : new org.jackhuang.hmcl.ai.kb.AiKbConfig();
+        } catch (NoSuchFileException e) {
+            return new org.jackhuang.hmcl.ai.kb.AiKbConfig();
+        } catch (IOException | JsonParseException e) {
+            return new org.jackhuang.hmcl.ai.kb.AiKbConfig();
         }
     }
 

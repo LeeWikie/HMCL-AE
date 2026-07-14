@@ -25,6 +25,7 @@ import javafx.scene.layout.StackPane;
 import org.jackhuang.hmcl.ai.AiModelDiscoveryService;
 import org.jackhuang.hmcl.ai.AiSettings;
 import org.jackhuang.hmcl.ai.mcp.AiMcpServerConfig;
+import org.jackhuang.hmcl.ai.kb.AiKbConfig;
 import org.jackhuang.hmcl.ai.ocr.AiOcrConfig;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
 import org.jackhuang.hmcl.setting.LauncherSettings;
@@ -120,7 +121,8 @@ public final class SettingsTabRefreshFxTest {
                     () -> {
                     },
                     injectedSearchConfig,
-                    injectedOcrConfig);
+                    injectedOcrConfig,
+                    new AiKbConfig());
             ref.set(p);
             StackPane root = new StackPane(p);
             root.setPrefSize(1000, 700);

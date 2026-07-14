@@ -60,11 +60,17 @@ final class CollapseHeader extends HBox {
     private Timeline rotateAnimation;
 
     /// Leading SVG icon shown at the row's start in compact mode (thinking = lightbulb, tool =
-    /// puzzle piece). Null in the default (todo) layout.
+    /// puzzle piece, or a CHECK_CIRCLE / CANCEL status icon once a tool call finishes — see
+    /// [#setLeadingIcon]). Null in the default (todo) layout.
     private Node leadingIcon;
     /// Rich-summary label (caption tier) shown between the title and the chevron in compact mode:
-    /// e.g. "instance ✓ · search ✓ · +3" or "用时 3 秒". Created lazily by [#useCompactLayout].
+    /// e.g. "用时 3 秒". Created lazily by [#useCompactLayout].
     private Label summary;
+    /// The node currently occupying the summary slot in compact layout — the text [#summary] label
+    /// by default, or a caller-supplied rich node (e.g. the group card's B3 TextFlow of tool names +
+    /// SVG status icons) after [#setSummaryNode]. Tracked so either summary setter can swap the slot
+    /// in place without disturbing the surrounding title / spacer / chevron.
+    private Node summarySlot;
 
     CollapseHeader(String titleText) {
         setSpacing(6);
@@ -105,6 +111,7 @@ final class CollapseHeader extends HBox {
         summary.setMouseTransparent(true);
         summary.setManaged(false);
         summary.setVisible(false);
+        summarySlot = summary; // the text label occupies the summary slot until setSummaryNode swaps it
 
         // A spacer pushes the chevron to the trailing edge when the header is stretched wide
         // (expanded state); collapsed, everything simply hugs left with the chevron last.
@@ -121,20 +128,90 @@ final class CollapseHeader extends HBox {
         getChildren().addAll(title, summary, spacer, chevron);
     }
 
-    /// Sets (or clears) the compact-mode rich summary. Blank text hides the slot so it never
-    /// reserves layout space. No-op if [#useCompactLayout] was not called.
+    /// Replaces the compact-mode leading icon in place — e.g. the tool card swapping its puzzle-piece
+    /// for a CHECK_CIRCLE / CANCEL status icon once the call finishes. The icon is made
+    /// mouse-transparent so the whole row stays the click hot zone (same as [#useCompactLayout]).
+    /// No-op unless [#useCompactLayout] established the compact layout.
+    void setLeadingIcon(Node icon) {
+        if (!getStyleClass().contains("ai-collapse-header-compact")) {
+            return;
+        }
+        int idx = leadingIcon != null ? getChildren().indexOf(leadingIcon) : 0;
+        if (leadingIcon != null) {
+            getChildren().remove(leadingIcon);
+        }
+        leadingIcon = icon;
+        if (icon != null) {
+            icon.setMouseTransparent(true);
+            getChildren().add(Math.max(idx, 0), icon);
+        }
+    }
+
+    /// Sets (or clears) the compact-mode rich summary as plain text. Blank text hides the slot so it
+    /// never reserves layout space. Restores the text label into the slot first if a rich node had
+    /// been installed via [#setSummaryNode]. No-op if [#useCompactLayout] was not called.
     void setSummary(String text) {
         if (summary == null) {
             return;
         }
+        restoreTextSlot();
         boolean has = text != null && !text.isBlank();
         summary.setText(has ? text : "");
         summary.setManaged(has);
         summary.setVisible(has);
     }
 
+    /// Installs a rich node (e.g. the group card's B3 TextFlow: tool names + inline SVG status
+    /// icons) into the compact summary slot, in place of the plain-text label. Used by the tool-call
+    /// group card to name the first few tools and mark each with a themed CHECK_CIRCLE / CANCEL icon
+    /// instead of a Unicode ✓/✗. Passing {@code null} clears the slot back to an empty text label.
+    /// No-op if [#useCompactLayout] was not called.
+    void setSummaryNode(Node node) {
+        if (summary == null) {
+            return;
+        }
+        if (node == null) {
+            setSummary("");
+            return;
+        }
+        node.setMouseTransparent(true);
+        int idx = getChildren().indexOf(summarySlot);
+        if (idx < 0) {
+            return;
+        }
+        getChildren().set(idx, node);
+        summarySlot = node;
+    }
+
+    /// Swaps the plain-text [#summary] label back into the summary slot if a rich node currently
+    /// occupies it, so [#setSummary] always operates on the label that is actually shown.
+    private void restoreTextSlot() {
+        if (summarySlot != summary && summarySlot != null) {
+            int idx = getChildren().indexOf(summarySlot);
+            if (idx >= 0) {
+                getChildren().set(idx, summary);
+            }
+            summarySlot = summary;
+        }
+    }
+
     Label getSummaryLabel() {
         return summary;
+    }
+
+    /// The node currently shown in the compact summary slot: the plain-text [#summary] label by
+    /// default, or a rich node installed via [#setSummaryNode] (e.g. the group card's B3 TextFlow of
+    /// tool names + SVG status icons). Exposed so tests can assert the rich-summary structure.
+    Node getSummaryNode() {
+        return summarySlot;
+    }
+
+    /// The compact-mode leading icon currently installed — the puzzle piece while a tool runs, or a
+    /// CHECK_CIRCLE / CANCEL status icon once it finishes (see [#setLeadingIcon]). Null in the
+    /// default (todo) layout or before [#useCompactLayout]. Exposed so tests can assert the
+    /// post-completion status icon.
+    Node getLeadingIcon() {
+        return leadingIcon;
     }
 
     BooleanProperty expandedProperty() {

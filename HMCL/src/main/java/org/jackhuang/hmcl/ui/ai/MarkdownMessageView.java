@@ -64,6 +64,7 @@ import org.commonmark.node.ThematicBreak;
 import org.commonmark.parser.Parser;
 import org.jackhuang.hmcl.ai.markdown.MarkdownRenderer;
 import org.jackhuang.hmcl.ui.FXUtils;
+import org.jackhuang.hmcl.ui.SVG;
 import org.jetbrains.annotations.Nullable;
 
 import static org.jackhuang.hmcl.util.i18n.I18n.i18n;
@@ -525,15 +526,18 @@ public final class MarkdownMessageView extends VBox {
         langLabel.getStyleClass().add("md-code-lang");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        JFXButton copyBtn = new JFXButton(i18n("ai.markdown.copy"));
-        copyBtn.getStyleClass().add("md-code-copy");
+        // Icon copy button (matches the message action bar's icon-copy style) instead of a text
+        // button that flips its own label: circular toggle-icon4 hover/ripple + a tooltip, and the
+        // glyph briefly swaps to a check on success before reverting.
+        JFXButton copyBtn = FXUtils.newToggleButton4(SVG.CONTENT_COPY, 14);
+        FXUtils.installFastTooltip(copyBtn, i18n("ai.markdown.copy"));
         copyBtn.setOnAction(e -> {
             ClipboardContent cc = new ClipboardContent();
             cc.putString(body);
             Clipboard.getSystemClipboard().setContent(cc);
-            copyBtn.setText(i18n("ai.markdown.copied"));
+            copyBtn.setGraphic(SVG.CHECK.createIcon(14));
             PauseTransition revert = new PauseTransition(Duration.seconds(1.5));
-            revert.setOnFinished(ev -> copyBtn.setText(i18n("ai.markdown.copy")));
+            revert.setOnFinished(ev -> copyBtn.setGraphic(SVG.CONTENT_COPY.createIcon(14)));
             revert.play();
         });
         HBox header = new HBox(6, langLabel, spacer, copyBtn);

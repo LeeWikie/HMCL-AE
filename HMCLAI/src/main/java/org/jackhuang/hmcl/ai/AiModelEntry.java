@@ -88,6 +88,11 @@ public final class AiModelEntry {
     @SerializedName("supportsReasoning")
     private boolean supportsReasoning = false;
 
+    /// Whether the model can produce text embeddings — i.e. usable as a knowledge-base
+    /// embedding model. Independent of chat capability; a model may support both.
+    @SerializedName("supportsEmbedding")
+    private boolean supportsEmbedding = false;
+
     /// No-arg constructor for Gson.
     public AiModelEntry() {
     }
@@ -225,6 +230,14 @@ public final class AiModelEntry {
 
     public void setSupportsReasoning(boolean v) {
         this.supportsReasoning = v;
+    }
+
+    public boolean isSupportsEmbedding() {
+        return supportsEmbedding;
+    }
+
+    public void setSupportsEmbedding(boolean v) {
+        this.supportsEmbedding = v;
     }
 
     /// Returns whether any non-zero price is configured.

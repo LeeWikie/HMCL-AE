@@ -38,7 +38,6 @@ import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.IntegerProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
@@ -60,6 +59,8 @@ import org.jackhuang.hmcl.ai.AiSettings;
 import org.jackhuang.hmcl.ai.remember.RememberStore;
 import org.jackhuang.hmcl.ai.mcp.AiMcpServerConfig;
 import org.jackhuang.hmcl.ai.mcp.McpClientManager;
+import org.jackhuang.hmcl.ai.kb.AiKbConfig;
+import org.jackhuang.hmcl.ai.kb.KbSourceMode;
 import org.jackhuang.hmcl.ai.ocr.AiOcrConfig;
 import org.jackhuang.hmcl.ai.ocr.OcrProvider;
 import org.jackhuang.hmcl.ai.search.AiSearchConfig;
@@ -86,6 +87,7 @@ import org.jackhuang.hmcl.ui.construct.DialogCloseEvent;
 import org.jackhuang.hmcl.ui.construct.DialogPane;
 import org.jackhuang.hmcl.ui.construct.ComponentSublist;
 import org.jackhuang.hmcl.ui.construct.LineButton;
+import org.jackhuang.hmcl.ui.construct.LinePane;
 import org.jackhuang.hmcl.ui.construct.LineSelectButton;
 import org.jackhuang.hmcl.ui.construct.LineToggleButton;
 import org.jackhuang.hmcl.ui.construct.JsonEditorDialogPane;
@@ -127,6 +129,12 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// to {@code true} fully restores the pricing UI.
     static final boolean PRICING_UI_ENABLED = AIMainPage.PRICING_UI_ENABLED;
 
+    /// Master switch for the RAG / 知识库 surface — mirrors {@link AIMainPage#KNOWLEDGE_BASE_UI_ENABLED}
+    /// (keep in lockstep; see that flag for the full rationale). While {@code false} the 知识库 nav tab
+    /// and the per-model "embedding" capability checkbox are not shown; the checkbox is still built and
+    /// its value still saved (no data loss), so flipping this true fully restores the KB UI.
+    static final boolean KNOWLEDGE_BASE_UI_ENABLED = AIMainPage.KNOWLEDGE_BASE_UI_ENABLED;
+
     /// Bounded pool for the batch model-connection-test dialog: selecting many models across
     /// providers used to spawn one unbounded, un-pooled raw Thread per row with no throttling —
     /// a small fixed pool of daemon threads caps concurrency regardless of selection size.
@@ -148,6 +156,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private final Path mcpConfigFile = SettingsManager.localConfigDirectory().resolve("ai-mcp-settings.json");
     private final Path searchConfigFile = SettingsManager.localConfigDirectory().resolve("ai-search-settings.json");
     private final Path ocrConfigFile = SettingsManager.localConfigDirectory().resolve(AiOcrConfig.FILE_NAME);
+    private final Path kbConfigFile = SettingsManager.localConfigDirectory().resolve("ai-kb-config.json");
     private final Path toolPermissionFile = SettingsManager.localConfigDirectory().resolve("ai-tool-permissions.json");
     private final Path skillsDirPath = SettingsManager.localConfigDirectory().resolve("ai-skills");
 
@@ -167,12 +176,17 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     /// disconnect the tools again (the original double-instance bug). Edit via setters only.
     private final AiSearchConfig searchConfig;
     private final AiOcrConfig ocrConfig;
+    /// Shared with AIMainPage (constructor-injected), same as {@link #searchConfig}: the chat page's
+    /// KbSearchTool (Phase 3) will hold THIS instance, so edits here are live to the tool. Edit via
+    /// setters only; never reassign.
+    private final AiKbConfig kbConfig;
 
     private final TransitionPane transitionPane = new TransitionPane();
     private final TabHeader.Tab<Node> providerTab = new TabHeader.Tab<>("aiProviderTab");
     private final TabHeader.Tab<Node> mcpTab = new TabHeader.Tab<>("aiMcpTab");
     private final TabHeader.Tab<Node> skillsTab = new TabHeader.Tab<>("aiSkillsTab");
     private final TabHeader.Tab<Node> searchTab = new TabHeader.Tab<>("aiSearchTab");
+    private final TabHeader.Tab<Node> knowledgeBaseTab = new TabHeader.Tab<>("aiKnowledgeBaseTab");
     /// Kept registered (so any code that still selects it directly does not crash) but no longer
     /// reachable from the left nav — see the sidebar construction below.
     private final TabHeader.Tab<Node> ocrTab = new TabHeader.Tab<>("aiOcrTab");
@@ -198,12 +212,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private ComponentSublist modelSublist;
 
     public AISettingsPage(AiSettings aiSettings, AiModelDiscoveryService discoveryService, Runnable onSettingsChanged,
-                          AiSearchConfig searchConfig, AiOcrConfig ocrConfig) {
+                          AiSearchConfig searchConfig, AiOcrConfig ocrConfig, AiKbConfig kbConfig) {
         this.aiSettings = aiSettings;
         this.discoveryService = discoveryService;
         this.onSettingsChanged = onSettingsChanged;
         this.searchConfig = searchConfig;
         this.ocrConfig = ocrConfig;
+        this.kbConfig = kbConfig;
 
         skillRegistry.setSkillsDir(skillsDirPath);
         loadMcpServers();
@@ -216,6 +231,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         mcpTab.setNodeSupplier(this::buildMcpTab);
         skillsTab.setNodeSupplier(this::buildSkillsTab);
         searchTab.setNodeSupplier(this::buildSearchTab);
+        knowledgeBaseTab.setNodeSupplier(this::buildKnowledgeBaseTab);
         ocrTab.setNodeSupplier(this::buildOcrTab);
         generalTab.setNodeSupplier(this::buildGeneralTab);
         memoryTab.setNodeSupplier(this::buildMemoryTab);
@@ -235,16 +251,21 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // 数据设置/高级设置 归入「通用」分组(用户 2026-07-10 真机反馈:单项独占分组太碎),
         // 原 nav.data / nav.advanced 两个分组标题不再使用。
         AdvancedListBox sideBar = new AdvancedListBox()
-                .startCategory(i18n("ai.settings.nav.general"))
+                .startCategory(i18n("ai.settings.nav.general").toUpperCase(Locale.ROOT))
                 .addNavigationDrawerTab(tab, generalTab, i18n("ai.settings.nav.global"), SVG.TUNE)
                 .addNavigationDrawerTab(tab, providerTab, i18n("ai.settings.nav.providers"), SVG.DEPLOYED_CODE, SVG.DEPLOYED_CODE_FILL)
                 .addNavigationDrawerTab(tab, dataTab, i18n("ai.settings.nav.data_settings"), SVG.FOLDER_OPEN)
                 .addNavigationDrawerTab(tab, advancedTab, i18n("ai.settings.nav.advanced_settings"), SVG.SETTINGS, SVG.SETTINGS_FILL)
-                .startCategory(i18n("ai.settings.nav.services"))
+                .startCategory(i18n("ai.settings.nav.services").toUpperCase(Locale.ROOT))
                 .addNavigationDrawerTab(tab, skillsTab, i18n("ai.settings.nav.skills"), SVG.SCRIPT)
                 .addNavigationDrawerTab(tab, mcpTab, i18n("ai.settings.nav.mcp"), SVG.SCHEMA, SVG.SCHEMA_FILL)
-                .addNavigationDrawerTab(tab, searchTab, i18n("ai.settings.nav.search"), SVG.SEARCH)
-                .startCategory(i18n("help").toUpperCase(java.util.Locale.ROOT))
+                .addNavigationDrawerTab(tab, searchTab, i18n("ai.settings.nav.search"), SVG.SEARCH);
+        // 知识库 (RAG) nav is gated by KNOWLEDGE_BASE_UI_ENABLED — hidden in published builds while the
+        // feature matures (2026-07-14 decision); the tab + its content-builder stay wired for dev builds.
+        if (KNOWLEDGE_BASE_UI_ENABLED) {
+            sideBar.addNavigationDrawerTab(tab, knowledgeBaseTab, i18n("ai.settings.nav.knowledge_base"), SVG.MENU_BOOK);
+        }
+        sideBar.startCategory(i18n("help").toUpperCase(Locale.ROOT))
                 .addNavigationDrawerTab(tab, helpTab, i18n("ai.settings.nav.help"), SVG.FEEDBACK, SVG.FEEDBACK_FILL)
                 .addNavigationDrawerTab(tab, aboutTab, i18n("ai.settings.nav.about"), SVG.INFO, SVG.INFO_FILL);
         FXUtils.setLimitWidth(sideBar, 200);
@@ -651,7 +672,14 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         capVisionBox.setSelected(entry.isSupportsVision());
         JFXCheckBox capReasoningBox = new JFXCheckBox(i18n("ai.settings.model.cap_reasoning"));
         capReasoningBox.setSelected(entry.isSupportsReasoning());
-        HBox capRow = modelCapabilityRow(capToolsBox, capVisionBox, capReasoningBox);
+        JFXCheckBox capEmbeddingBox = new JFXCheckBox(i18n("ai.settings.model.cap_embedding"));
+        capEmbeddingBox.setSelected(entry.isSupportsEmbedding());
+        // The "embedding" capability only feeds the RAG 知识库 embedding-model picker, so it is hidden
+        // from the row while KNOWLEDGE_BASE_UI_ENABLED is false — the checkbox is still built above and
+        // still saved below (its value is preserved untouched), it simply isn't shown.
+        HBox capRow = KNOWLEDGE_BASE_UI_ENABLED
+                ? modelCapabilityRow(capToolsBox, capVisionBox, capReasoningBox, capEmbeddingBox)
+                : modelCapabilityRow(capToolsBox, capVisionBox, capReasoningBox);
         advGrid.add(captionedField(i18n("ai.settings.model.capabilities"), capRow), 0, 2, 2, 1);
         ComponentSublist advPane = new ComponentSublist();
         advPane.setTitle(i18n("ai.settings.advanced"));
@@ -701,6 +729,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 capToolsBox.setSelected(info.isSupportsTools());
                 capVisionBox.setSelected(info.isSupportsVision());
                 capReasoningBox.setSelected(info.isSupportsReasoning());
+                capEmbeddingBox.setSelected(info.isSupportsEmbedding());
                 if (info.getInputPricePerMillion() > 0) inField.setText(fmtPrice(info.getInputPricePerMillion()));
                 if (info.getOutputPricePerMillion() > 0) outField.setText(fmtPrice(info.getOutputPricePerMillion()));
                 if (info.getCacheWritePricePerMillion() > 0) cwField.setText(fmtPrice(info.getCacheWritePricePerMillion()));
@@ -752,6 +781,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 entry.setSupportsTools(capToolsBox.isSelected());
                 entry.setSupportsVision(capVisionBox.isSelected());
                 entry.setSupportsReasoning(capReasoningBox.isSelected());
+                entry.setSupportsEmbedding(capEmbeddingBox.isSelected());
                 entry.setInputPricePerMillion(parsePrice(inField.getText()));
                 entry.setOutputPricePerMillion(parsePrice(outField.getText()));
                 entry.setCacheWritePricePerMillion(parsePrice(cwField.getText()));
@@ -902,7 +932,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList listCard = new ComponentList();
         ScrollPane sp = new ScrollPane(listCard);
         sp.setFitToWidth(true);
-        sp.getStyleClass().add("edge-to-edge");
         FXUtils.setLimitHeight(sp, 320);
 
         VBox body = new VBox(10, search, status, sp);
@@ -1085,7 +1114,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
 
         ScrollPane sp = new ScrollPane(tree);
         sp.setFitToWidth(true);
-        sp.getStyleClass().add("edge-to-edge");
         FXUtils.setLimitHeight(sp, 360);
         // 一行状态文案：全部选中的测试跑完后提示"测试完成"（2026-07-10 真机反馈——之前每行各自
         // 出结果，但没有任何"整批结束了"的信号）。
@@ -1216,8 +1244,7 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             shown.setManaged(false);
             shown.setVisible(false);
             javafx.scene.layout.StackPane stack = new javafx.scene.layout.StackPane(masked, shown);
-            eye = new JFXButton();
-            eye.setGraphic(SVG.VISIBILITY.createIcon(18));
+            eye = FXUtils.newToggleButton4(SVG.VISIBILITY, 18);
             FXUtils.installFastTooltip(eye, i18n("ai.settings.key.reveal"));
             eye.setOnAction(e -> toggleReveal());
             node = new HBox(4, stack, eye);
@@ -1676,9 +1703,11 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             saveSearchConfig();
         });
         FXUtils.setLimitWidth(searchKeyField.node, 260);
-        LineButton apiKey = new LineButton();
+        // Interactive control (masked text field) → LinePane + setRight, not a LineButton trailingIcon
+        // (a LineButton is a clickable row and would paint a hand cursor over the text field).
+        LinePane apiKey = new LinePane();
         apiKey.setTitle("API Key");
-        apiKey.setTrailingIcon(searchKeyField.node);
+        apiKey.setRight(searchKeyField.node);
         core.getContent().add(apiKey);
 
         // 切换服务商时在内部同步默认 endpoint（端点不再作为独立设置项暴露）；API Key 现在按服务商分开存储
@@ -1695,31 +1724,13 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         // ---- 搜索选项 ----
         ComponentList options = new ComponentList();
 
-        // 结果个数：复用原生 MD3 风格的 JFXSlider，放入原生行的 trailing 槽，行高与列表一致
-        LineButton countRow = new LineButton();
-        countRow.setTitle(i18n("ai.settings.search.max_results"));
-        countRow.setSubtitle(i18n("ai.settings.search.max_results.desc"));
-        JFXSlider countSlider = new JFXSlider(1, 50, searchConfig.getMaxResults());
-        countSlider.getStyleClass().add("ai-slider"); // hide redundant water-drop indicator (value shown by countValue Label)
-        countSlider.setPrefWidth(160);
-        countSlider.setMajorTickUnit(1);
-        countSlider.setMinorTickCount(0);
-        countSlider.setSnapToTicks(true);
-        Label countValue = new Label(String.valueOf(searchConfig.getMaxResults()));
-        countValue.setMinWidth(28);
-        countValue.setAlignment(Pos.CENTER_RIGHT);
-        countSlider.valueProperty().addListener((obs, old, val) -> {
-            int v = (int) Math.round(val.doubleValue());
-            countValue.setText(String.valueOf(v));
-            if (v != searchConfig.getMaxResults()) {
-                searchConfig.setMaxResults(v);
-                saveSearchConfig();
-            }
-        });
-        HBox countControl = new HBox(8, countSlider, countValue);
-        countControl.setAlignment(Pos.CENTER_RIGHT);
-        countRow.setTrailingIcon(countControl);
-        options.getContent().add(countRow);
+        // 结果个数：复用统一的 MD3 滑块行助手（LinePane + setRight(slider)），行高与列表一致
+        options.getContent().add(sliderRow(i18n("ai.settings.search.max_results"),
+                i18n("ai.settings.search.max_results.desc"), 1, 50, searchConfig.getMaxResults(), "",
+                v -> {
+                    searchConfig.setMaxResults(v);
+                    saveSearchConfig();
+                }));
 
         LineButton test = new LineButton();
         test.setTitle(i18n("ai.settings.search.test"));
@@ -1756,6 +1767,163 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         root.getChildren().addAll(
                 ComponentList.createComponentListTitle(i18n("ai.settings.search.section.service")), core,
                 ComponentList.createComponentListTitle(i18n("ai.settings.search.section.options")), options);
+        return wrapScroll(root);
+    }
+
+    /// Knowledge-base (RAG) settings — mirrors {@link #buildSearchTab()} plus the model picker in
+    /// {@link #buildTitleNamingModelRow()}. The embedding-model picker lists ONLY models flagged
+    /// {@code supportsEmbedding} (the AstrBot-style KB→embedding-provider linkage) and is
+    /// server-managed (disabled) in REMOTE_HTTP mode; endpoint/local-path and the fusion slider swap
+    /// in/out by source mode via {@link #invalidateTab(TabHeader.Tab)}.
+    private Node buildKnowledgeBaseTab() {
+        VBox root = createSettingsRoot();
+        boolean remote = kbConfig.getSourceMode() == KbSourceMode.REMOTE_HTTP;
+
+        // ---- 常规：启用 + 来源模式 ----
+        ComponentList core = new ComponentList();
+        LineToggleButton enabled = new LineToggleButton();
+        enabled.setTitle(i18n("ai.settings.kb.enable"));
+        enabled.setSubtitle(i18n("ai.settings.kb.enable.desc"));
+        enabled.setSelected(kbConfig.isEnabled());
+        enabled.selectedProperty().addListener((obs, old, val) -> {
+            // Hot-toggle: writes AiKbConfig's observable enabled; AIMainPage binds kb_search
+            // registration to it (AND isValid), so the tool appears/disappears next turn (Phase 3).
+            kbConfig.setEnabled(val);
+            saveKbConfig();
+            invalidateTab(knowledgeBaseTab);
+        });
+        core.getContent().add(enabled);
+
+        LineSelectButton<KbSourceMode> mode = new LineSelectButton<>();
+        mode.setTitle(i18n("ai.settings.kb.source_mode"));
+        mode.setSubtitle(i18n("ai.settings.kb.source_mode.desc"));
+        mode.setItems(List.of(KbSourceMode.REMOTE_HTTP, KbSourceMode.LOCAL_INDEX));
+        mode.setNullSafeConverter(m -> m == KbSourceMode.LOCAL_INDEX
+                ? i18n("ai.settings.kb.source_mode.local")
+                : i18n("ai.settings.kb.source_mode.remote"));
+        mode.setValue(kbConfig.getSourceMode());
+        mode.valueProperty().addListener((obs, old, val) -> {
+            if (val != null) {
+                kbConfig.setSourceMode(val);
+                saveKbConfig();
+                invalidateTab(knowledgeBaseTab);
+            }
+        });
+        core.getContent().add(mode);
+
+        // ---- 嵌入模型（AstrBot 式 KB→嵌入 provider 联动；仅列 supportsEmbedding 的模型）----
+        ComponentList embedList = new ComponentList();
+        List<String> embItems = new ArrayList<>();
+        embItems.add(""); // 未选择
+        for (AiProviderProfile profile : aiSettings.getProfiles()) {
+            for (AiModelEntry entry : profile.getModels()) {
+                if (entry.isSupportsEmbedding()) {
+                    embItems.add(profile.getId() + "::" + entry.getId());
+                }
+            }
+        }
+        LineSelectButton<String> embRow = new LineSelectButton<>();
+        embRow.setTitle(i18n("ai.settings.kb.embedding_model"));
+        embRow.setSubtitle(remote
+                ? i18n("ai.settings.kb.embedding_model.server_managed")
+                : i18n("ai.settings.kb.embedding_model.desc"));
+        embRow.setItems(embItems);
+        embRow.setNullSafeConverter(value -> {
+            if (value.isEmpty()) return i18n("ai.settings.kb.embedding_model.none");
+            int sep = value.indexOf("::");
+            String profileId = sep >= 0 ? value.substring(0, sep) : "";
+            String modelId = sep >= 0 ? value.substring(sep + 2) : value;
+            for (AiProviderProfile profile : aiSettings.getProfiles()) {
+                if (profile.getId().equals(profileId)) {
+                    AiModelEntry entry = profile.getModel(modelId);
+                    return displayProfileName(profile) + " · " + (entry != null ? entry.getDisplayName() : modelId);
+                }
+            }
+            return modelId;
+        });
+        String curRef = kbConfig.getEmbeddingModelRef();
+        embRow.setValue(embItems.contains(curRef) ? curRef : "");
+        embRow.valueProperty().addListener((obs, old, value) -> {
+            kbConfig.setEmbeddingModelRef(value == null ? "" : value);
+            saveKbConfig();
+            invalidateTab(knowledgeBaseTab);
+        });
+        embRow.setDisable(remote); // REMOTE_HTTP: the server owns embedding — shown but not editable
+        embedList.getContent().add(embRow);
+
+        // ---- 知识库来源 ----
+        ComponentList sourceList = new ComponentList();
+        if (remote) {
+            // Interactive control (endpoint text field) → LinePane + setRight, not a LineButton
+            // trailingIcon (a LineButton is a clickable row and would paint a hand cursor over it).
+            LinePane endpointRow = new LinePane();
+            endpointRow.setTitle(i18n("ai.settings.kb.endpoint"));
+            endpointRow.setSubtitle(i18n("ai.settings.kb.endpoint.desc"));
+            JFXTextField endpointField = new JFXTextField(kbConfig.getEndpoint());
+            endpointField.setPrefWidth(260);
+            endpointField.focusedProperty().addListener((o, was, focused) -> {
+                if (!focused) {
+                    kbConfig.setEndpoint(endpointField.getText());
+                    saveKbConfig();
+                    invalidateTab(knowledgeBaseTab);
+                }
+            });
+            endpointRow.setRight(endpointField);
+            sourceList.getContent().add(endpointRow);
+        } else {
+            LineButton pathRow = new LineButton();
+            pathRow.setTitle(i18n("ai.settings.kb.local_path"));
+            String cur = kbConfig.getLocalIndexPath();
+            pathRow.setSubtitle(cur.isEmpty() ? i18n("ai.settings.kb.local_path.desc") : cur);
+            pathRow.setTrailingIcon(SVG.FOLDER_OPEN);
+            pathRow.setOnAction(e -> {
+                javafx.stage.DirectoryChooser chooser = new javafx.stage.DirectoryChooser();
+                chooser.setTitle(i18n("ai.settings.kb.local_path"));
+                java.io.File dir = chooser.showDialog(null);
+                if (dir != null) {
+                    kbConfig.setLocalIndexPath(dir.getAbsolutePath());
+                    saveKbConfig();
+                    invalidateTab(knowledgeBaseTab);
+                }
+            });
+            sourceList.getContent().add(pathRow);
+        }
+
+        // ---- 检索参数 ----
+        ComponentList retrieval = new ComponentList();
+        retrieval.getContent().add(sliderRow(i18n("ai.settings.kb.top_k"), i18n("ai.settings.kb.top_k.desc"),
+                1, 20, kbConfig.getTopK(), "", v -> { kbConfig.setTopK(v); saveKbConfig(); }));
+        if (!remote) {
+            retrieval.getContent().add(sliderRow(i18n("ai.settings.kb.fusion_top_k"), i18n("ai.settings.kb.fusion_top_k.desc"),
+                    1, 50, kbConfig.getFusionTopK(), "", v -> { kbConfig.setFusionTopK(v); saveKbConfig(); }));
+        }
+
+        root.getChildren().addAll(
+                ComponentList.createComponentListTitle(i18n("ai.settings.kb.section.general")), core,
+                ComponentList.createComponentListTitle(i18n("ai.settings.kb.section.embedding")), embedList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.kb.section.source")), sourceList,
+                ComponentList.createComponentListTitle(i18n("ai.settings.kb.section.retrieval")), retrieval);
+
+        // ---- LOCAL_INDEX 仍在开发中:诚实告知,避免用户配了一个当前不返回结果的模式 ----
+        if (!remote) {
+            Label wip = new Label(i18n("ai.settings.kb.local_wip"));
+            wip.getStyleClass().add("ai-footnote");
+            wip.setWrapText(true);
+            VBox.setMargin(wip, new javafx.geometry.Insets(4, 0, 0, 4));
+            root.getChildren().add(wip);
+        }
+
+        // ---- 内联校验（不阻断开关,仅提示）----
+        if (kbConfig.isEnabled() && !kbConfig.isValid(aiSettings)) {
+            Label warn = new Label(remote
+                    ? i18n("ai.settings.kb.validation.endpoint_required")
+                    : i18n("ai.settings.kb.validation.embedding_required"));
+            warn.getStyleClass().add("ai-footnote");
+            warn.setWrapText(true);
+            VBox.setMargin(warn, new javafx.geometry.Insets(4, 0, 0, 4));
+            root.getChildren().add(warn);
+        }
+
         return wrapScroll(root);
     }
 
@@ -1960,7 +2128,8 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
                 toggleRow(i18n("ai.settings.data.recycle_bin"), i18n("ai.settings.data.recycle_bin.desc"),
                         aiSettings.deleteToRecycleBinProperty()),
                 sliderRow(i18n("ai.settings.data.backup_retention"), i18n("ai.settings.data.backup_retention.desc"),
-                        aiSettings.worldBackupMaxMbProperty(), 1, 100, i18n("ai.settings.data.backup_retention.unit")),
+                        1, 100, aiSettings.worldBackupMaxMbProperty().get(), i18n("ai.settings.data.backup_retention.unit"),
+                        v -> { aiSettings.worldBackupMaxMbProperty().set(v); saveAiSettings(); }),
                 buildTraceEnabledRow(),
                 buildUploadDiagnosticRow(),
                 buildPrivacyNoticeRow());
@@ -2365,14 +2534,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         ComponentList loopList = new ComponentList();
         loopList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.max_tool_cycles"), i18n("ai.settings.advanced.max_tool_cycles.desc"),
-                        aiSettings.maxToolCyclesProperty(), 1, 50, ""));
+                        1, 50, aiSettings.maxToolCyclesProperty().get(), "",
+                        v -> { aiSettings.maxToolCyclesProperty().set(v); saveAiSettings(); }));
 
         // ③ 模型请求 — 网络请求。每日花费上限旋钮及其"达标暂停发送"enforcement 已移除（用户判定无意义，
         // 单条回复气泡下的成本估算显示保留，见 AIMainPage#estimateCost/formatUsage）。
         ComponentList requestList = new ComponentList();
         requestList.getContent().addAll(
                 sliderRow(i18n("ai.settings.advanced.request_timeout"), i18n("ai.settings.advanced.request_timeout.desc"),
-                        aiSettings.requestTimeoutSecondsProperty(), 15, 600, i18n("ai.settings.advanced.unit_seconds")));
+                        15, 600, aiSettings.requestTimeoutSecondsProperty().get(), i18n("ai.settings.advanced.unit_seconds"),
+                        v -> { aiSettings.requestTimeoutSecondsProperty().set(v); saveAiSettings(); }));
 
         // ④ 工具开关 — 默认关闭的可选工具域（NBT / Shell）。
         ComponentList toolsList = new ComponentList();
@@ -2528,32 +2699,43 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
         return row;
     }
 
-    private LineButton sliderRow(String title, String subtitle, IntegerProperty prop,
-                                 int min, int max, String unit) {
-        LineButton row = new LineButton();
+    /// The one MD3 slider row used across every AI settings tab. A title/subtitle {@link LinePane}
+    /// with a {@link JFXSlider} + value label in its trailing (right) slot — a slider is an interactive
+    /// control, so it lives on a LinePane, not a clickable LineButton. Snaps to integers and fires
+    /// {@code onChange} with the rounded value only when it actually changes (avoids a save-flood
+    /// during a drag). Pass an empty {@code unit} for a bare count. Callers own the persistence in
+    /// {@code onChange}. This unifies the former {@code kbSliderRow}, the search-tab inline count row,
+    /// and the {@code IntegerProperty}-based {@code sliderRow} into a single implementation.
+    private LinePane sliderRow(String title, String subtitle, int min, int max, int value,
+                               String unit, java.util.function.IntConsumer onChange) {
+        LinePane row = new LinePane();
         row.setTitle(title);
         row.setSubtitle(subtitle);
-        int initial = Math.max(min, Math.min(max, prop.get()));
+        int initial = Math.max(min, Math.min(max, value));
         JFXSlider slider = new JFXSlider(min, max, initial);
         // The numeric value is shown by the right-side Label below, so the JFXSlider's floating
         // "water-drop" indicator is redundant and overflows/clips into the previous row — hide it
         // via .ai-slider (root.css). Scoped to AI sliders only; native sliders keep it.
         slider.getStyleClass().add("ai-slider");
         slider.setPrefWidth(160);
-        Label value = new Label(initial + unit);
-        value.setMinWidth(54);
-        value.setAlignment(Pos.CENTER_RIGHT);
+        slider.setMajorTickUnit(1);
+        slider.setMinorTickCount(0);
+        slider.setSnapToTicks(true);
+        Label valueLabel = new Label(initial + unit);
+        valueLabel.setMinWidth(unit.isEmpty() ? 28 : 54);
+        valueLabel.setAlignment(Pos.CENTER_RIGHT);
+        int[] last = {initial};
         slider.valueProperty().addListener((obs, old, val) -> {
             int v = (int) Math.round(val.doubleValue());
-            value.setText(v + unit);
-            if (v != prop.get()) {
-                prop.set(v);
-                saveAiSettings();
+            valueLabel.setText(v + unit);
+            if (v != last[0]) {
+                last[0] = v;
+                onChange.accept(v);
             }
         });
-        HBox control = new HBox(8, slider, value);
+        HBox control = new HBox(8, slider, valueLabel);
         control.setAlignment(Pos.CENTER_RIGHT);
-        row.setTrailingIcon(control);
+        row.setRight(control);
         return row;
     }
 
@@ -2730,7 +2912,6 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
     private ScrollPane wrapScroll(Node content) {
         ScrollPane scrollPane = new ScrollPane(content);
         scrollPane.setFitToWidth(true);
-        scrollPane.getStyleClass().add("edge-to-edge");
         FXUtils.smoothScrolling(scrollPane);
         return scrollPane;
     }
@@ -2778,6 +2959,16 @@ public final class AISettingsPage extends DecoratorAnimatedPage implements Decor
             Files.writeString(searchConfigFile, GSON.toJson(searchConfig), StandardCharsets.UTF_8);
         } catch (IOException e) {
             org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save search config", e);
+        }
+    }
+
+    // Save-only (mirror saveSearchConfig): the shared AiKbConfig instance is constructor-injected by
+    // AIMainPage (the single startup read point); this page only persists edits.
+    private void saveKbConfig() {
+        try {
+            Files.writeString(kbConfigFile, GSON.toJson(kbConfig), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            org.jackhuang.hmcl.util.logging.Logger.LOG.warning("[AI] failed to save knowledge-base config", e);
         }
     }
 

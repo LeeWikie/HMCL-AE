@@ -21,6 +21,8 @@ import com.jfoenix.controls.JFXButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.layout.StackPane;
+import org.jackhuang.hmcl.ui.SVG;
+import org.jackhuang.hmcl.ui.SVGContainer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -85,8 +87,14 @@ public final class MarkdownCodeCopyFxTest {
             // the same onAction path through a real toolkit deterministically. Physical-click
             // coverage belongs to a headless Monocle setup (virtual robot), not the dev desktop.
             FxRobot robot = new FxRobot();
-            JFXButton copyBtn = robot.lookup(".md-code-copy").queryAs(JFXButton.class);
-            assertEquals("复制", copyBtn.getText());
+            // The copy control is now an icon toggle button (SVG.CONTENT_COPY) in the code header,
+            // not the old text button that flipped its own 复制/已复制 label — so locate it under
+            // .md-code-header and assert the glyph rather than the label text.
+            JFXButton copyBtn = robot.lookup(".md-code-header .toggle-icon4").queryAs(JFXButton.class);
+            assertTrue(copyBtn.getGraphic() instanceof SVGContainer,
+                    "the copy control is an SVG icon button, got: " + copyBtn.getGraphic());
+            assertEquals(SVG.CONTENT_COPY, ((SVGContainer) copyBtn.getGraphic()).getIcon(),
+                    "before copying, the button shows the copy glyph");
 
             WaitForAsyncUtils.asyncFx(copyBtn::fire).get(5, TimeUnit.SECONDS);
             WaitForAsyncUtils.waitForFxEvents();
@@ -94,7 +102,8 @@ public final class MarkdownCodeCopyFxTest {
             String clipped = WaitForAsyncUtils.asyncFx(
                     () -> Clipboard.getSystemClipboard().getString()).get(5, TimeUnit.SECONDS);
             assertEquals(CODE, clipped, "clipboard must hold the raw code body");
-            assertEquals("已复制", copyBtn.getText(), "button must acknowledge the copy");
+            assertEquals(SVG.CHECK, ((SVGContainer) copyBtn.getGraphic()).getIcon(),
+                    "the glyph flips to a check to acknowledge the copy");
         } finally {
             String restore = before;
             WaitForAsyncUtils.asyncFx(() -> {
