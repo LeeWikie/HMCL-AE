@@ -93,7 +93,7 @@ public final class TraceRecorder {
         // while it is still a plain, unescaped Java string closes that gap.
         redactTree(event);
         String line = GSON.toJson(event);
-        String redacted = Redactor.redact(line);
+        String redacted = Redactor.redactTrace(line);
         Path file = dir.resolve(sanitize(sessionId) + ".jsonl");
         synchronized (LOCK) {
             try {
@@ -188,7 +188,7 @@ public final class TraceRecorder {
             for (String key : new ArrayList<>(obj.keySet())) {
                 JsonElement child = obj.get(key);
                 if (child.isJsonPrimitive() && child.getAsJsonPrimitive().isString()) {
-                    obj.addProperty(key, Redactor.redact(child.getAsString()));
+                    obj.addProperty(key, Redactor.redactTrace(child.getAsString()));
                 } else {
                     redactTree(child);
                 }
@@ -198,7 +198,7 @@ public final class TraceRecorder {
             for (int i = 0; i < arr.size(); i++) {
                 JsonElement child = arr.get(i);
                 if (child.isJsonPrimitive() && child.getAsJsonPrimitive().isString()) {
-                    arr.set(i, new JsonPrimitive(Redactor.redact(child.getAsString())));
+                    arr.set(i, new JsonPrimitive(Redactor.redactTrace(child.getAsString())));
                 } else {
                     redactTree(child);
                 }

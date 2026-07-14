@@ -85,4 +85,38 @@ public final class Redactor {
                 .replaceAll(m -> "\"" + m.group(1) + "\"" + m.group(2) + "\"[REDACTED]\"");
         return out;
     }
+
+    /// Email addresses — personal data, masked wholesale in traces.
+    private static final Pattern EMAIL_PATTERN = Pattern.compile(
+            "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
+
+    /// Home-directory paths whose one user-name segment identifies the real person. Keeps the path
+    /// SHAPE (the `…/Users/` or `…/home/` prefix and everything AFTER the name) so a trace stays
+    /// debuggable, replacing only that single segment with `<user>`. Handles Windows
+    /// (`C:\Users\NAME`), macOS (`/Users/NAME`) and Linux (`/home/NAME`), tolerating single OR
+    /// double back-slashes (a leaf is single-slash; the JSON-serialized line is double-slash) and
+    /// forward slashes.
+    private static final Pattern HOME_DIR_USER_PATTERN = Pattern.compile(
+            "(?i)([\\\\/]+(?:Users|home)[\\\\/]+)([^\\\\/\"\\s]+)");
+
+    /// Trace-only masking layered ON TOP of {@link #redact}: also scrubs personal data (emails and
+    /// the user name in home-dir paths) that {@link #redact} deliberately KEEPS for debug value in
+    /// memory. Used by {@code TraceRecorder} because a trace can be uploaded for diagnosis, so it
+    /// must not carry the operator's name/email — but the path SHAPE and ordinary prose survive so
+    /// the trace stays useful. Not used by {@code RememberStore} (memory keeps the secret-only
+    /// {@link #redact}). Idempotent and JSON-safe (only rewrites values, never structural quotes).
+    public static String redactTrace(@Nullable String s) {
+        String out = redact(s);
+        if (out == null || out.isEmpty()) {
+            return out;
+        }
+        out = EMAIL_PATTERN.matcher(out).replaceAll("[EMAIL]");
+        // quoteReplacement: the matched prefix (m.group(1)) contains back-slashes (Windows paths,
+        // doubled once JSON-serialized); Matcher.replaceAll(Function) still treats `\` and `$` in the
+        // returned string as escapes, so without quoting they'd be eaten — halving `\\Users\\` back to
+        // an invalid single-escaped `\Users\` and corrupting the JSON line.
+        out = HOME_DIR_USER_PATTERN.matcher(out)
+                .replaceAll(m -> java.util.regex.Matcher.quoteReplacement(m.group(1) + "<user>"));
+        return out;
+    }
 }

@@ -87,6 +87,52 @@ public class RedactorTest {
         assertEquals("", Redactor.redact(""));
     }
 
+    /// Trace-only masking ({@link Redactor#redactTrace}) scrubs the personal data that memory's
+    /// {@link Redactor#redact} deliberately keeps: the user name in a home-dir path is replaced with
+    /// {@code <user>} while the path SHAPE (drive/prefix + everything after the name) survives so the
+    /// trace stays debuggable. Covers Windows, macOS and Linux home layouts.
+    @Test
+    public void traceMasksHomeDirUsernameButKeepsPathShape() {
+        String win = Redactor.redactTrace("read C:\\Users\\Administrator\\.minecraft\\mods\\create.jar");
+        assertFalse(win.contains("Administrator"), "the Windows user name must be masked: " + win);
+        assertTrue(win.contains("C:\\Users\\<user>\\.minecraft\\mods\\create.jar"),
+                "the rest of the path must survive for debugging: " + win);
+
+        assertTrue(Redactor.redactTrace("/home/alice/games").contains("/home/<user>/games"));
+        assertTrue(Redactor.redactTrace("/Users/bob/Library").contains("/Users/<user>/Library"));
+    }
+
+    @Test
+    public void traceMasksEmailAddresses() {
+        String out = Redactor.redactTrace("contact me at jane.doe@example.com please");
+        assertFalse(out.contains("jane.doe@example.com"), "the email must be masked: " + out);
+        assertTrue(out.contains("[EMAIL]"), "unexpected: " + out);
+    }
+
+    /// {@link Redactor#redactTrace} is a superset of {@link Redactor#redact}: it still scrubs every
+    /// secret shape, and leaves JSON structurally valid.
+    @Test
+    public void traceRedactionStillScrubsSecretsAndKeepsJsonValid() {
+        JsonObject o = new JsonObject();
+        o.addProperty("api_key", "sk-ABCDEFGHIJKLMNOP0123456789");
+        o.addProperty("path", "C:\\Users\\Administrator\\.minecraft");
+        o.addProperty("note", "just some prose");
+        JsonObject back = JsonParser.parseString(Redactor.redactTrace(o.toString())).getAsJsonObject();
+        assertEquals("[REDACTED]", back.get("api_key").getAsString(), "secret still scrubbed");
+        assertFalse(back.get("path").getAsString().contains("Administrator"), "user name masked in trace");
+        assertTrue(back.get("path").getAsString().contains("<user>"), "path shape kept");
+        assertEquals("just some prose", back.get("note").getAsString(), "prose preserved");
+    }
+
+    /// The intended divergence: memory's {@link Redactor#redact} must NOT mask the home-dir user
+    /// name (paths/usernames are debug context there and memory is local-only), only the trace
+    /// layer does. Guards against someone folding the PII masking back into {@code redact}.
+    @Test
+    public void plainRedactKeepsHomeDirUsernameForMemory() {
+        String path = "C:\\Users\\Administrator\\.minecraft";
+        assertEquals(path, Redactor.redact(path), "memory redaction must leave the path/user name intact");
+    }
+
     @Test
     public void redactingAWholeJsonLineKeepsItValidAndSparesPaths() {
         JsonObject o = new JsonObject();
