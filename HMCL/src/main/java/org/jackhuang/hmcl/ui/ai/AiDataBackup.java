@@ -48,7 +48,12 @@ public final class AiDataBackup {
             "ai-chat-settings.json",
             "ai-mcp-settings.json",
             "ai-search-settings.json",
-            "ai-tool-permissions.json");
+            "ai-tool-permissions.json",
+            // OCR is a shipping feature; the knowledge-base config is dev-gated today but harmless to
+            // carry (backup() only archives files that actually exist). Both live at the config-dir root
+            // like the entries above, so without them a backup silently drops the user's OCR / KB setup.
+            "ai-ocr-settings.json",
+            "ai-kb-config.json");
 
     /// AE-owned folders (relative to the config dir) included in a full backup.
     private static final List<String> DATA_DIRS = List.of(
