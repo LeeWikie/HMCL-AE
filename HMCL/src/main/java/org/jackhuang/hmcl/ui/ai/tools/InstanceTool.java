@@ -64,6 +64,12 @@ public final class InstanceTool implements ToolSpec {
     private final SetInstanceMemoryTool setMemory = new SetInstanceMemoryTool();
     private final SetInstanceJvmArgsTool setJvmArgs = new SetInstanceJvmArgsTool();
     private final SetInstanceIsolationTool setIsolation = new SetInstanceIsolationTool();
+    private final SetInstanceJavaTool setJava = new SetInstanceJavaTool();
+    private final SetInstanceWindowTool setWindow = new SetInstanceWindowTool();
+    private final SetInstanceLaunchBehaviorTool setLaunchBehavior = new SetInstanceLaunchBehaviorTool();
+    private final SetInstanceGraphicsTool setGraphics = new SetInstanceGraphicsTool();
+    private final SetInstanceLaunchArgsTool setLaunchArgs = new SetInstanceLaunchArgsTool();
+    private final ListGameSettingsPresetsTool listPresets = new ListGameSettingsPresetsTool();
     private final ReadGameOptionsTool getOptions = new ReadGameOptionsTool();
     private final SetGameOptionTool setOption = new SetGameOptionTool();
     private final ListJavaTool listJava = new ListJavaTool();
@@ -81,6 +87,7 @@ public final class InstanceTool implements ToolSpec {
     private final CheckModUpdatesTool modsCheckUpdates = new CheckModUpdatesTool();
     private final UpdateModTool modsUpdate;
     private final DeleteModTool modsDelete;
+    private final RollbackModTool modsRollback = new RollbackModTool();
 
     private final ListWorldsTool worldsList = new ListWorldsTool();
     /// Reads world NBT internally, so — like the original registration — it's only usable when
@@ -93,9 +100,15 @@ public final class InstanceTool implements ToolSpec {
     private final RestoreWorldBackupTool worldsBackupRestore;
     private final ListDatapacksTool worldsDatapacksList = new ListDatapacksTool();
     private final InstallDatapackTool worldsDatapacksInstall = new InstallDatapackTool();
+    private final WorldExportTool worldExport = new WorldExportTool();
+    /// Owns the {@code saves/<world>/datapacks/} write domain (toggle + remove); needs the recycle-bin
+    /// preference because its remove action deletes, so it's constructed in the ctor like the sibling
+    /// delete tools.
+    private final ManageDatapackTool worldsDatapacksManage;
 
     private final ListResourcePacksTool packsListLocal = new ListResourcePacksTool();
     private final InstallResourcePackTool resourcepacksInstall = new InstallResourcePackTool();
+    private final CheckResourcePackUpdatesTool resourcepacksCheckUpdates = new CheckResourcePackUpdatesTool();
     private final DeleteResourcePackTool resourcepacksDelete;
     private final InstallShaderTool shadersInstall = new InstallShaderTool();
     private final ToggleShaderTool shadersToggle = new ToggleShaderTool();
@@ -103,12 +116,20 @@ public final class InstanceTool implements ToolSpec {
     private final InstallModpackTool modpacksInstall = new InstallModpackTool();
     private final ExportModpackTool modpacksExport = new ExportModpackTool();
 
+    // Maintenance / advanced tooling.
+    private final GenerateLaunchScriptTool generateScript = new GenerateLaunchScriptTool();
+    private final InstallLocalContentTool installLocal = new InstallLocalContentTool();
+    private final SetInstanceIconTool setIcon = new SetInstanceIconTool();
+    private final InstanceMaintenanceTool maintenance = new InstanceMaintenanceTool();
+    private final ManageJavaTool manageJava = new ManageJavaTool();
+    private final SchematicTool schematic; // needs the recycle-bin preference (schematics_delete)
+
     private final BooleanSupplier nbtToolsEnabled;
 
     /// @param toRecycleBin        whether destructive file operations should prefer the system
     ///                            recycle bin (delete / mods_delete / mods_update /
-    ///                            worlds_delete / resourcepacks_delete / shaders_delete) — see
-    ///                            {@code AiSettings#isDeleteToRecycleBin()}
+    ///                            worlds_delete / resourcepacks_delete / shaders_delete /
+    ///                            datapacks_remove) — see {@code AiSettings#isDeleteToRecycleBin()}
     /// @param worldBackupMaxMb    per-world cap on the total snapshot size in MB
     ///                            (worlds_backup_create / worlds_backup_restore's post-restore prune)
     /// @param nbtToolsEnabled     gates the {@code worlds_info} action exactly as the standalone
@@ -126,6 +147,8 @@ public final class InstanceTool implements ToolSpec {
         this.worldsBackupRestore = new RestoreWorldBackupTool(worldBackupMaxMb);
         this.resourcepacksDelete = new DeleteResourcePackTool(toRecycleBin);
         this.shadersDelete = new DeleteShaderTool(toRecycleBin);
+        this.worldsDatapacksManage = new ManageDatapackTool(toRecycleBin);
+        this.schematic = new SchematicTool(toRecycleBin);
         this.nbtToolsEnabled = nbtToolsEnabled;
     }
 
@@ -150,14 +173,25 @@ public final class InstanceTool implements ToolSpec {
                 + "currently selected instance. Actions:\n"
                 + "- Lifecycle: list, details, rename (newName), delete (DANGEROUS, confirm-gated), "
                 + "create (gameVersion, loader, loaderVersion, name — installs a loader/creates an instance).\n"
-                + "- Config: set_memory (maxMemoryMB), set_jvm_args (jvmArgs — custom JVM/GC flags; NEVER "
+                + "- Config: set_memory (maxMemoryMB fixed -Xmx, or auto=true for automatic allocation), "
+                + "set_jvm_args (jvmArgs — custom JVM/GC flags; NEVER "
                 + "hand-edit instance-game-settings.json for this, always use this action), "
                 + "set_isolation (enable: true=own version folder, "
-                + "false=follow global default), get_options, set_option (key, value), "
+                + "false=follow global default), "
+                + "set_window (windowType windowed/fullscreen/maximized, plus width/height for windowed mode), "
+                + "set_launch_behavior (launcherVisibility, processPriority, allowAutoAgent, disableAutoGameOptions, "
+                + "showLogs, enableDebugLogOutput, notCheckGame — what the launcher does around a launch, not in-game video), "
+                + "set_graphics (graphicsBackend default/opengl/vulkan, openGLRenderer, vulkanRenderer — call with no "
+                + "params first to see the renderers this machine supports), "
+                + "set_launch_args (gameArguments, environmentVariables, noJVMOptions, noOptimizingJVMOptions, notCheckJVM "
+                + "— per-instance overrides), "
+                + "list_presets (no params — read-only; lists the global game-settings presets), "
+                + "get_options, set_option (key, value), "
                 + "clean_logs (keep), open_folder.\n"
-                + "- Java: list_java, download_java (gameVersion or javaVersion).\n"
+                + "- Java: list_java, set_java (mode auto/version/detected/custom, with version or path), "
+                + "download_java (gameVersion or javaVersion).\n"
                 + "- Mods (already-known/installed content only — search via the 'search' tool first): "
-                + "mods_list, mods_install (id, source, loader, gameVersion, version — 'search' does NOT "
+                + "mods_list, mods_install (id or ids, source, loader, gameVersion, version — 'search' does NOT "
                 + "verify per-result which loader/version a mod actually supports (its loader field is a "
                 + "hint, not a filter), so PASS the loader/gameVersion the USER actually wants, not just "
                 + "whatever you queried search with; omitting them silently falls back to that mod's single "
@@ -168,19 +202,41 @@ public final class InstanceTool implements ToolSpec {
                 + "the loaders/versions it DOES support, so pick one of those or search for an alternative "
                 + "mod rather than retrying the same call), "
                 + "mods_toggle (mod, enable), mods_info (mod), "
-                + "mods_check_updates, mods_update (mod), mods_delete (mod, DANGEROUS).\n"
+                + "mods_check_updates, mods_update (mod — or 'mods' array / all=true to update several at once), "
+                + "mods_delete (mod, DANGEROUS), "
+                + "mods_rollback (mod; version — rolls a mod back to an archived previous version, or omit "
+                + "'version' to list the versions it can be rolled back to).\n"
                 + "- Worlds: worlds_list, worlds_info (world; NBT tools must be enabled), "
                 + "worlds_import (zip), worlds_delete (world, DANGEROUS), "
                 + "worlds_backup_create (world), worlds_backup_list (world), "
                 + "worlds_backup_restore (world, backupId, DANGEROUS — auto-backs-up current world first), "
-                + "worlds_datapacks_list (world), worlds_datapacks_install (world, source).\n"
+                + "worlds_export (world; target — zips a world into a .zip archive, never overwriting), "
+                + "worlds_duplicate (world, newName — copies a world into a new save folder), "
+                + "worlds_datapacks_list (world), worlds_datapacks_install (world, source), "
+                + "datapacks_toggle (world, datapack, enable — enables/disables a single datapack), "
+                + "datapacks_remove (world, datapack, DANGEROUS — deletes a single datapack).\n"
                 + "- Content already installed locally: packs_list_local (resource packs), "
                 + "resourcepacks_install (id), resourcepacks_toggle (pack, enable — flips options.txt "
-                + "enablement, no file renaming), resourcepacks_delete (pack, DANGEROUS), "
+                + "enablement, no file renaming), resourcepacks_check_updates (apply, limit — lists resource "
+                + "packs with a newer version; apply=true downloads & replaces them), "
+                + "resourcepacks_delete (pack, DANGEROUS), "
                 + "shaders_install (id), shaders_toggle (shader, enable — renames the shaderpacks entry "
                 + "with a '.disabled' suffix, mirroring mods_toggle since shader packs have no options.txt "
                 + "enablement state), shaders_delete (shader, DANGEROUS), "
-                + "modpacks_install (id), modpacks_export.";
+                + "modpacks_install (id), modpacks_export.\n"
+                + "- Maintenance & advanced: instance_maintenance (scope clean_junk/redownload_assets/"
+                + "clear_resources/clear_libraries — mirrors the native Version Management menu; omit scope to only "
+                + "report reclaimable sizes; the clear_* scopes are DANGEROUS and need confirm=true), "
+                + "java_manage (operation refresh/add/uninstall — manage HMCL's Java runtime registry; add takes a "
+                + "'path', uninstall is DANGEROUS and picks a managed runtime by javaVersion and/or path), "
+                + "install_local_content (kind mod/resourcepack/shader, path — install a file you ALREADY have on "
+                + "disk; use search + mods_install/etc. to DOWNLOAD instead), "
+                + "set_instance_icon (iconType a built-in icon or 'auto', or imagePath a custom image; omit both to "
+                + "report), "
+                + "generate_launch_script (target output path — writes the exact command HMCL would use to start the "
+                + "game as a runnable .bat/.sh/.command; requires a selected account), "
+                + "schematics_list (READ-ONLY), schematics_import (path), schematics_delete (name, DANGEROUS), "
+                + "schematics_reveal (name — open a Litematica '.litematic' in the file manager).";
     }
 
     @Override
@@ -201,28 +257,61 @@ public final class InstanceTool implements ToolSpec {
                  "properties": {
                    "action": {"type": "string", "description": "Which instance operation to perform (see tool description for the full list)."},
                    "instance": {"type": "string", "description": "Target instance id; most actions default to the currently selected instance."},
-                   "newName": {"type": "string", "description": "rename: the new instance name."},
+                   "newName": {"type": "string", "description": "rename: the new instance name. worlds_duplicate: the folder name for the copied world (required for that action; must be a valid folder name that does not already exist)."},
                    "confirm": {"type": "boolean", "description": "delete/mods_delete/worlds_delete/worlds_backup_restore: confirmation flag some leaf tools require."},
                    "gameVersion": {"type": "string", "description": "create/download_java: Minecraft version, or 'latest'. mods_install: the Minecraft version you actually want to target when auto-picking a version — strongly recommended; 'search' does NOT verify this per result, so pass the version the user wants, not just whatever you queried search with. Omitting it risks installing a build for the wrong game version."},
                    "loader": {"type": "string", "description": "create: vanilla/fabric/forge/neoforge/quilt/optifine (loader to install). mods_install: fabric/forge/neoforge/quilt — the loader you actually want to target; strongly recommended. 'search' does NOT verify per result which loader a mod supports (loader there is only a query hint, not a filter), so pass the loader the user wants; omitting it risks installing a jar built for the wrong loader."},
                    "loaderVersion": {"type": "string", "description": "create: specific loader version; default = newest compatible."},
                    "version": {"type": "string", "description": "mods_install: an exact version name/number to lock onto (e.g. from the matching 'search' result); when set, this exact version is installed instead of auto-picking the newest match."},
-                   "name": {"type": "string", "description": "create: optional new instance name."},
-                   "maxMemoryMB": {"type": "integer", "description": "set_memory: -Xmx in MiB; omit to only report the current value."},
+                   "name": {"type": "string", "description": "create: optional new instance name. schematics_delete/schematics_reveal: the on-disk schematic file/folder name (case-insensitive substring, or a 'sub/dir/file' relative path) matching exactly one entry, as shown by schematics_list."},
+                   "maxMemoryMB": {"type": "integer", "description": "set_memory: fixed -Xmx in MiB; setting it turns automatic allocation OFF so the exact value takes effect. Omit to only report, or use 'auto' to switch modes. Mutually exclusive with auto=true."},
+                   "auto": {"type": "boolean", "description": "set_memory: true switches the instance back to AUTOMATIC memory allocation (HMCL sizes -Xmx from available physical RAM at launch; any configured maximum acts only as a lower bound); false forces fixed allocation while keeping the current maximum. Mutually exclusive with a maxMemoryMB value."},
                    "jvmArgs": {"type": "string", "description": "set_jvm_args: custom JVM/GC arguments string (e.g. '-XX:+UseG1GC'); omit to only report the current value, pass an empty string to clear it. Do not put -Xmx/-Xms here, use maxMemoryMB via set_memory instead."},
+                   "mode": {"type": "string", "description": "set_java: Java runtime selection mode — 'auto', 'version' (pin installed Java by MAJOR version via 'version'), 'detected' (reference a detected Java via its executable 'path'), or 'custom' (explicit Java executable via 'path'). Omit to only REPORT current Java selection."},
+                   "path": {"type": "string", "description": "set_java: absolute path to a Java executable (mode=custom/detected). install_local_content: absolute path of the local file to install. schematics_import: absolute path of the source '.litematic'. java_manage: for add, a java/java.exe or JDK/JRE home path; for uninstall, a substring of the managed runtime's install path."},
+                   "windowType": {"type": "string", "description": "set_window: initial game window mode — 'windowed', 'fullscreen', or 'maximized'. Omit (with width/height) to only report."},
+                   "width": {"type": "integer", "description": "set_window: window width in px (1..16384); only in windowed mode. Paired with height."},
+                   "height": {"type": "integer", "description": "set_window: window height in px (1..16384); only in windowed mode. Paired with width."},
+                   "launcherVisibility": {"type": "string", "description": "set_launch_behavior: what the HMCL window does after the game starts — close/hide/keep/hide_and_reopen. Omit to leave unchanged."},
+                   "processPriority": {"type": "string", "description": "set_launch_behavior: game process OS priority — low/below_normal/normal/above_normal/high. Omit to leave unchanged."},
+                   "allowAutoAgent": {"type": "boolean", "description": "set_launch_behavior: allow HMCL to attach Java agents. Omit to leave unchanged."},
+                   "disableAutoGameOptions": {"type": "boolean", "description": "set_launch_behavior: do NOT auto-generate game options/options.txt. Omit to leave unchanged."},
+                   "showLogs": {"type": "boolean", "description": "set_launch_behavior: open the log window after launch. Omit to leave unchanged."},
+                   "enableDebugLogOutput": {"type": "boolean", "description": "set_launch_behavior: verbose debug logs. Omit to leave unchanged."},
+                   "notCheckGame": {"type": "boolean", "description": "set_launch_behavior: skip game-completeness check before launch. Omit to leave unchanged."},
+                   "graphicsBackend": {"type": "string", "description": "set_graphics: graphics API — 'default', 'opengl', or 'vulkan'. Pass 'inherit' to drop the per-instance override. Omit all three graphics params to only REPORT current settings + this machine's supported renderers."},
+                   "openGLRenderer": {"type": "string", "description": "set_graphics: OpenGL renderer driver name (takes effect when graphicsBackend=opengl). Must be one the report lists (e.g. DEFAULT/LLVMPIPE/ZINK/D3D12); invalid is rejected with the valid list. 'inherit' clears the override."},
+                   "vulkanRenderer": {"type": "string", "description": "set_graphics: Vulkan renderer driver name (takes effect when graphicsBackend=vulkan). Must be one the report lists (e.g. DEFAULT/DOZEN/NVIDIA_VULKAN/MOLTENVK); invalid is rejected with the valid list. 'inherit' clears the override."},
+                   "gameArguments": {"type": "string", "description": "set_launch_args: extra Minecraft command-line arguments (e.g. '--width 1280'); empty string clears. Omit to leave unchanged. Per-instance override. NOT JVM flags (use set_jvm_args)."},
+                   "environmentVariables": {"type": "string", "description": "set_launch_args: environment variables for the game process in KEY=VALUE (newline/semicolon-separated) form; empty string clears. Omit to leave unchanged. Per-instance override."},
+                   "noJVMOptions": {"type": "boolean", "description": "set_launch_args: true = do NOT add HMCL's default JVM arguments. Omit to leave unchanged. Per-instance override."},
+                   "noOptimizingJVMOptions": {"type": "boolean", "description": "set_launch_args: true = do NOT add HMCL's optimizing JVM arguments. Omit to leave unchanged. Per-instance override."},
+                   "notCheckJVM": {"type": "boolean", "description": "set_launch_args: true = skip HMCL's JVM validity check before launch. Omit to leave unchanged. Per-instance override."},
                    "enable": {"type": "boolean", "description": "set_isolation: true to isolate this instance, false to follow the global default; omit to only report the current state. mods_toggle/resourcepacks_toggle/shaders_toggle: true forces enable, false forces disable; omit to toggle the current state."},
                    "key": {"type": "string", "description": "get_options/set_option: options.txt key."},
                    "value": {"type": "string", "description": "set_option: the new value."},
                    "keep": {"type": "integer", "description": "clean_logs: how many recent log files to keep."},
                    "javaVersion": {"type": "integer", "description": "download_java: an integer Java major version (8/16/17/21/25), alternative to gameVersion."},
                    "id": {"type": "string", "description": "mods_install/resourcepacks_install/shaders_install/modpacks_install: the project id/slug from the matching search_* action of the 'search' tool."},
+                   "ids": {"type": "array", "items": {"type": "string"}, "description": "mods_install (optional, batch): several project ids/slugs to install in one call, each reusing the same loader/gameVersion/version/source and reported separately. Dependencies are NOT auto-installed. Use 'id' for a single mod."},
                    "source": {"type": "string", "description": "mods_install/worlds_datapacks_install: content source (e.g. modrinth/curseforge), or a local file path."},
                    "mod": {"type": "string", "description": "mods_toggle/mods_info/mods_update/mods_delete: the mod file name or a distinguishing substring."},
+                   "mods": {"type": "array", "items": {"type": "string"}, "description": "mods_update (optional, batch): several mod substrings to update in one call; each must match exactly one installed mod. Use 'mod' for a single mod, or 'all' to update every mod."},
+                   "all": {"type": "boolean", "description": "mods_update (optional, batch): when true, update every installed mod that has a newer compatible version. Can be slow with many mods; consider mods_check_updates first."},
                    "world": {"type": "string", "description": "worlds_*: the save folder name under 'saves/'."},
                    "zip": {"type": "string", "description": "worlds_import: absolute local path of the .zip world archive."},
                    "backupId": {"type": "string", "description": "worlds_backup_restore: the snapshot id from worlds_backup_list."},
                    "pack": {"type": "string", "description": "resourcepacks_toggle/resourcepacks_delete: the resource pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."},
-                   "shader": {"type": "string", "description": "shaders_toggle/shaders_delete: the shader pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."}
+                   "shader": {"type": "string", "description": "shaders_toggle/shaders_delete: the shader pack file/folder name or a distinguishing substring (matches both '.zip' archives and unpacked folders)."},
+                   "apply": {"type": "boolean", "description": "resourcepacks_check_updates: false (default) only lists resource packs with a newer version; true downloads & replaces them."},
+                   "limit": {"type": "number", "description": "resourcepacks_check_updates: max resource packs to check (default 25, cap 60)."},
+                   "target": {"type": "string", "description": "worlds_export: output .zip path (absolute, or relative to the instance game dir; a bare dir or name without '.zip' is auto-completed). Optional; defaults to '<world>.zip'. Never overwrites an existing file. generate_launch_script: the output script path; absolute or relative to the instance game dir, extension auto-completed (.bat/.sh/.command). Optional; defaults to '<instance>.<ext>'."},
+                   "datapack": {"type": "string", "description": "datapacks_toggle/datapacks_remove: the datapack name under saves/<world>/datapacks/ (case-insensitive substring) matching exactly one entry."},
+                   "scope": {"type": "string", "description": "instance_maintenance: which cleanup to run — clean_junk (delete logs/ + crash-reports/), redownload_assets (force-refresh the asset index), clear_resources (DANGEROUS, delete shared assets; needs confirm=true), clear_libraries (DANGEROUS, delete shared libraries; needs confirm=true). Omit to only REPORT reclaimable sizes."},
+                   "operation": {"type": "string", "description": "java_manage: which Java-registry action — refresh (re-scan for installed Java), add (register a Java you have, with 'path'), uninstall (DANGEROUS, delete an HMCL-downloaded runtime, pick via 'javaVersion' and/or 'path'). Omit to only list the known runtimes."},
+                   "kind": {"type": "string", "description": "install_local_content: the type of the local file being installed — 'mod', 'resourcepack', or 'shader'. The file at 'path' must match this kind."},
+                   "iconType": {"type": "string", "description": "set_instance_icon: one of HMCL's built-in icon names, or 'auto' to reset to automatic detection. Mutually exclusive with imagePath. Omit both to only report the current icon."},
+                   "imagePath": {"type": "string", "description": "set_instance_icon: absolute path to a custom image file (copied into the instance folder). Mutually exclusive with iconType."}
                  },
                  "required": ["action"]
                }
@@ -239,16 +328,65 @@ public final class InstanceTool implements ToolSpec {
             // (which runs with zero confirmation by default).
             // resourcepacks_delete/shaders_delete follow the exact same FileTrash.delete()-based
             // destructive-delete pattern as mods_delete, so they get the same gate.
+            // datapacks_remove likewise deletes a datapack file/folder (recycle-bin-preferring), so it
+            // shares the same DANGEROUS_WRITE gate as its sibling delete actions.
+            // schematics_delete removes a schematic file/folder (recycle-bin-preferring), the same
+            // destructive-delete pattern as the sibling delete actions.
             case "delete", "mods_delete", "mods_update", "worlds_delete", "worlds_backup_restore",
-                    "resourcepacks_delete", "shaders_delete" -> ToolPermission.DANGEROUS_WRITE;
-            case "list", "details", "get_options", "list_java",
+                    "resourcepacks_delete", "shaders_delete", "datapacks_remove",
+                    "schematics_delete" -> ToolPermission.DANGEROUS_WRITE;
+            // resourcepacks_check_updates is READ_ONLY when only checking (apply unset/false) but
+            // CONTROLLED_WRITE when apply=true downloads and replaces files — delegate to the leaf so
+            // the apply-true write path can never be under-gated by a blanket entry here.
+            case "resourcepacks_check_updates" -> resourcepacksCheckUpdates.getPermission(parameters);
+            // instance_maintenance and java_manage carry a whole spread of risk levels behind one
+            // action verb (a read-only report through to a shared-directory wipe / on-disk uninstall),
+            // so their permission is computed from the sub-operation, never a blanket entry.
+            case "instance_maintenance", "maintenance" -> maintenancePermission(parameters);
+            case "java_manage", "manage_java" -> javaManagePermission(parameters);
+            case "list", "details", "get_options", "list_java", "list_presets",
                     "mods_list", "mods_info", "mods_check_updates",
                     "worlds_list", "worlds_info", "worlds_backup_list", "worlds_datapacks_list",
-                    "packs_list_local" -> ToolPermission.READ_ONLY;
+                    "packs_list_local", "schematics_list" -> ToolPermission.READ_ONLY;
             // open_folder creates the directory on disk (Files.createDirectories) and launches an
             // external file-manager process — side-effecting, not safely repeatable/parallelizable.
             default -> ToolPermission.CONTROLLED_WRITE;
         };
+    }
+
+    /// instance_maintenance permission by 'scope': the two clear_* scopes wipe shared base-directory
+    /// content (DANGEROUS); the no-scope call only reports reclaimable sizes (READ_ONLY); clean_junk /
+    /// redownload_assets write but are recoverable (CONTROLLED_WRITE default).
+    private static ToolPermission maintenancePermission(Map<String, Object> parameters) {
+        String scope = strParam(parameters, "scope");
+        if (scope.isEmpty()) {
+            scope = strParam(parameters, "query");
+        }
+        return switch (scope) {
+            case "" -> ToolPermission.READ_ONLY;
+            case "clear_resources", "clear_libraries" -> ToolPermission.DANGEROUS_WRITE;
+            default -> ToolPermission.CONTROLLED_WRITE;
+        };
+    }
+
+    /// java_manage permission by 'operation': uninstall deletes a managed runtime from disk
+    /// (DANGEROUS); the no-op report / refresh only read/re-scan (READ_ONLY); add registers a runtime
+    /// (CONTROLLED_WRITE default).
+    private static ToolPermission javaManagePermission(Map<String, Object> parameters) {
+        String op = strParam(parameters, "operation");
+        if (op.isEmpty()) {
+            op = strParam(parameters, "mode");
+        }
+        return switch (op) {
+            case "", "list", "report", "refresh", "rescan", "scan" -> ToolPermission.READ_ONLY;
+            case "uninstall", "remove", "delete" -> ToolPermission.DANGEROUS_WRITE;
+            default -> ToolPermission.CONTROLLED_WRITE;
+        };
+    }
+
+    private static String strParam(Map<String, Object> parameters, String key) {
+        Object value = parameters.get(key);
+        return value == null ? "" : value.toString().trim().toLowerCase(Locale.ROOT);
     }
 
     /// This tool's worst case is DANGEROUS_WRITE (delete/mods_delete/mods_update/worlds_delete/
@@ -272,6 +410,12 @@ public final class InstanceTool implements ToolSpec {
             case "set_memory" -> setMemory.execute(parameters);
             case "set_jvm_args" -> setJvmArgs.execute(parameters);
             case "set_isolation" -> setIsolation.execute(parameters);
+            case "set_java" -> setJava.execute(parameters);
+            case "set_window" -> setWindow.execute(parameters);
+            case "set_launch_behavior" -> setLaunchBehavior.execute(parameters);
+            case "set_graphics" -> setGraphics.execute(parameters);
+            case "set_launch_args" -> setLaunchArgs.execute(parameters);
+            case "list_presets" -> listPresets.execute(parameters);
             case "get_options" -> getOptions.execute(parameters);
             case "set_option" -> setOption.execute(parameters);
             case "list_java" -> listJava.execute(parameters);
@@ -290,6 +434,7 @@ public final class InstanceTool implements ToolSpec {
             case "mods_check_updates" -> modsCheckUpdates.execute(parameters);
             case "mods_update" -> modsUpdate.execute(parameters);
             case "mods_delete" -> modsDelete.execute(parameters);
+            case "mods_rollback" -> modsRollback.execute(parameters);
 
             case "worlds_list" -> worldsList.execute(parameters);
             case "worlds_info" -> nbtToolsEnabled.getAsBoolean() ? worldsInfo.execute(parameters)
@@ -301,16 +446,29 @@ public final class InstanceTool implements ToolSpec {
             case "worlds_backup_restore" -> worldsBackupRestore.execute(parameters);
             case "worlds_datapacks_list" -> worldsDatapacksList.execute(parameters);
             case "worlds_datapacks_install" -> worldsDatapacksInstall.execute(parameters);
+            case "worlds_export", "world_export" -> worldExport.execute(parameters);
+            case "worlds_duplicate", "world_duplicate" -> worldExport.execute(parameters);
+            case "datapacks_toggle" -> worldsDatapacksManage.execute(parameters);
+            case "datapacks_remove" -> worldsDatapacksManage.execute(parameters);
 
             case "packs_list_local" -> packsListLocal.execute(parameters);
             case "resourcepacks_install" -> resourcepacksInstall.execute(parameters);
             case "resourcepacks_toggle" -> toggleResourcePack(parameters);
+            case "resourcepacks_check_updates" -> resourcepacksCheckUpdates.execute(parameters);
             case "resourcepacks_delete" -> resourcepacksDelete.execute(parameters);
             case "shaders_install" -> shadersInstall.execute(parameters);
             case "shaders_toggle" -> shadersToggle.execute(parameters);
             case "shaders_delete" -> shadersDelete.execute(parameters);
             case "modpacks_install" -> modpacksInstall.execute(parameters);
             case "modpacks_export" -> modpacksExport.execute(parameters);
+
+            case "generate_launch_script", "launch_script" -> generateScript.execute(parameters);
+            case "install_local_content", "install_local" -> installLocal.execute(parameters);
+            case "set_instance_icon", "set_icon" -> setIcon.execute(parameters);
+            case "instance_maintenance", "maintenance" -> maintenance.execute(parameters);
+            case "java_manage", "manage_java" -> manageJava.execute(parameters);
+            case "schematics_list", "schematics_import", "schematics_delete", "schematics_reveal"
+                    -> schematic.execute(parameters);
 
             default -> ToolResult.failure("Unknown action '" + action + "'. See the tool description for the "
                     + "full list of valid actions.");
