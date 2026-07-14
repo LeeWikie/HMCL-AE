@@ -7,21 +7,21 @@
 
   [下载](https://github.com/LeeWikie/HMCL-AE/releases/latest) · [更新日志](CHANGELOG.md) · [反馈](https://github.com/LeeWikie/HMCL-AE/issues) · [上游 HMCL](https://github.com/HMCL-dev/HMCL)
 
-  <sub>GPLv3 · Java 17+ · Windows / Linux / macOS / FreeBSD · v0.1.0-alpha</sub>
+  <sub>GPLv3 · Java 17+ · Windows / Linux / macOS / FreeBSD · v0.1.1-alpha</sub>
 </div>
 
 ---
 
 ## 简介
 
-HMCL-AE 在 [HMCL](https://github.com/HMCL-dev/HMCL) 基础上内置一个 AI 助手。该助手不是纯对话界面:它通过工具调用直接执行启动器操作——安装版本与加载器、管理模组与整合包、诊断崩溃、管理实例 / 世界 / 账号等。所有操作复用 HMCL 本体能力(下载源、镜像、账号体系、Java 管理)。
+HMCL-AE 在 [HMCL](https://github.com/HMCL-dev/HMCL) 基础上内置一个 AI 助手。该助手不是纯对话界面，通过工具调用直接执行启动器操作：安装版本与加载器、管理模组与整合包、诊断崩溃、管理实例 / 世界 / 账号等。所有操作复用 HMCL 本体能力(下载源、镜像、账号体系、Java 管理)。
 
 HMCL-AE 继承 HMCL 的全部功能:模组加载器(Forge / NeoForge / Fabric / Quilt / OptiFine)、整合包、Java 管理、账号登录、联机、全平台多架构。
 
 ## AI 助手
 
 - **工具集**:数十个工具,覆盖文件、模组、加载器、版本、实例、世界、存档、账号、Java、系统信息、联网搜索、NBT、OCR、MCP。
-- **执行模型**:调用工具 → 读取结果 → 决定下一步 → 继续调用,循环至任务完成;工具失败结果回传模型,据此改路而非硬编。
+- **执行模型**:调用工具 → 读取结果 → 决定下一步 → 继续调用,循环至任务完成;工具失败结果回传模型,据此定位问题、调整重试。
 - **护栏与审批**:统一护栏架构(拒绝态短路、结构化阻断原因、失败信封);审批模式 Manual / Auto / yolo,叠加 Plan 模式;无人值守下危险操作硬阻断。
 - **模型库**:内置约 1600 个模型的元数据(上下文窗口、输出上限、模态、定价),按模型 ID 自动匹配。
 - **诊断 Trace**:可开启逐轮记录(request / response / tool 调用)的 JSONL,用于复盘与反馈。
