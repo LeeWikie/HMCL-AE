@@ -10,6 +10,11 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    # The AI test suite runs against classpath-loaded JavaFX under Monocle (see the -PmonocleTest
+    # gate in build.gradle.kts); under this job's modular JavaFX + headless Linux it instead hangs
+    # in JavaFX's GTK toolkit startup with no display, and used to sit idle until GitHub's 6h ceiling
+    # cancelled it. This bound makes it fail fast and stop occupying a runner. A normal build is 1-2 min.
+    timeout-minutes: 40
 
     steps:
     - uses: actions/checkout@v6
