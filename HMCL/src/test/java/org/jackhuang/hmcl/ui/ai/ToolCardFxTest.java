@@ -69,7 +69,7 @@ public final class ToolCardFxTest {
     /// The collapsible result label = the card's direct child carrying .ai-tool-card-result
     /// (the progress label inside the nested progress box shares the class, so a subtree
     /// lookup would be ambiguous).
-    private static Label directResultLabel(AIMainPage.ToolCard card) {
+    private static Label directResultLabel(ToolCard card) {
         return (Label) card.getChildren().stream()
                 .filter(n -> n instanceof Label && n.getStyleClass().contains("ai-tool-card-result"))
                 .findFirst().orElseThrow();
@@ -77,16 +77,16 @@ public final class ToolCardFxTest {
 
     @Test
     public void chevronAppearsOnCompletionAndHeaderTogglesResult() throws Exception {
-        AtomicReference<AIMainPage.ToolCard> cardRef = new AtomicReference<>();
+        AtomicReference<ToolCard> cardRef = new AtomicReference<>();
         FxToolkit.setupSceneRoot(() -> {
-            cardRef.set(new AIMainPage.ToolCard("instance"));
+            cardRef.set(new ToolCard("instance"));
             StackPane root = new StackPane(cardRef.get());
             root.setPrefSize(760, 400);
             return root;
         });
         FxToolkit.showStage();
         WaitForAsyncUtils.waitForFxEvents();
-        AIMainPage.ToolCard card = cardRef.get();
+        ToolCard card = cardRef.get();
         FxRobot robot = new FxRobot();
 
         CollapseHeader header = robot.from(card).lookup(".ai-collapse-header").queryAs(CollapseHeader.class);
@@ -145,8 +145,8 @@ public final class ToolCardFxTest {
     @Test
     public void oversizedResultIsTruncatedAt4000Chars() throws Exception {
         String longResult = "x".repeat(5000);
-        AIMainPage.ToolCard card = onFxAnd(() -> {
-            AIMainPage.ToolCard c = new AIMainPage.ToolCard("search");
+        ToolCard card = onFxAnd(() -> {
+            ToolCard c = new ToolCard("search");
             c.complete(false, longResult);
             return c;
         });
@@ -159,11 +159,11 @@ public final class ToolCardFxTest {
 
     @Test
     public void groupCardCountsAdditionsAndTogglesItsBody() throws Exception {
-        AtomicReference<AIMainPage.ToolCallGroupCard> groupRef = new AtomicReference<>();
+        AtomicReference<ToolCallGroupCard> groupRef = new AtomicReference<>();
         FxToolkit.setupSceneRoot(() -> {
-            AIMainPage.ToolCallGroupCard group = new AIMainPage.ToolCallGroupCard();
+            ToolCallGroupCard group = new ToolCallGroupCard();
             for (int i = 0; i < 3; i++) {
-                AIMainPage.ToolCard card = new AIMainPage.ToolCard("tool" + i);
+                ToolCard card = new ToolCard("tool" + i);
                 card.complete(true, "r" + i);
                 group.add(card);
             }
@@ -174,7 +174,7 @@ public final class ToolCardFxTest {
         });
         FxToolkit.showStage();
         WaitForAsyncUtils.waitForFxEvents();
-        AIMainPage.ToolCallGroupCard group = groupRef.get();
+        ToolCallGroupCard group = groupRef.get();
         FxRobot robot = new FxRobot();
 
         CollapseHeader header = (CollapseHeader) group.getChildren().get(0);
@@ -213,10 +213,10 @@ public final class ToolCardFxTest {
     /// A run longer than three tools folds the remainder into a "+N" tail (B3 rich summary).
     @Test
     public void groupSummaryFoldsOverflowIntoPlusN() throws Exception {
-        AIMainPage.ToolCallGroupCard group = onFxAnd(() -> {
-            AIMainPage.ToolCallGroupCard g = new AIMainPage.ToolCallGroupCard();
+        ToolCallGroupCard group = onFxAnd(() -> {
+            ToolCallGroupCard g = new ToolCallGroupCard();
             for (int i = 0; i < 5; i++) {
-                AIMainPage.ToolCard card = new AIMainPage.ToolCard("t" + i);
+                ToolCard card = new ToolCard("t" + i);
                 card.complete(i != 1, "r" + i); // t1 fails → ✗ mark
                 g.add(card);
             }

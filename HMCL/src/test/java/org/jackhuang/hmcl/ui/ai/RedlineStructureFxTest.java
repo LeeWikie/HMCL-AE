@@ -100,7 +100,7 @@ public final class RedlineStructureFxTest {
 
             VBox messageList = (VBox) getField(page, "messageList");
             int reasoningHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ReasoningCard, "reasoning card");
-            int toolHost = soleHostIndex(messageList, n -> n instanceof AIMainPage.ToolCard, "tool card");
+            int toolHost = soleHostIndex(messageList, n -> n instanceof ToolCard, "tool card");
             int answerHost = soleHostIndex(messageList, n -> n.getStyleClass().contains("ai-bubble-ai"), "AI answer bubble");
 
             // A1: the three visuals are flat siblings — no two of them share a direct child
@@ -114,7 +114,7 @@ public final class RedlineStructureFxTest {
             Node reasoning = findDescendant(messageList.getChildren().get(reasoningHost),
                     n -> n instanceof AIMainPage.ReasoningCard);
             Node tool = findDescendant(messageList.getChildren().get(toolHost),
-                    n -> n instanceof AIMainPage.ToolCard);
+                    n -> n instanceof ToolCard);
             assertSame(messageList, reasoning.getParent().getParent(),
                     "reasoning card must be exactly one wrapper away from messageList");
             assertSame(messageList, tool.getParent().getParent(),
