@@ -78,6 +78,7 @@ dependencies {
     testImplementation(libs.jimfs)
     // JavaFX UI tests (TestFX drives a real toolkit; tests self-skip when no display)
     testImplementation(libs.testfx.core)
+    testImplementation(libs.testfx.monocle) // Monocle: offscreen JavaFX for -PmonocleTest (no visible windows)
     testImplementation(libs.hamcrest) // TestFX lookup API references org.hamcrest.Matcher
 
     if (launcherExe.isBlank()) {

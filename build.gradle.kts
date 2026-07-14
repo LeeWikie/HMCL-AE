@@ -72,6 +72,18 @@ subprojects {
         if (project.hasProperty("headlessTest")) {
             systemProperty("java.awt.headless", "true")
         }
+        // `-PmonocleTest` runs the TestFX UI tests OFFSCREEN via Monocle: real verification with no
+        // visible windows stealing focus. Do NOT set java.awt.headless here (that self-skips the FX
+        // tests). Prefer this over `-PheadlessTest` when you actually want the FX tests to run.
+        if (project.hasProperty("monocleTest")) {
+            systemProperty("testfx.robot", "glass")
+            systemProperty("testfx.headless", "true")
+            systemProperty("glass.platform", "Monocle")
+            systemProperty("monocle.platform", "Headless")
+            systemProperty("prism.order", "sw")
+            systemProperty("prism.text", "t2k")
+            jvmArgs("--add-opens", "javafx.graphics/com.sun.glass.ui=ALL-UNNAMED")
+        }
     }
 
     configure<PublishingExtension> {
