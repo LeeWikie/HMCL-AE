@@ -38,6 +38,7 @@ import org.jackhuang.hmcl.setting.Profiles;
 import org.jackhuang.hmcl.task.Task;
 import org.jackhuang.hmcl.task.TaskExecutor;
 import org.jackhuang.hmcl.task.TaskListener;
+import org.jackhuang.hmcl.util.versioning.GameVersionNumber;
 import org.jetbrains.annotations.Nullable;
 
 import javax.net.ssl.SSLException;
@@ -51,6 +52,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -511,10 +513,73 @@ final class ContentToolSupport {
             if (addon.categories() != null && !addon.categories().isEmpty()) {
                 sb.append("\n   categories: ").append(String.join(", ", addon.categories()));
             }
+            // Loader/game-version compatibility, already carried on the search hit at no extra request.
+            // Lets the model pick a matching loader/version up front instead of installing the wrong
+            // file and retrying.
+            String compatibility = compatibilitySummary(addon);
+            if (compatibility != null) {
+                sb.append("\n   compatible: ").append(compatibility);
+            }
             sb.append('\n');
         }
         sb.append("\nUse the \"id\" value with the matching install tool.");
         return sb.toString();
+    }
+
+    /// How many game versions to spell out before collapsing the rest into a "(+N more)" tail, so a
+    /// project that supports dozens of Minecraft versions does not blow the line width out.
+    private static final int MAX_COMPAT_VERSIONS = 8;
+
+    /// Builds a compact one-line compatibility summary — e.g. "fabric, forge · 1.21.1, 1.21, 1.20.1
+    /// (+37 more)" — from the loaders and game versions already carried on the search hit. Returns
+    /// {@code null} when neither is present (e.g. results from a repository that does not expose this
+    /// metadata) so the caller can omit the line entirely.
+    private static @Nullable String compatibilitySummary(RemoteAddon addon) {
+        List<String> loaders = distinctNonBlank(addon.loaders());
+        List<String> versions = newestFirst(addon.gameVersions());
+        if (loaders.isEmpty() && versions.isEmpty()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!loaders.isEmpty()) {
+            sb.append(String.join(", ", loaders));
+        }
+        if (!versions.isEmpty()) {
+            if (sb.length() > 0) {
+                sb.append(" · ");
+            }
+            int shown = Math.min(versions.size(), MAX_COMPAT_VERSIONS);
+            sb.append(String.join(", ", versions.subList(0, shown)));
+            int remaining = versions.size() - shown;
+            if (remaining > 0) {
+                sb.append(" (+").append(remaining).append(" more)");
+            }
+        }
+        return sb.toString();
+    }
+
+    /// Order-preserving de-duplication that also drops null/blank entries.
+    private static List<String> distinctNonBlank(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                set.add(value);
+            }
+        }
+        return new ArrayList<>(set);
+    }
+
+    /// De-dupes game versions and orders them newest-first, so truncation keeps the most relevant ones.
+    private static List<String> newestFirst(List<String> versions) {
+        List<String> distinct = distinctNonBlank(versions);
+        if (distinct.size() > 1) {
+            distinct.sort(Comparator.<String, GameVersionNumber>comparing(GameVersionNumber::asGameVersion).reversed());
+        }
+        return distinct;
     }
 
     /// Resolves the addon and selects the best matching version for installation.

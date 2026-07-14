@@ -87,6 +87,16 @@ public final class ModrinthRemoteAddonRepository implements RemoteAddonRepositor
             false
     );
 
+    /// Modrinth stores loaders as "categories", so search hits mix loader tags (fabric/forge/…) in
+    /// with real content categories. This is the set used to tell them apart when building the
+    /// compatibility summary. Kept in sync with the loader-type entries in {@link #TAG_COMPARATOR}.
+    private static final Set<String> LOADER_TAGS = Set.of(
+            "babric", "bta-babric", "bukkit", "bungeecord", "fabric", "folia", "forge",
+            "java-agent", "legacy-fabric", "liteloader", "modloader", "neoforge",
+            "nilloader", "ornith", "ornithe", "paper", "purpur", "quilt", "rift",
+            "spigot", "sponge", "velocity", "waterfall"
+    );
+
     private static final Semaphore SEMAPHORE = new Semaphore(16);
 
     private static final String PREFIX = "https://api.modrinth.com";
@@ -124,6 +134,22 @@ public final class ModrinthRemoteAddonRepository implements RemoteAddonRepositor
         return displayCategories != null && !displayCategories.isEmpty()
                 ? displayCategories.stream().sorted(TAG_COMPARATOR).toList()
                 : List.of();
+    }
+
+    /// Extracts the loader tags (Fabric/Forge/NeoForge/…) out of a Modrinth category list, which is
+    /// where Modrinth keeps them. Result is lower-cased, deduplicated and ordered with the same
+    /// priority as other tags; empty when the project lists no recognised loader.
+    static List<String> extractLoaders(List<String> categories) {
+        if (categories == null || categories.isEmpty()) {
+            return List.of();
+        }
+        return categories.stream()
+                .filter(Objects::nonNull)
+                .map(category -> category.toLowerCase(Locale.ROOT))
+                .filter(LOADER_TAGS::contains)
+                .distinct()
+                .sorted(TAG_COMPARATOR)
+                .toList();
     }
 
     @Override
@@ -479,7 +505,11 @@ public final class ModrinthRemoteAddonRepository implements RemoteAddonRepositor
                     String.format("https://modrinth.com/%s/%s", projectType, projectId),
                     iconUrl,
                     this,
-                    type
+                    type,
+                    // For search hits Modrinth's "versions" field is the list of supported Minecraft
+                    // versions; loaders live in "categories".
+                    versions != null ? versions : List.of(),
+                    extractLoaders(categories)
             );
         }
     }

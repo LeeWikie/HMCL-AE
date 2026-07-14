@@ -360,6 +360,12 @@ public final class CurseForgeRemoteAddonRepository implements RemoteAddonReposit
                 pair(6, RemoteAddon.DependencyType.INCLUDE)
         );
 
+        /// CurseForge stuffs loader names into the same {@code gameVersions} array as Minecraft
+        /// versions; this set (lower-cased) is used to separate the two apart for the search summary.
+        private static final Set<String> LOADER_NAMES = Set.of(
+                "forge", "fabric", "neoforge", "quilt", "rift", "liteloader", "modloader"
+        );
+
         @Override
         public List<RemoteAddon> loadDependencies(RemoteAddonRepository modRepository, DownloadProvider downloadProvider) throws IOException {
             Set<Integer> dependencies = latestFiles.stream()
@@ -388,6 +394,31 @@ public final class CurseForgeRemoteAddonRepository implements RemoteAddonReposit
                     iconUrl = logo.url();
             }
 
+            // CurseForge packs Minecraft versions AND loader names into the same gameVersions array on
+            // every file (e.g. ["1.20.1", "Forge", "Fabric"]). Aggregate across all latest files and
+            // split them apart: recognised loader names go to loaders, known MC versions to gameVersions.
+            // (categories are numeric ids here and carry no compatibility meaning, so they are ignored.)
+            LinkedHashSet<String> gameVersions = new LinkedHashSet<>();
+            LinkedHashSet<String> loaders = new LinkedHashSet<>();
+            if (latestFiles != null) {
+                for (LatestFile file : latestFiles) {
+                    if (file == null || file.gameVersions() == null) {
+                        continue;
+                    }
+                    for (String tag : file.gameVersions()) {
+                        if (tag == null || tag.isBlank()) {
+                            continue;
+                        }
+                        String lower = tag.toLowerCase(Locale.ROOT);
+                        if (LOADER_NAMES.contains(lower)) {
+                            loaders.add(lower);
+                        } else if (GameVersionNumber.isKnown(tag)) {
+                            gameVersions.add(tag);
+                        }
+                    }
+                }
+            }
+
             return new RemoteAddon(
                     slug,
                     "",
@@ -397,7 +428,9 @@ public final class CurseForgeRemoteAddonRepository implements RemoteAddonReposit
                     links.websiteUrl,
                     iconUrl,
                     this,
-                    type
+                    type,
+                    new ArrayList<>(gameVersions),
+                    new ArrayList<>(loaders)
             );
         }
 

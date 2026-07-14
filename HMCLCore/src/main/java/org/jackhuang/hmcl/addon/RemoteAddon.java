@@ -32,7 +32,22 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 public record RemoteAddon(String slug, String author, String title, String description, List<String> categories,
-                          String pageUrl, String iconUrl, IMod data, RemoteAddonRepository.Type repoType) {
+                          String pageUrl, String iconUrl, IMod data, RemoteAddonRepository.Type repoType,
+                          List<String> gameVersions, List<String> loaders) {
+
+    /// Normalizes the optional compatibility metadata so callers can always rely on non-null lists.
+    public RemoteAddon {
+        if (gameVersions == null) gameVersions = Collections.emptyList();
+        if (loaders == null) loaders = Collections.emptyList();
+    }
+
+    /// Backward-compatible constructor for repositories and callers that do not (yet) supply
+    /// loader / game-version compatibility metadata; both lists default to empty.
+    public RemoteAddon(String slug, String author, String title, String description, List<String> categories,
+                       String pageUrl, String iconUrl, IMod data, RemoteAddonRepository.Type repoType) {
+        this(slug, author, title, description, categories, pageUrl, iconUrl, data, repoType,
+                Collections.emptyList(), Collections.emptyList());
+    }
 
     public static final RemoteAddon BROKEN = new RemoteAddon("", "", "RemoteAddon.BROKEN", "", Collections.emptyList(), "", "", new IMod() {
         @Override
