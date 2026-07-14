@@ -21,6 +21,8 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -232,10 +234,12 @@ public final class FileReadTool implements ToolSpec {
                 return ToolResult.failure("File too large: " + (size >> 20) + " MiB.");
             }
             byte[] raw = Files.readAllBytes(resolved);
-            // Strict decode (same failure behavior as the previous Files.readAllLines): a
-            // malformed-UTF-8 file must surface as an IO error, not as mojibake.
-            String text = StandardCharsets.UTF_8.newDecoder()
-                    .decode(java.nio.ByteBuffer.wrap(raw)).toString();
+            // Lenient decode: the files the model most needs to read (crash logs, older config
+            // files) are frequently NOT valid UTF-8 — a Windows game/JVM often writes them in the
+            // console's ANSI code page (e.g. GBK). A strict UTF-8 decoder throws on the first
+            // malformed byte and fails the whole read, so the AI could never see the very log it
+            // was asked to diagnose. Instead we best-effort decode and always return readable text.
+            String text = decodeLeniently(raw);
             // Record the read in the shared ledger — this is what later entitles edit/write
             // to touch the file (read precondition) and detects external changes (staleness).
             ledger.recordRead(realResolved, raw);
@@ -277,6 +281,39 @@ public final class FileReadTool implements ToolSpec {
         } catch (IOException e) {
             return p;
         }
+    }
+
+    /// Decodes file bytes to text without ever failing on non-UTF-8 input. A well-formed UTF-8 file
+    /// is decoded strictly and losslessly (the common case). If strict decoding fails, we retry with
+    /// the platform's native charset ({@code sun.jnu.encoding} — the Windows ANSI code page such as
+    /// GBK — falling back to {@link Charset#defaultCharset()}). The {@link String#String(byte[], Charset)}
+    /// constructor replaces both malformed and unmappable bytes with U+FFFD (CodingErrorAction.REPLACE
+    /// semantics) rather than throwing. This lets the model read best-effort content from a GBK crash log
+    /// instead of the read failing outright. The read ledger records the raw bytes, not this string,
+    /// so edit/write staleness checks are unaffected by how we decode here.
+    private static String decodeLeniently(byte[] raw) {
+        try {
+            // Strict first: a valid UTF-8 file decodes exactly, with no replacement characters.
+            return StandardCharsets.UTF_8.newDecoder()
+                    .decode(java.nio.ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException notUtf8) {
+            // Not UTF-8: decode with the native code page, replacing anything it cannot map.
+            return new String(raw, nativeCharset());
+        }
+    }
+
+    /// The platform's native charset: {@code sun.jnu.encoding} (the ANSI code page on Windows, e.g.
+    /// GBK) when present and supported, otherwise {@link Charset#defaultCharset()}.
+    private static Charset nativeCharset() {
+        String jnu = System.getProperty("sun.jnu.encoding");
+        if (jnu != null && !jnu.isBlank()) {
+            try {
+                return Charset.forName(jnu.trim());
+            } catch (Exception ignored) {
+                // Unsupported or illegal charset name — fall back to the platform default below.
+            }
+        }
+        return Charset.defaultCharset();
     }
 
     private static int parse(Object v, int fallback) {

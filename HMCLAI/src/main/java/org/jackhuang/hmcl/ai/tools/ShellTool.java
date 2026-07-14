@@ -22,6 +22,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -178,7 +179,10 @@ public final class ShellTool implements ToolSpec {
             pb.redirectErrorStream(true);
 
             Process process = pb.start();
-            Charset charset = windows ? Charset.defaultCharset() : java.nio.charset.StandardCharsets.UTF_8;
+            // stderr is folded into stdout by redirectErrorStream(true) above, so this single
+            // charset decodes both streams consistently — there is no separate error stream to
+            // decode differently.
+            Charset charset = consoleCharset(windows);
             CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> {
                 try {
                     return new String(process.getInputStream().readAllBytes(), charset);
@@ -212,6 +216,30 @@ public final class ShellTool implements ToolSpec {
             Thread.currentThread().interrupt();
             return interruptedFailure();
         }
+    }
+
+    /// Charset for decoding the child process's console output.
+    ///
+    /// On Windows we deliberately do NOT use {@link Charset#defaultCharset()}: since JDK 18 (JEP
+    /// 400) that returns UTF-8 even on Windows, but cmd/PowerShell write their stdout/stderr in the
+    /// console's ANSI/OEM code page (e.g. GBK / cp936 on a Simplified-Chinese Windows), so decoding
+    /// as UTF-8 turns every non-ASCII byte into mojibake. The {@code sun.jnu.encoding} system
+    /// property carries the platform's native (ANSI) code page and is the closest stable stand-in
+    /// for the console encoding; we fall back to {@link Charset#defaultCharset()} only if it is
+    /// absent or names a charset this JVM does not support. On Unix the console is UTF-8, so keep it.
+    static Charset consoleCharset(boolean windows) {
+        if (!windows) {
+            return StandardCharsets.UTF_8;
+        }
+        String jnu = System.getProperty("sun.jnu.encoding");
+        if (jnu != null && !jnu.isBlank()) {
+            try {
+                return Charset.forName(jnu.trim());
+            } catch (Exception ignored) {
+                // Unsupported or illegal charset name — fall back to the platform default below.
+            }
+        }
+        return Charset.defaultCharset();
     }
 
     // Failure texts follow the unified ToolFailures envelope (<what+data>. Retryable: … . Next: …).
