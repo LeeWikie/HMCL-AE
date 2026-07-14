@@ -2,6 +2,61 @@
 
 本文件记录 HMCL-AE 各版本的变更。可下载构建见 [Releases](https://github.com/LeeWikie/HMCL-AE/releases)。
 
+## 未发布(开发中)
+
+0.1.1-alpha 之后的开发进展,发布版本号与日期待定。本段随开发滚动更新。
+
+### 重要更新
+
+**AI 助手 — 实例工具动作大幅扩充**
+
+`instance` 工具本轮新增下列动作,均复用 HMCL 原生的对应实现(不另写一套逻辑),权限按动作细分(只读 / 受控写入 / 危险写入)。
+
+配置类:
+- `set_java`:设置实例的 Java 运行时选择(mode = auto / version / detected / custom;version 按主版本号选已装 Java,detected / custom 按可执行文件路径)。
+- `set_window`:游戏窗口模式与尺寸(windowType = windowed / fullscreen / maximized,窗口模式下附 width / height)。
+- `set_launch_behavior`:启动前后行为(启动器可见性、进程优先级、是否允许自动 agent、是否禁用自动生成 game options、是否显示日志窗口、调试日志、跳过游戏完整性检查)。
+- `set_graphics`:图形后端与渲染器(default / opengl / vulkan,及各自的渲染器名;不带参数先报告本机支持的渲染器)。
+- `set_launch_args`:每实例的启动参数覆盖(游戏命令行参数、环境变量、是否禁用默认 / 优化 JVM 参数、是否跳过 JVM 校验)。
+- `list_presets`(只读):列出 HMCL 的全局游戏设置预设。
+- `set_memory`:修复自动 / 固定内存切换未正确写入 overrideProperties,导致设置的内存值被预设静默继承的问题。
+
+内容与存档类:
+- `mods_rollback`:把模组回滚到归档的某一旧版本(不带 version 则列出可回滚的版本)。
+- `resourcepacks_check_updates`:列出有新版本的资源包(apply=true 则下载替换;apply 未设时为只读)。
+- `worlds_export`:把世界存档打包为 zip(不覆盖已存在文件)。
+- `worlds_duplicate`:把世界复制到新的存档文件夹。
+- `datapacks_toggle` / `datapacks_remove`:单个数据包的启停 / 删除(删除为危险动作,优先进回收站)。
+- `install_local_content`:把本地已有的文件(mod `.jar`/`.litemod`、资源包、光影)按类型装进实例对应目录,尊重版本隔离;文件类型与 kind 不符即拒绝。
+
+维护与管理类:
+- `instance_maintenance`:对应原生"版本管理"菜单的清理操作(scope = clean_junk 清日志与崩溃报告 / redownload_assets 强制重下资源索引 / clear_resources 清资源 / clear_libraries 清依赖库);后两者为危险动作,需 confirm=true 且游戏运行时拒绝;不带 scope 时只报告可回收空间。
+- `java_manage`:管理 HMCL 的 Java 运行时注册表(operation = refresh 重扫 / add 用路径登记已有 Java / uninstall 删除 HMCL 下载的托管运行时);uninstall 为危险动作,且只删 HMCL 自己下载的运行时,不碰系统或用户自装的 JDK。
+- `generate_launch_script`:生成可在启动器外运行的启动脚本(Windows `.bat` / Linux `.sh` / macOS `.command`),内容与真实启动一致,需已选账户。
+- `set_instance_icon`:设置实例图标,复用 HMCL 原生图标系统(内置图标名、'auto',或自定义图片路径)。
+- `schematics_list` / `schematics_import` / `schematics_delete` / `schematics_reveal`:管理实例 `schematics/` 下的 Litematica 投影文件(列出 / 导入本地 `.litematic` / 删除 / 在文件管理器中打开)。
+
+`game` 工具:
+- `launch` 新增 `testMode`:复用原生"测试游戏"入口,本次启动强制保留启动器窗口并显示日志,不改动持久化的实例设置。
+
+批量与富化:
+- `mods_install` 支持 `ids` 数组一次安装多个已知项目(不自动装依赖,逐项回执)。
+- `mods_update` 支持 `all=true` 或 `mods` 数组一次更新多个模组(逐项复用单模组更新核心)。
+- 实例列表富化:每个实例附带检测到的加载器与本地模组数(纯本地、best-effort)。
+
+**AI 助手 — 知识库(RAG)开发预览,发布版暂时隐藏**
+- 知识库(RAG)相关能力仍不成熟,发布版中隐藏其设置与实现:AI 设置中的"知识库"分区、模型的"嵌入"能力勾选、以及 `kb_search` 工具在发布构建中不出现,提示词也不会提及它。代码与已保存配置保留不动,由构建标志 `KNOWLEDGE_BASE_UI_ENABLED` 控制(开发构建可见,或 `-Dhmcl.experimental.ai.kb=true` 强制开启),与定价 UI 的隐藏方式一致。
+- 知识库关闭时保证有下位替代:AI 仍可用搜索 / 联网搜索 / 内置知识作答;开启时 `kb_search` 与它们并存,不冲突。
+
+### 变更明细
+
+- **AI 助手 — 工具编码修复(Windows)**:Shell 工具在 Windows + JDK 21 下按控制台编码(`sun.jnu.encoding`,通常 GBK)解码输出,修复中文乱码;文件读取工具改为先按严格 UTF-8 解码、失败再回退本地编码,修复非 UTF-8 文件读取时崩溃。
+- **AI 助手 — 搜索结果透出兼容信息**:模组 / 资源包 / 光影搜索结果补充各条目支持的游戏版本与加载器(来自 Modrinth / CurseForge 搜索响应),便于按用户实际需要的加载器 / 版本选择,减少装错构建。
+- **AI 助手 — 工具增强**:`grep` 工具支持上下文行(-B / -A,重叠窗口去重);`web_fetch` 在正则抽取前对(不可信)响应体加输入大小上限,消除多 MB 页面上的 O(n²) 回溯风险。
+- **界面 — 图标统一**:AI 界面改用 HMCL 原生所采用的 Material Symbols 图标,导航采用未选中 fill=0 / 选中 fill=1 的填充切换,与原生 HMCL 一致。
+- **界面 — 对话**:工具调用卡片恢复分组摘要(工具名 + "+N" 折叠)并配 SVG 图标;Markdown 代码块复制按钮改为图标式(悬停涟漪 + 提示,成功时短暂切为对钩)。
+- **测试**:新增 Monocle 离屏运行 TestFX 的 `-PmonocleTest`,UI 测试可真实执行且不弹窗抢焦点;修复受工具卡片改动影响的相关 UI 测试。
+
 ## 0.1.1-alpha — 2026-07-12
 
 0.1.0-alpha 之后的修订版本。启用微软账户登录,并纳入首发后的一批 AI 助手修复。
