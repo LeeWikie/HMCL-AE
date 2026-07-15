@@ -263,6 +263,20 @@ public final class EditTool implements ToolSpec, BackupTargetResolver {
             }
             String result = updated.toString();
             byte[] resultBytes = result.getBytes(StandardCharsets.UTF_8);
+            // Mandatory backup-before-edit (hard precondition, EVERY approval mode): snapshot the
+            // pre-edit bytes to a sibling `.bak` before overwriting. Unlike the adapter's
+            // opportunistic ASK-downgrade backup (which runs only to skip a prompt, so it is absent
+            // on ALLOW/yolo/unattended and for files over its size cap), this always runs and is
+            // fail-closed — no restore point, no edit. FileBackup is idempotent, so when the adapter
+            // already snapshotted this same pre-edit content the call is a no-op (no double copy).
+            FileBackup.Result snapshot = FileBackup.requireSnapshot(new Target(real, List.copyOf(roots)));
+            if (!snapshot.success()) {
+                return ToolFailures.failure(
+                        "Refusing the edit: could not create a backup snapshot of the file first (" + snapshot.reason() + ")",
+                        ToolFailures.Retryable.LATER,
+                        "a mandatory restore point must exist before any in-place edit, and it could not be written",
+                        "ensure the file's directory is writable (a sibling .bak is created there) and has free space, then retry");
+            }
             Files.write(resolved, resultBytes);
             // Self-record the write so a follow-up edit doesn't demand a redundant re-read.
             ledger.recordRead(real, resultBytes);

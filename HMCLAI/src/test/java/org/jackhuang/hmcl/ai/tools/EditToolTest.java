@@ -88,4 +88,42 @@ public final class EditToolTest {
             fail(e);
         }
     }
+
+    // ---- Mandatory backup-before-edit (hard precondition, every approval mode) ----
+
+    @Test
+    public void editSnapshotsPreEditContentToSiblingBak(@TempDir Path root) throws IOException {
+        Path file = root.resolve("config.json");
+        Files.writeString(file, "{\"fov\":70}");
+        ReadLedger ledger = new ReadLedger();
+        ledger.recordRead(file, Files.readAllBytes(file));
+        EditTool tool = new EditTool(root, ledger);
+
+        ToolResult result = tool.execute(Map.of("path", "config.json", "old_string", "70", "new_string", "90"));
+
+        assertTrue(result.isSuccess(), "expected success: " + result.getError());
+        assertEquals("{\"fov\":90}", Files.readString(file), "the edit must land");
+        Path bak = root.resolve("config.json.bak");
+        assertTrue(Files.exists(bak), "a mandatory .bak snapshot must exist after the edit");
+        assertEquals("{\"fov\":70}", Files.readString(bak), "the .bak must hold the PRE-edit content");
+    }
+
+    @Test
+    public void editIsRefusedAndChangesNothingWhenBackupCannotBeWritten(@TempDir Path root) throws IOException {
+        Path file = root.resolve("a.txt");
+        Files.writeString(file, "hello world");
+        ReadLedger ledger = new ReadLedger();
+        ledger.recordRead(file, Files.readAllBytes(file));
+        // A non-empty directory occupying the exact .bak destination makes the snapshot fail-closed
+        // (DirectoryNotEmptyException), so the hard precondition can never be satisfied here.
+        Path blocker = root.resolve("a.txt.bak");
+        Files.createDirectory(blocker);
+        Files.writeString(blocker.resolve("keep"), "x");
+        EditTool tool = new EditTool(root, ledger);
+
+        ToolResult result = tool.execute(Map.of("path", "a.txt", "old_string", "world", "new_string", "there"));
+
+        assertFalse(result.isSuccess(), "with no restore point the edit must be refused (hard precondition)");
+        assertEquals("hello world", Files.readString(file), "a refused edit must not modify the file");
+    }
 }

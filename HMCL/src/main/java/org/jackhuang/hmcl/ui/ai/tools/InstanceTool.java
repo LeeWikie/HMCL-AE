@@ -19,6 +19,8 @@ package org.jackhuang.hmcl.ui.ai.tools;
 
 import org.jackhuang.hmcl.addon.resourcepack.ResourcePackFile;
 import org.jackhuang.hmcl.addon.resourcepack.ResourcePackManager;
+import org.jackhuang.hmcl.ai.tools.BackupTargetResolver;
+import org.jackhuang.hmcl.ai.tools.FileBackup;
 import org.jackhuang.hmcl.ai.tools.ToolFailures;
 import org.jackhuang.hmcl.ai.tools.ToolPermission;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -29,6 +31,7 @@ import org.jackhuang.hmcl.setting.Profiles;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -581,6 +584,26 @@ public final class InstanceTool implements ToolSpec {
         if (targetEnabled == currentlyEnabled) {
             return ToolResult.success("Resource pack '" + pack.getFileNameWithExtension() + "' is already "
                     + (currentlyEnabled ? "enabled" : "disabled") + "; no change made.");
+        }
+
+        // Mandatory backup-before-edit (hard precondition): enabling/disabling a resource pack
+        // rewrites the resourcePacks/incompatibleResourcePacks lines of the instance's existing
+        // options.txt in place, inside HMCL's native ResourcePackManager (so there is no Files.write
+        // here to wrap — the snapshot must be taken BEFORE the manager call). Only when options.txt
+        // already exists — the manager creating a fresh one has nothing to back up. Fail-closed: no
+        // restore point, no toggle.
+        Path optionsFile;
+        try {
+            optionsFile = repository.getRunDirectory(instanceId).resolve("options.txt");
+        } catch (Throwable e) {
+            return ToolResult.failure("Failed to resolve options.txt for instance '" + instanceId + "': " + e.getMessage());
+        }
+        if (Files.isRegularFile(optionsFile)) {
+            FileBackup.Result snapshot = FileBackup.requireSnapshot(
+                    new BackupTargetResolver.Target(optionsFile, List.of()));
+            if (!snapshot.success()) {
+                return ToolResult.failure("Refusing to toggle the resource pack without backing up options.txt first: " + snapshot.reason());
+            }
         }
 
         boolean modified = targetEnabled

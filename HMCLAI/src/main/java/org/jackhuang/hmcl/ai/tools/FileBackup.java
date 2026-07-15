@@ -114,6 +114,20 @@ public final class FileBackup {
         }
     }
 
+    /// Mandatory pre-edit snapshot with NO size cap — the hard-precondition counterpart of
+    /// {@link #backup}. Whereas {@code backup} is opportunistic (the adapter uses it to decide
+    /// whether skipping an ⚠️ASK prompt is cheap, so it declines oversize files via
+    /// {@link Result#tooLarge()} and keeps the confirmation), this is called by an in-place TEXT
+    /// edit tool right before it writes and MUST always yield a restore point: a legitimate large
+    /// config must not be refused merely for exceeding the prompt-skip threshold. Every other
+    /// guarantee is inherited unchanged — idempotent (an identical `.bak` is a no-op, so it coexists
+    /// with the adapter's opportunistic backup of the same file), root-confined, and fail-closed.
+    /// The caller treats any non-{@code success} result as "abort the edit"; there is no
+    /// {@code tooLarge} outcome here because the cap is lifted.
+    public static Result requireSnapshot(BackupTargetResolver.Target target) {
+        return backup(target, Long.MAX_VALUE);
+    }
+
     /// Resolves symlinks via {@link Path#toRealPath()}, falling back to {@code p} itself when that
     /// fails (e.g. the root doesn't exist on disk) — mirrors {@code EditTool.realOrSelf}. Used only
     /// against already-normalized allowed roots, so the fallback just means "root not present",

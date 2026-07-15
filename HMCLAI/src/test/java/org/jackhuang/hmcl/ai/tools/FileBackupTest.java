@@ -108,4 +108,47 @@ public final class FileBackupTest {
         assertFalse(result.success(), "a target outside the allowed roots must be refused");
         assertFalse(Files.exists(outside.resolve("secret.txt.bak")));
     }
+
+    // ---- requireSnapshot: the mandatory, no-size-cap variant used as a hard edit precondition ----
+
+    @Test
+    void requireSnapshotHasNoSizeCapAndSnapshotsAnyway(@TempDir Path root) throws IOException {
+        Path file = root.resolve("big.json");
+        // Comfortably over DEFAULT_MAX_BYTES (1 MiB): the opportunistic backup() would decline this
+        // as tooLarge, but the mandatory requireSnapshot must still capture a restore point.
+        byte[] big = new byte[(int) (FileBackup.DEFAULT_MAX_BYTES + 4096)];
+        java.util.Arrays.fill(big, (byte) 'x');
+        Files.write(file, big);
+
+        FileBackup.Result result = FileBackup.requireSnapshot(target(file, root));
+
+        assertTrue(result.success(), "requireSnapshot must ignore the size cap: " + result.reason());
+        assertFalse(result.tooLarge(), "there is no tooLarge outcome for the mandatory snapshot");
+        assertTrue(result.backupPath().endsWith("big.json.bak"), "wrong backup name: " + result.backupPath());
+        assertArrayEquals(big, Files.readAllBytes(result.backupPath()));
+    }
+
+    @Test
+    void requireSnapshotStillFailsClosedOnBlockedDestination(@TempDir Path root) throws IOException {
+        Path file = root.resolve("a.txt");
+        Files.writeString(file, "content");
+        Path blocker = root.resolve("a.txt.bak");
+        Files.createDirectory(blocker);
+        Files.writeString(blocker.resolve("keep"), "x");
+
+        FileBackup.Result result = FileBackup.requireSnapshot(target(file, root));
+
+        assertFalse(result.success(), "a blocked destination must fail even for the mandatory snapshot");
+    }
+
+    @Test
+    void requireSnapshotStillEnforcesRootContainment(@TempDir Path root, @TempDir Path outside) throws IOException {
+        Path file = outside.resolve("secret.txt");
+        Files.writeString(file, "secret");
+
+        FileBackup.Result result = FileBackup.requireSnapshot(new BackupTargetResolver.Target(file, List.of(root)));
+
+        assertFalse(result.success(), "requireSnapshot must keep the root-containment re-check");
+        assertFalse(Files.exists(outside.resolve("secret.txt.bak")));
+    }
 }

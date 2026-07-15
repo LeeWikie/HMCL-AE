@@ -219,6 +219,22 @@ public final class WriteFileTool implements ToolSpec {
             if (append) {
                 Files.write(resolved, bytes, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             } else {
+                // Mandatory backup-before-overwrite (hard precondition, EVERY approval mode):
+                // replacing an existing file's whole content is at least as destructive as an edit,
+                // so snapshot its pre-overwrite bytes first. Only when a real file is actually being
+                // REPLACED — creating a brand-new file has nothing to back up, and append is exempt
+                // above. Fail-closed: no restore point, no write. (This tool does not implement
+                // BackupTargetResolver, so the adapter never snapshots it — this is its ONLY backup.)
+                if (Files.isRegularFile(resolved)) {
+                    FileBackup.Result snapshot = FileBackup.requireSnapshot(new BackupTargetResolver.Target(real, List.copyOf(roots)));
+                    if (!snapshot.success()) {
+                        return ToolFailures.failure(
+                                "Refusing to overwrite: could not create a backup snapshot of the existing file first (" + snapshot.reason() + ")",
+                                ToolFailures.Retryable.LATER,
+                                "a mandatory restore point must exist before replacing an existing file's content",
+                                "ensure the file's directory is writable (a sibling .bak is created there) and has free space, then retry, or use append:true to add instead of replace");
+                    }
+                }
                 Files.write(resolved, bytes);
             }
             // Self-record the written bytes so a follow-up edit/overwrite doesn't demand a

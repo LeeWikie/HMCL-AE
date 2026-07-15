@@ -207,6 +207,64 @@ public final class WriteFileToolTest {
                         StandardCharsets.UTF_8));
     }
 
+    // ---- Mandatory backup-before-overwrite (hard precondition, every approval mode) ----
+
+    @Test
+    public void overwritingExistingFileSnapshotsPreOverwriteContent(@TempDir Path root) throws IOException {
+        Path file = root.resolve("notes.txt");
+        Files.writeString(file, "v0");
+        // Overwriting an existing file requires a prior read; use an isolated ledger.
+        ReadLedger ledger = new ReadLedger();
+        ledger.recordRead(file, Files.readAllBytes(file));
+        WriteFileTool tool = new WriteFileTool(root, ledger);
+
+        ToolResult result = tool.execute(Map.of("path", "notes.txt", "content", "v1"));
+
+        assertTrue(result.isSuccess(), "expected success: " + result.getError());
+        assertEquals("v1", Files.readString(file, StandardCharsets.UTF_8), "the overwrite must land");
+        Path bak = root.resolve("notes.txt.bak");
+        assertTrue(Files.exists(bak), "overwriting an existing file must leave a mandatory .bak");
+        assertEquals("v0", Files.readString(bak, StandardCharsets.UTF_8), "the .bak must hold the PRE-overwrite content");
+    }
+
+    @Test
+    public void creatingANewFileLeavesNoBak(@TempDir Path root) throws IOException {
+        WriteFileTool tool = new WriteFileTool(root);
+
+        ToolResult result = tool.execute(Map.of("path", "fresh.txt", "content", "hello"));
+
+        assertTrue(result.isSuccess(), "expected success: " + result.getError());
+        assertFalse(Files.exists(root.resolve("fresh.txt.bak")), "creating a new file has nothing to back up");
+    }
+
+    @Test
+    public void appendingToExistingFileLeavesNoBak(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("log.txt"), "line1\n");
+        WriteFileTool tool = new WriteFileTool(root);
+
+        ToolResult result = tool.execute(Map.of("path", "log.txt", "content", "line2\n", "append", true));
+
+        assertTrue(result.isSuccess(), "expected success: " + result.getError());
+        assertFalse(Files.exists(root.resolve("log.txt.bak")), "append discards nothing, so no snapshot");
+    }
+
+    @Test
+    public void overwriteIsRefusedAndChangesNothingWhenBackupCannotBeWritten(@TempDir Path root) throws IOException {
+        Path file = root.resolve("notes.txt");
+        Files.writeString(file, "v0");
+        ReadLedger ledger = new ReadLedger();
+        ledger.recordRead(file, Files.readAllBytes(file));
+        Path blocker = root.resolve("notes.txt.bak");
+        Files.createDirectory(blocker);
+        Files.writeString(blocker.resolve("keep"), "x");
+        WriteFileTool tool = new WriteFileTool(root, ledger);
+
+        ToolResult result = tool.execute(Map.of("path", "notes.txt", "content", "v1"));
+
+        assertFalse(result.isSuccess(), "with no restore point the overwrite must be refused (hard precondition)");
+        assertEquals("v0", Files.readString(file, StandardCharsets.UTF_8), "a refused overwrite must not modify the file");
+    }
+
     /// Best-effort directory link creation for tests: tries a real symlink first (works on
     /// Linux/macOS with normal user rights; on Windows requires Developer Mode or elevation), then
     /// falls back to a Windows directory junction via `mklink /J`, which — unlike a symlink —

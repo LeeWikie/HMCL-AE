@@ -17,6 +17,8 @@
  */
 package org.jackhuang.hmcl.ui.ai.tools;
 
+import org.jackhuang.hmcl.ai.tools.BackupTargetResolver;
+import org.jackhuang.hmcl.ai.tools.FileBackup;
 import org.jackhuang.hmcl.ai.tools.Tool;
 import org.jackhuang.hmcl.ai.tools.ToolParams;
 import org.jackhuang.hmcl.ai.tools.ToolResult;
@@ -123,6 +125,16 @@ public final class SetGameOptionTool implements Tool {
         }
         if (!found) {
             lines.add(key + ":" + value);
+        }
+
+        // Mandatory backup-before-edit (hard precondition): options.txt already exists (checked
+        // above) and this rewrites the whole file, so snapshot its pre-edit bytes to a sibling
+        // `.bak` first. Fail-closed: no restore point, no write. No allowed-root list to enforce —
+        // the path was resolved from the repository, not model-supplied.
+        FileBackup.Result snapshot = FileBackup.requireSnapshot(
+                new BackupTargetResolver.Target(optionsFile, List.of()));
+        if (!snapshot.success()) {
+            return ToolResult.failure("Refusing to modify 'options.txt' without a backup first: " + snapshot.reason());
         }
 
         try {
