@@ -38,6 +38,8 @@ language-subtag-registry
 .idea
 /out/
 /HMCL/out/
+/HMCLAI/out/
+/HMCLBoot/out/
 /HMCLCore/out/
 /minecraft/libraries/HMCLTransformerDiscoveryService/out/
 /minecraft/libraries/HMCLMultiMCBootstrap/out/
@@ -45,6 +47,7 @@ language-subtag-registry
 # eclipse
 /bin/
 /HMCL/bin/
+/HMCLAI/bin/
 /HMCLBoot/bin/
 /HMCLCore/bin/
 /minecraft/libraries/HMCLTransformerDiscoveryService/bin/
@@ -52,6 +55,9 @@ language-subtag-registry
 .classpath
 .project
 .settings
+
+# release staging
+/dist/
 
 # netbeans
 .nb-gradle
